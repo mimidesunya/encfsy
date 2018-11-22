@@ -1,14 +1,14 @@
 /*
 Dokan : user - mode file system library for Windows
-	Copyright(C) 2015 - 2018 Adrien J. <liryna.stark@gmail.com> and Maxime C. <maxime@islog.com>
-	Copyright(C) 2007 - 2011 Hiroki Asakawa <info@dokan-dev.net>
-	http ://dokan-dev.github.io
-	Permission is hereby granted, free of charge, to any person obtaining a copy
-	of this software and associated documentation files(the "Software"), to deal
-	in the Software without restriction, including without limitation the rights
-	to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-	copies of the Software, and to permit persons to whom the Software is
-	furnished to do so, subject to the following conditions :
+Copyright(C) 2015 - 2018 Adrien J. <liryna.stark@gmail.com> and Maxime C. <maxime@islog.com>
+Copyright(C) 2007 - 2011 Hiroki Asakawa <info@dokan-dev.net>
+http ://dokan-dev.github.io
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files(the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions :
 The above copyright notice and this permission notice shall be included in
 all copies or substantial portions of the Software.
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
@@ -18,9 +18,10 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
-*/ 
+*/
 
-#include <dokan.h>
+#include "EncFSy.h"
+
 #include <fileinfo.h>
 #include <malloc.h>
 #include <stdio.h>
@@ -37,19 +38,14 @@ THE SOFTWARE.
 
 using namespace std;
 
-#define DOKAN_MAX_PATH 32768
-
 EncFS::EncFSVolume encfs;
+EncFSOptions g_options;
+
 wstring_convert<codecvt_utf8_utf16<wchar_t>> strConv;
 mutex dirMoveLock;
 
-BOOL g_UseStdErr;
-BOOL g_DebugMode;
-BOOL g_HasSeSecurityPrivilege;
-BOOL g_ImpersonateCallerUser;
-
 static void DbgPrint(LPCWSTR format, ...) {
-	if (g_DebugMode) {
+	if (g_options.g_DebugMode) {
 		const WCHAR *outputString;
 		WCHAR *buffer = NULL;
 		size_t length;
@@ -65,21 +61,17 @@ static void DbgPrint(LPCWSTR format, ...) {
 		else {
 			outputString = format;
 		}
-		if (g_UseStdErr)
+		if (g_options.g_UseStdErr)
 			fputws(outputString, stderr);
 		else
 			OutputDebugStringW(outputString);
 		if (buffer)
 			_freea(buffer);
 		va_end(argp);
-		if (g_UseStdErr)
+		if (g_options.g_UseStdErr)
 			fflush(stderr);
 	}
 }
-
-static WCHAR RootDirectory[DOKAN_MAX_PATH];
-static WCHAR MountPoint[DOKAN_MAX_PATH];
-static WCHAR UNCName[DOKAN_MAX_PATH];
 
 static void GetFilePath(PWCHAR filePath, ULONG numberOfElements,
 	LPCWSTR FileName) {
@@ -92,9 +84,9 @@ static void GetFilePath(PWCHAR filePath, ULONG numberOfElements,
 	wcscpy_s(fileName, wFileName.c_str());
 
 	wcsncpy_s(filePath, numberOfElements, L"\\\\?\\", 4);
-	wcsncat_s(filePath, numberOfElements, RootDirectory, wcslen(RootDirectory));
-	size_t unclen = wcslen(UNCName);
-	if (unclen > 0 && _wcsnicmp(fileName, UNCName, unclen) == 0) {
+	wcsncat_s(filePath, numberOfElements, g_options.RootDirectory, wcslen(g_options.RootDirectory));
+	size_t unclen = wcslen(g_options.UNCName);
+	if (unclen > 0 && _wcsnicmp(fileName, g_options.UNCName, unclen) == 0) {
 		if (_wcsnicmp(fileName + unclen, L".", 1) != 0) {
 			wcsncat_s(filePath, numberOfElements, fileName + unclen,
 				wcslen(fileName) - unclen);
@@ -116,7 +108,7 @@ static void PrintUserName(PDOKAN_FILE_INFO DokanFileInfo) {
 	PTOKEN_USER tokenUser;
 	SID_NAME_USE snu;
 
-	if (!g_DebugMode)
+	if (!g_options.g_DebugMode)
 		return;
 
 	handle = DokanOpenRequestorToken(DokanFileInfo);
@@ -351,7 +343,7 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
 		DbgPrint(L"\tUNKNOWN creationDisposition!\n");
 	}
 
-	if (g_ImpersonateCallerUser) {
+	if (g_options.g_ImpersonateCallerUser) {
 		userTokenHandle = DokanOpenRequestorToken(DokanFileInfo);
 
 		if (userTokenHandle == INVALID_HANDLE_VALUE) {
@@ -366,7 +358,7 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
 		if (creationDisposition == CREATE_NEW ||
 			creationDisposition == OPEN_ALWAYS) {
 
-			if (g_ImpersonateCallerUser && userTokenHandle != INVALID_HANDLE_VALUE) {
+			if (g_options.g_ImpersonateCallerUser && userTokenHandle != INVALID_HANDLE_VALUE) {
 				// if g_ImpersonateCallerUser option is on, call the ImpersonateLoggedOnUser function.
 				if (!ImpersonateLoggedOnUser(userTokenHandle)) {
 					// handle the error if failed to impersonate
@@ -385,7 +377,7 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
 				}
 			}
 
-			if (g_ImpersonateCallerUser && userTokenHandle != INVALID_HANDLE_VALUE) {
+			if (g_options.g_ImpersonateCallerUser && userTokenHandle != INVALID_HANDLE_VALUE) {
 				// Clean Up operation for impersonate
 				DWORD lastError = GetLastError();
 				if (status != STATUS_SUCCESS) //Keep the handle open for CreateFile
@@ -404,7 +396,7 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
 				return STATUS_NOT_A_DIRECTORY;
 			}
 
-			if (g_ImpersonateCallerUser && userTokenHandle != INVALID_HANDLE_VALUE) {
+			if (g_options.g_ImpersonateCallerUser && userTokenHandle != INVALID_HANDLE_VALUE) {
 				// if g_ImpersonateCallerUser option is on, call the ImpersonateLoggedOnUser function.
 				if (!ImpersonateLoggedOnUser(userTokenHandle)) {
 					// handle the error if failed to impersonate
@@ -418,7 +410,7 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
 					&securityAttrib, OPEN_EXISTING,
 					fileAttributesAndFlags | FILE_FLAG_BACKUP_SEMANTICS, NULL);
 
-			if (g_ImpersonateCallerUser && userTokenHandle != INVALID_HANDLE_VALUE) {
+			if (g_options.g_ImpersonateCallerUser && userTokenHandle != INVALID_HANDLE_VALUE) {
 				// Clean Up operation for impersonate
 				DWORD lastError = GetLastError();
 				CloseHandle(userTokenHandle);
@@ -436,8 +428,8 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
 				DokanFileInfo->Context =
 					(ULONG64)new EncFS::EncFSFile(handle, false); // save the file handle in Context
 
-									 // Open succeed but we need to inform the driver
-									 // that the dir open and not created by returning STATUS_OBJECT_NAME_COLLISION
+																  // Open succeed but we need to inform the driver
+																  // that the dir open and not created by returning STATUS_OBJECT_NAME_COLLISION
 				if (creationDisposition == OPEN_ALWAYS &&
 					fileAttr != INVALID_FILE_ATTRIBUTES)
 					return STATUS_OBJECT_NAME_COLLISION;
@@ -468,7 +460,7 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
 		if (creationDisposition == TRUNCATE_EXISTING)
 			genericDesiredAccess |= GENERIC_WRITE;
 
-		if (g_ImpersonateCallerUser && userTokenHandle != INVALID_HANDLE_VALUE) {
+		if (g_options.g_ImpersonateCallerUser && userTokenHandle != INVALID_HANDLE_VALUE) {
 			// if g_ImpersonateCallerUser option is on, call the ImpersonateLoggedOnUser function.
 			if (!ImpersonateLoggedOnUser(userTokenHandle)) {
 				// handle the error if failed to impersonate
@@ -496,7 +488,7 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
 			fileAttributesAndFlags, // |FILE_FLAG_NO_BUFFERING,
 			NULL);                  // template file handle
 
-		if (g_ImpersonateCallerUser && userTokenHandle != INVALID_HANDLE_VALUE) {
+		if (g_options.g_ImpersonateCallerUser && userTokenHandle != INVALID_HANDLE_VALUE) {
 			// Clean Up operation for impersonate
 			DWORD lastError = GetLastError();
 			CloseHandle(userTokenHandle);
@@ -1395,7 +1387,7 @@ static NTSTATUS DOKAN_CALLBACK EncFSGetFileSecurity(
 	requestingSaclInfo = ((*SecurityInformation & SACL_SECURITY_INFORMATION) ||
 		(*SecurityInformation & BACKUP_SECURITY_INFORMATION));
 
-	if (!g_HasSeSecurityPrivilege) {
+	if (!g_options.g_HasSeSecurityPrivilege) {
 		*SecurityInformation &= ~SACL_SECURITY_INFORMATION;
 		*SecurityInformation &= ~BACKUP_SECURITY_INFORMATION;
 	}
@@ -1403,7 +1395,7 @@ static NTSTATUS DOKAN_CALLBACK EncFSGetFileSecurity(
 	DbgPrint(L"  Opening new handle with READ_CONTROL access\n");
 	HANDLE handle = CreateFileW(
 		filePath,
-		READ_CONTROL | ((requestingSaclInfo && g_HasSeSecurityPrivilege)
+		READ_CONTROL | ((requestingSaclInfo && g_options.g_HasSeSecurityPrivilege)
 			? ACCESS_SYSTEM_SECURITY
 			: 0),
 		FILE_SHARE_WRITE | FILE_SHARE_READ | FILE_SHARE_DELETE,
@@ -1494,7 +1486,7 @@ static NTSTATUS DOKAN_CALLBACK EncFSGetVolumeInformation(
 		FILE_SUPPORTS_REMOTE_STORAGE | FILE_UNICODE_ON_DISK |
 		FILE_PERSISTENT_ACLS | FILE_NAMED_STREAMS;
 
-	volumeRoot[0] = RootDirectory[0];
+	volumeRoot[0] = g_options.RootDirectory[0];
 	volumeRoot[1] = ':';
 	volumeRoot[2] = '\\';
 	volumeRoot[3] = '\0';
@@ -1537,8 +1529,8 @@ static NTSTATUS DOKAN_CALLBACK EncFSGetVolumeInformation(
 
 //Uncomment for personalize disk space
 static NTSTATUS DOKAN_CALLBACK EncFSDokanGetDiskFreeSpace(
-PULONGLONG FreeBytesAvailable, PULONGLONG TotalNumberOfBytes,
-PULONGLONG TotalNumberOfFreeBytes, PDOKAN_FILE_INFO DokanFileInfo) {
+	PULONGLONG FreeBytesAvailable, PULONGLONG TotalNumberOfBytes,
+	PULONGLONG TotalNumberOfFreeBytes, PDOKAN_FILE_INFO DokanFileInfo) {
 	UNREFERENCED_PARAMETER(DokanFileInfo);
 
 	ULARGE_INTEGER lpFreeBytesAvailable;
@@ -1654,44 +1646,14 @@ BOOL WINAPI CtrlHandler(DWORD dwCtrlType) {
 	case CTRL_LOGOFF_EVENT:
 	case CTRL_SHUTDOWN_EVENT:
 		SetConsoleCtrlHandler(CtrlHandler, FALSE);
-		DokanRemoveMountPoint(MountPoint);
+		DokanRemoveMountPoint(g_options.MountPoint);
 		return TRUE;
 	default:
 		return FALSE;
 	}
 }
 
-void ShowUsage() {
-	// clang-format off
-	fprintf(stderr, "EncFS.exe\n"
-		"  /r RootDirectory (ex. /r c:\\test)\t\t Directory source to EncFS.\n"
-		"  /l MountPoint (ex. /l m)\t\t\t Mount point. Can be M:\\ (drive letter) or empty NTFS folder C:\\mount\\dokan .\n"
-		"  /t ThreadCount (ex. /t 5)\t\t\t Number of threads to be used internally by Dokan library.\n\t\t\t\t\t\t More threads will handle more event at the same time.\n"
-		"  /d (enable debug output)\t\t\t Enable debug output to an attached debugger.\n"
-		"  /s (use stderr for output)\t\t\t Enable debug output to stderr.\n"
-		"  /n (use network drive)\t\t\t Show device as network device.\n"
-		"  /m (use removable drive)\t\t\t Show device as removable media.\n"
-		"  /w (write-protect drive)\t\t\t Read only filesystem.\n"
-		"  /o (use mount manager)\t\t\t Register device to Windows mount manager.\n\t\t\t\t\t\t This enables advanced Windows features like recycle bin and more...\n"
-		"  /c (mount for current session only)\t\t Device only visible for current user session.\n"
-		"  /u (UNC provider name ex. \\localhost\\myfs)\t UNC name used for network volume.\n"
-		"  /p (Impersonate Caller User)\t\t\t Impersonate Caller User when getting the handle in CreateFile for operations.\n\t\t\t\t\t\t This option requires administrator right to work properly.\n"
-		"  /a Allocation unit size (ex. /a 512)\t\t Allocation Unit Size of the volume. This will behave on the disk file size.\n"
-		"  /k Sector size (ex. /k 512)\t\t\t Sector Size of the volume. This will behave on the disk file size.\n"
-		"  /f User mode Lock\t\t\t\t Enable Lockfile/Unlockfile operations. Otherwise Dokan will take care of it.\n"
-		"  /i (Timeout in Milliseconds ex. /i 30000)\t Timeout until a running operation is aborted and the device is unmounted.\n\n"
-		"Examples:\n"
-		"\tEncFS.exe /r C:\\Users /l M:\t\t\t# EncFS C:\\Users as RootDirectory into a drive of letter M:\\.\n"
-		"\tEncFS.exe /r C:\\Users /l C:\\mount\\dokan\t# EncFS C:\\Users as RootDirectory into NTFS folder C:\\mount\\dokan.\n"
-		"\tEncFS.exe /r C:\\Users /l M: /n /u \\myfs\\myfs1\t# EncFS C:\\Users as RootDirectory into a network drive M:\\. with UNC \\\\myfs\\myfs1\n\n"
-		"Unmount the drive with CTRL + C in the console or alternatively via \"dokanctl /u MountPoint\".\n");
-	// clang-format on
-}
-
-// .\WinEncFS.exe /r G:\EncFSTest /l i /t 5
-int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
-	int status;
-	ULONG command;
+int StartEncFS(EncFSOptions &options, char *password) {
 	PDOKAN_OPERATIONS dokanOperations =
 		(PDOKAN_OPERATIONS)malloc(sizeof(DOKAN_OPERATIONS));
 	if (dokanOperations == NULL) {
@@ -1703,92 +1665,43 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 		return EXIT_FAILURE;
 	}
 
-	if (argc < 3) {
-		ShowUsage();
-		free(dokanOperations);
-		free(dokanOptions);
+	const wstring wRootDir(options.RootDirectory);
+	string cRootDir = strConv.to_bytes(wRootDir);
+	string configFile = cRootDir + "\\.encfs6.xml";
+
+	try {
+		ifstream in(configFile);
+		if (in.is_open()) {
+			string xml((istreambuf_iterator<char>(in)),
+				istreambuf_iterator<char>());
+			in.close();
+			encfs.load(xml);
+		}
+		else {
+			encfs.create(password);
+			string xml;
+			encfs.save(xml);
+			ofstream out(configFile);
+			out << xml;
+			out.close();
+		}
+	}
+	catch (const EncFS::EncFSBadConfigurationException &ex) {
+		printf("%s\n", ex.what());
 		return EXIT_FAILURE;
 	}
 
-	g_DebugMode = FALSE;
-	g_UseStdErr = FALSE;
-
 	ZeroMemory(dokanOptions, sizeof(DOKAN_OPTIONS));
 	dokanOptions->Version = DOKAN_VERSION;
-	dokanOptions->ThreadCount = 0; // use default
-	dokanOptions->Timeout = (ULONG)30000;
+	dokanOptions->Timeout = options.Timeout;
+	dokanOptions->MountPoint = options.MountPoint;
+	dokanOptions->ThreadCount = options.ThreadCount;
+	dokanOptions->Options = options.DokanOptions;
+	dokanOptions->UNCName = options.UNCName;
+	dokanOptions->AllocationUnitSize = options.AllocationUnitSize;
+	dokanOptions->SectorSize = options.SectorSize;
 
-	for (command = 1; command < argc; command++) {
-		switch (towlower(argv[command][1])) {
-		case L'r':
-			command++;
-			wcscpy_s(RootDirectory, sizeof(RootDirectory) / sizeof(WCHAR),
-				argv[command]);
-			DbgPrint(L"RootDirectory: %ls\n", RootDirectory);
-			break;
-		case L'l':
-			command++;
-			wcscpy_s(MountPoint, sizeof(MountPoint) / sizeof(WCHAR), argv[command]);
-			dokanOptions->MountPoint = MountPoint;
-			break;
-		case L't':
-			command++;
-			dokanOptions->ThreadCount = (USHORT)_wtoi(argv[command]);
-			break;
-		case L'd':
-			g_DebugMode = TRUE;
-			break;
-		case L's':
-			g_UseStdErr = TRUE;
-			break;
-		case L'n':
-			dokanOptions->Options |= DOKAN_OPTION_NETWORK;
-			break;
-		case L'm':
-			dokanOptions->Options |= DOKAN_OPTION_REMOVABLE;
-			break;
-		case L'w':
-			dokanOptions->Options |= DOKAN_OPTION_WRITE_PROTECT;
-			break;
-		case L'o':
-			dokanOptions->Options |= DOKAN_OPTION_MOUNT_MANAGER;
-			break;
-		case L'c':
-			dokanOptions->Options |= DOKAN_OPTION_CURRENT_SESSION;
-			break;
-		case L'f':
-			dokanOptions->Options |= DOKAN_OPTION_FILELOCK_USER_MODE;
-			break;
-		case L'u':
-			command++;
-			wcscpy_s(UNCName, sizeof(UNCName) / sizeof(WCHAR), argv[command]);
-			dokanOptions->UNCName = UNCName;
-			DbgPrint(L"UNC Name: %ls\n", UNCName);
-			break;
-		case L'p':
-			g_ImpersonateCallerUser = TRUE;
-			break;
-		case L'i':
-			command++;
-			dokanOptions->Timeout = (ULONG)_wtol(argv[command]);
-			break;
-		case L'a':
-			command++;
-			dokanOptions->AllocationUnitSize = (ULONG)_wtol(argv[command]);
-			break;
-		case L'k':
-			command++;
-			dokanOptions->SectorSize = (ULONG)_wtol(argv[command]);
-			break;
-		default:
-			fwprintf(stderr, L"unknown command: %s\n", argv[command]);
-			free(dokanOperations);
-			free(dokanOptions);
-			return EXIT_FAILURE;
-		}
-	}
-
-	if (wcscmp(UNCName, L"") != 0 &&
+	if (wcscmp(options.UNCName, L"") != 0 &&
 		!(dokanOptions->Options & DOKAN_OPTION_NETWORK)) {
 		fwprintf(
 			stderr,
@@ -1804,7 +1717,7 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 	}
 
 	if (!(dokanOptions->Options & DOKAN_OPTION_MOUNT_MANAGER) &&
-		wcscmp(MountPoint, L"") == 0) {
+		wcscmp(options.MountPoint, L"") == 0) {
 		fwprintf(stderr, L"Mount Point required.\n");
 		free(dokanOperations);
 		free(dokanOptions);
@@ -1829,15 +1742,15 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 	/*
 	g_HasSeSecurityPrivilege = AddSeSecurityNamePrivilege();
 	if (!g_HasSeSecurityPrivilege) {
-		fwprintf(stderr, L"Failed to add security privilege to process\n");
-		fwprintf(stderr,
-			L"\t=> GetFileSecurity/SetFileSecurity may not work properly\n");
-		fwprintf(stderr, L"\t=> Please restart EncFS sample with administrator "
-			L"rights to fix it\n");
+	fwprintf(stderr, L"Failed to add security privilege to process\n");
+	fwprintf(stderr,
+	L"\t=> GetFileSecurity/SetFileSecurity may not work properly\n");
+	fwprintf(stderr, L"\t=> Please restart EncFS sample with administrator "
+	L"rights to fix it\n");
 	}
 	*/
 
-	if (g_ImpersonateCallerUser && !g_HasSeSecurityPrivilege) {
+	if (options.g_ImpersonateCallerUser && !options.g_HasSeSecurityPrivilege) {
 		fwprintf(stderr, L"Impersonate Caller User requires administrator right to "
 			L"work properly\n");
 		fwprintf(stderr, L"\t=> Other users may not use the drive properly\n");
@@ -1845,10 +1758,10 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 			L"rights to fix it\n");
 	}
 
-	if (g_DebugMode) {
+	if (options.g_DebugMode) {
 		dokanOptions->Options |= DOKAN_OPTION_DEBUG;
 	}
-	if (g_UseStdErr) {
+	if (options.g_UseStdErr) {
 		dokanOptions->Options |= DOKAN_OPTION_STDERR;
 	}
 
@@ -1878,49 +1791,20 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 	dokanOperations->GetDiskFreeSpace = EncFSDokanGetDiskFreeSpace;
 	dokanOperations->GetVolumeInformation = EncFSGetVolumeInformation;
 	dokanOperations->Unmounted = EncFSUnmounted;
-	dokanOperations->FindStreams = EncFSFindStreams;
+	//dokanOperations->FindStreams = EncFSFindStreams;
 	dokanOperations->Mounted = EncFSMounted;
 
 	// EncFS
-	char password[100];
-
-	const wstring wRootDir(RootDirectory);
-	string cRootDir = strConv.to_bytes(wRootDir);
-	string configFile = cRootDir + "\\.encfs6.xml";
-
 	try {
-		ifstream in(configFile);
-		if (in.is_open()) {
-			string xml((istreambuf_iterator<char>(in)),
-				istreambuf_iterator<char>());
-			in.close();
-			encfs.load(xml);
-		}
-		else {
-			printf("ボリュームを作成します。パスワードを入れてください: ");
-			gets_s(password, sizeof password);
-			encfs.create(password);
-			string xml;
-			encfs.save(xml);
-			ofstream out(configFile);
-			out << xml;
-			out.close();
-		}
-
-		printf("ボリュームをマウントします。パスワードを入れてください: ");
-		gets_s(password, sizeof password);
 		encfs.unlock(password);
 	}
 	catch (const EncFS::EncFSUnlockFailedException &ex) {
 		printf("%s\n", ex.what());
 		return EXIT_FAILURE;
 	}
-	catch (const EncFS::EncFSBadConfigurationException &ex) {
-		printf("%s\n", ex.what());
-		return EXIT_FAILURE;
-	}
 
-	status = DokanMain(dokanOptions, dokanOperations);
+	g_options = options;
+	int status = DokanMain(dokanOptions, dokanOperations);
 	switch (status) {
 	case DOKAN_SUCCESS:
 		fprintf(stderr, "Success\n");
@@ -1955,14 +1839,3 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 	free(dokanOperations);
 	return EXIT_SUCCESS;
 }
-
-/*
-int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
-	encfs.loadEncFS6File(NULL);
-	char password[] = "secret";
-	encfs.unlock(password);
-
-	encfs.encodeContent();
-	encfs.decodeContent();
-}
-*/
