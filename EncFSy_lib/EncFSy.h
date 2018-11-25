@@ -19,4 +19,8 @@ struct EncFSOptions {
 	WCHAR UNCName[DOKAN_MAX_PATH];
 };
 
+bool IsEncFSExists(LPCWSTR rootDir);
+
+int CreateEncFS(LPCWSTR rootDir, char *password, bool paranoia);
+
 int StartEncFS(EncFSOptions &options, char *password);

@@ -62,70 +62,67 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 		return EXIT_FAILURE;
 	}
 
-	EncFSOptions options;
-	ZeroMemory(&options, sizeof(EncFSOptions));
-
-	options.g_DebugMode = FALSE;
-	options.g_UseStdErr = FALSE;
-	options.Timeout = 30000;
+	EncFSOptions efo;
+	ZeroMemory(&efo, sizeof(EncFSOptions));
+	efo.Timeout = 30000;
 
 	for (command = 1; command < argc; command++) {
 		switch (towlower(argv[command][1])) {
 		case L'r':
 			command++;
-			wcscpy_s(options.RootDirectory, sizeof(options.RootDirectory) / sizeof(WCHAR),
+			wcscpy_s(efo.RootDirectory, sizeof(efo.RootDirectory) / sizeof(WCHAR),
 				argv[command]);
 			break;
 		case L'l':
 			command++;
-			wcscpy_s(options.MountPoint, sizeof(options.MountPoint) / sizeof(WCHAR), argv[command]);
+			wcscpy_s(efo.MountPoint, sizeof(efo.MountPoint) / sizeof(WCHAR), argv[command]);
 			break;
 		case L't':
 			command++;
-			options.ThreadCount = (USHORT)_wtoi(argv[command]);
+			efo.ThreadCount = (USHORT)_wtoi(argv[command]);
 			break;
 		case L'd':
-			options.g_DebugMode = TRUE;
+			efo.g_DebugMode = TRUE;
 			break;
 		case L's':
-			options.g_UseStdErr = TRUE;
+			efo.g_UseStdErr = TRUE;
 			break;
 		case L'n':
-			options.DokanOptions |= DOKAN_OPTION_NETWORK;
+			efo.DokanOptions |= DOKAN_OPTION_NETWORK;
 			break;
 		case L'm':
-			options.DokanOptions |= DOKAN_OPTION_REMOVABLE;
+			efo.DokanOptions |= DOKAN_OPTION_REMOVABLE;
 			break;
 		case L'w':
-			options.DokanOptions |= DOKAN_OPTION_WRITE_PROTECT;
+			efo.DokanOptions |= DOKAN_OPTION_WRITE_PROTECT;
 			break;
 		case L'o':
-			options.DokanOptions |= DOKAN_OPTION_MOUNT_MANAGER;
+			efo.DokanOptions |= DOKAN_OPTION_MOUNT_MANAGER;
 			break;
 		case L'c':
-			options.DokanOptions |= DOKAN_OPTION_CURRENT_SESSION;
+			efo.DokanOptions |= DOKAN_OPTION_CURRENT_SESSION;
 			break;
 		case L'f':
-			options.DokanOptions |= DOKAN_OPTION_FILELOCK_USER_MODE;
+			efo.DokanOptions |= DOKAN_OPTION_FILELOCK_USER_MODE;
 			break;
 		case L'u':
 			command++;
-			wcscpy_s(options.UNCName, sizeof(options.UNCName) / sizeof(WCHAR), argv[command]);
+			wcscpy_s(efo.UNCName, sizeof(efo.UNCName) / sizeof(WCHAR), argv[command]);
 			break;
 		case L'p':
-			options.g_ImpersonateCallerUser = TRUE;
+			efo.g_ImpersonateCallerUser = TRUE;
 			break;
 		case L'i':
 			command++;
-			options.Timeout = (ULONG)_wtol(argv[command]);
+			efo.Timeout = (ULONG)_wtol(argv[command]);
 			break;
 		case L'a':
 			command++;
-			options.AllocationUnitSize = (ULONG)_wtol(argv[command]);
+			efo.AllocationUnitSize = (ULONG)_wtol(argv[command]);
 			break;
 		case L'k':
 			command++;
-			options.SectorSize = (ULONG)_wtol(argv[command]);
+			efo.SectorSize = (ULONG)_wtol(argv[command]);
 			break;
 		default:
 			fwprintf(stderr, L"unknown command: %s\n", argv[command]);
@@ -134,8 +131,16 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 	}
 
 	char password[100];
-	printf("パスワードを入れてください: ");
+	if (!IsEncFSExists(efo.RootDirectory)) {
+		printf("EncFS configuration file doesn't exist.\n");
+		printf("Enter new password: ");
+		gets_s(password, sizeof password);
+		CreateEncFS(efo.RootDirectory, password, false);
+
+	}
+
+	printf("Enter password: ");
 	gets_s(password, sizeof password);
 
-	return StartEncFS(options, password);
+	return StartEncFS(efo, password);
 }

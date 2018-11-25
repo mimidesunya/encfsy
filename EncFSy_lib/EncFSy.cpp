@@ -20,6 +20,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 */
 
+#include <dokan.h>
 #include "EncFSy.h"
 
 #include <fileinfo.h>
@@ -1653,6 +1654,36 @@ BOOL WINAPI CtrlHandler(DWORD dwCtrlType) {
 	}
 }
 
+#define CONFIG_XML "\\.encfs6.xml"
+
+bool IsEncFSExists(LPCWSTR rootDir) {
+	const wstring wRootDir(rootDir);
+	string cRootDir = strConv.to_bytes(wRootDir);
+	string configFile = cRootDir + CONFIG_XML;
+
+	ifstream in(configFile);
+	return in.is_open();
+}
+
+int CreateEncFS(LPCWSTR rootDir, char *password, bool paranoia) {
+	const wstring wRootDir(rootDir);
+	string cRootDir = strConv.to_bytes(wRootDir);
+	string configFile = cRootDir + CONFIG_XML;
+
+	ifstream in(configFile);
+	if (in.is_open()) {
+		return EXIT_FAILURE;
+	}
+
+	encfs.create(password);
+	string xml;
+	encfs.save(xml);
+	ofstream out(configFile);
+	out << xml;
+	out.close();
+	return EXIT_SUCCESS;
+}
+
 int StartEncFS(EncFSOptions &options, char *password) {
 	PDOKAN_OPERATIONS dokanOperations =
 		(PDOKAN_OPERATIONS)malloc(sizeof(DOKAN_OPERATIONS));
@@ -1667,7 +1698,7 @@ int StartEncFS(EncFSOptions &options, char *password) {
 
 	const wstring wRootDir(options.RootDirectory);
 	string cRootDir = strConv.to_bytes(wRootDir);
-	string configFile = cRootDir + "\\.encfs6.xml";
+	string configFile = cRootDir + CONFIG_XML;
 
 	try {
 		ifstream in(configFile);
@@ -1678,12 +1709,7 @@ int StartEncFS(EncFSOptions &options, char *password) {
 			encfs.load(xml);
 		}
 		else {
-			encfs.create(password);
-			string xml;
-			encfs.save(xml);
-			ofstream out(configFile);
-			out << xml;
-			out.close();
+			return EXIT_FAILURE;
 		}
 	}
 	catch (const EncFS::EncFSBadConfigurationException &ex) {
