@@ -8,6 +8,7 @@ struct EncFSOptions {
 	BOOL g_DebugMode;
 	BOOL g_HasSeSecurityPrivilege;
 	BOOL g_ImpersonateCallerUser;
+
 	USHORT ThreadCount;
 	ULONG Timeout;
 	ULONG AllocationUnitSize;
@@ -15,8 +16,12 @@ struct EncFSOptions {
 	ULONG SectorSize;
 
 	WCHAR RootDirectory[DOKAN_MAX_PATH];
+
 	WCHAR MountPoint[DOKAN_MAX_PATH];
 	WCHAR UNCName[DOKAN_MAX_PATH];
+
+	BOOL Reverse;
+	PWCHAR ConfigFile;
 };
 
 bool IsEncFSExists(LPCWSTR rootDir);

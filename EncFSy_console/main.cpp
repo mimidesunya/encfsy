@@ -23,14 +23,16 @@ THE SOFTWARE.
 #include "EncFSy.h"
 
 #include <malloc.h>
-#include <stdio.h>
+#include <iostream>
+#include <windows.h>
+using namespace std;
 
 void ShowUsage() {
 	// clang-format off
-	fprintf(stderr, "EncFS.exe\n"
+	fprintf(stderr, "EncFSy.exe\n"
 		"  /r RootDirectory (ex. /r c:\\test)\t\t Directory source to EncFS.\n"
 		"  /l MountPoint (ex. /l m)\t\t\t Mount point. Can be M:\\ (drive letter) or empty NTFS folder C:\\mount\\dokan .\n"
-		"  /t ThreadCount (ex. /t 5)\t\t\t Number of threads to be used internally by Dokan library.\n\t\t\t\t\t\t More threads will handle more event at the same time.\n"
+		"  /e Unmount.\n"
 		"  /d (enable debug output)\t\t\t Enable debug output to an attached debugger.\n"
 		"  /s (use stderr for output)\t\t\t Enable debug output to stderr.\n"
 		"  /n (use network drive)\t\t\t Show device as network device.\n"
@@ -45,12 +47,49 @@ void ShowUsage() {
 		"  /f User mode Lock\t\t\t\t Enable Lockfile/Unlockfile operations. Otherwise Dokan will take care of it.\n"
 		"  /i (Timeout in Milliseconds ex. /i 30000)\t Timeout until a running operation is aborted and the device is unmounted.\n\n"
 		"Examples:\n"
-		"\tEncFS.exe /r C:\\Users /l M:\t\t\t# EncFS C:\\Users as RootDirectory into a drive of letter M:\\.\n"
-		"\tEncFS.exe /r C:\\Users /l C:\\mount\\dokan\t# EncFS C:\\Users as RootDirectory into NTFS folder C:\\mount\\dokan.\n"
-		"\tEncFS.exe /r C:\\Users /l M: /n /u \\myfs\\myfs1\t# EncFS C:\\Users as RootDirectory into a network drive M:\\. with UNC \\\\myfs\\myfs1\n\n"
-		"Unmount the drive with CTRL + C in the console or alternatively via \"dokanctl /u MountPoint\".\n");
+		"\tEncFSy.exe /r C:\\Users /l M:\t\t\t# EncFS C:\\Users as RootDirectory into a drive of letter M:\\.\n"
+		"\tEncFSy.exe /r C:\\Users /l C:\\mount\\dokan\t# EncFS C:\\Users as RootDirectory into NTFS folder C:\\mount\\dokan.\n"
+		"\tEncFSy.exe /r C:\\Users /l M: /n /u \\myfs\\myfs1\t# EncFS C:\\Users as RootDirectory into a network drive M:\\. with UNC \\\\myfs\\myfs1\n\n"
+		"Unmount the drive with CTRL + C in the console or alternatively via \"EncFSy.exe /v MountPoint\".\n");
 	// clang-format on
 }
+
+void getpass(const char *prompt, char* password, int size)
+{
+	const char BACKSPACE = 8;
+	const char RETURN = 13;
+
+	unsigned char ch = 0;
+	int a = 0;
+
+	cout << prompt;
+
+	DWORD con_mode;
+	DWORD dwRead;
+
+	HANDLE hIn = GetStdHandle(STD_INPUT_HANDLE);
+
+	GetConsoleMode(hIn, &con_mode);
+	SetConsoleMode(hIn, con_mode & ~(ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT));
+
+	while (a < size - 1 && ReadConsoleA(hIn, &ch, 1, &dwRead, NULL) && ch != RETURN)
+	{
+		if (ch == BACKSPACE)
+		{
+			if (a > 0)
+			{
+				--a;
+			}
+		}
+		else
+		{
+			password[a++] = ch;
+		}
+	}
+	cout << endl;
+	password[a++] = '\0';
+}
+
 
 // .\WinEncFS.exe /r G:\EncFSTest /l i /t 5
 int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
@@ -62,20 +101,34 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 		return EXIT_FAILURE;
 	}
 
+	bool unmount = false;
 	EncFSOptions efo;
 	ZeroMemory(&efo, sizeof(EncFSOptions));
 	efo.Timeout = 30000;
+
+	//WCHAR RootDirectory[DOKAN_MAX_PATH];
+	//WCHAR MountPoint[DOKAN_MAX_PATH];
+	WCHAR ConfigFile[DOKAN_MAX_PATH];
 
 	for (command = 1; command < argc; command++) {
 		switch (towlower(argv[command][1])) {
 		case L'r':
 			command++;
-			wcscpy_s(efo.RootDirectory, sizeof(efo.RootDirectory) / sizeof(WCHAR),
-				argv[command]);
+			wcscpy_s(efo.RootDirectory, sizeof(efo.RootDirectory) / sizeof(WCHAR), argv[command]);
+			//efo.RootDirectory = RootDirectory;
 			break;
 		case L'l':
 			command++;
 			wcscpy_s(efo.MountPoint, sizeof(efo.MountPoint) / sizeof(WCHAR), argv[command]);
+			//efo.MountPoint = MountPoint;
+			break;
+		case L'g':
+			command++;
+			wcscpy_s(ConfigFile, sizeof(ConfigFile) / sizeof(WCHAR), argv[command]);
+			efo.ConfigFile = ConfigFile;
+			break;
+		case L'e':
+			unmount = true;
 			break;
 		case L't':
 			command++;
@@ -105,9 +158,13 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 		case L'f':
 			efo.DokanOptions |= DOKAN_OPTION_FILELOCK_USER_MODE;
 			break;
+		case L'v':
+			efo.Reverse = TRUE;
+			break;
 		case L'u':
 			command++;
 			wcscpy_s(efo.UNCName, sizeof(efo.UNCName) / sizeof(WCHAR), argv[command]);
+			//efo.UNCName = UNCName;
 			break;
 		case L'p':
 			efo.g_ImpersonateCallerUser = TRUE;
@@ -130,17 +187,19 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 		}
 	}
 
-	char password[100];
-	if (!IsEncFSExists(efo.RootDirectory)) {
-		printf("EncFS configuration file doesn't exist.\n");
-		printf("Enter new password: ");
-		gets_s(password, sizeof password);
-		CreateEncFS(efo.RootDirectory, password, false);
-
+	if (unmount) {
+		return DokanRemoveMountPoint(efo.MountPoint);
 	}
+	else {
+		char password[100];
+		if (!IsEncFSExists(efo.RootDirectory)) {
+			printf("EncFS configuration file doesn't exist.\n");
+			getpass("Enter new password: ", password, sizeof password);
+			CreateEncFS(efo.RootDirectory, password, false);
 
-	printf("Enter password: ");
-	gets_s(password, sizeof password);
+		}
+		getpass("Enter password: ", password, sizeof password);
 
-	return StartEncFS(efo, password);
+		return StartEncFS(efo, password);
+	}
 }
