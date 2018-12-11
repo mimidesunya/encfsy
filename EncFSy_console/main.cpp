@@ -29,28 +29,29 @@ using namespace std;
 
 void ShowUsage() {
 	// clang-format off
-	fprintf(stderr, "EncFSy.exe\n"
-		"  /r RootDirectory (ex. /r c:\\test)\t\t Directory source to EncFS.\n"
-		"  /l MountPoint (ex. /l m)\t\t\t Mount point. Can be M:\\ (drive letter) or empty NTFS folder C:\\mount\\dokan .\n"
-		"  /e Unmount.\n"
-		"  /d (enable debug output)\t\t\t Enable debug output to an attached debugger.\n"
-		"  /s (use stderr for output)\t\t\t Enable debug output to stderr.\n"
-		"  /n (use network drive)\t\t\t Show device as network device.\n"
-		"  /m (use removable drive)\t\t\t Show device as removable media.\n"
-		"  /w (write-protect drive)\t\t\t Read only filesystem.\n"
-		"  /o (use mount manager)\t\t\t Register device to Windows mount manager.\n\t\t\t\t\t\t This enables advanced Windows features like recycle bin and more...\n"
-		"  /c (mount for current session only)\t\t Device only visible for current user session.\n"
-		"  /u (UNC provider name ex. \\localhost\\myfs)\t UNC name used for network volume.\n"
-		"  /p (Impersonate Caller User)\t\t\t Impersonate Caller User when getting the handle in CreateFile for operations.\n\t\t\t\t\t\t This option requires administrator right to work properly.\n"
-		"  /a Allocation unit size (ex. /a 512)\t\t Allocation Unit Size of the volume. This will behave on the disk file size.\n"
-		"  /k Sector size (ex. /k 512)\t\t\t Sector Size of the volume. This will behave on the disk file size.\n"
-		"  /f User mode Lock\t\t\t\t Enable Lockfile/Unlockfile operations. Otherwise Dokan will take care of it.\n"
-		"  /i (Timeout in Milliseconds ex. /i 30000)\t Timeout until a running operation is aborted and the device is unmounted.\n\n"
+	fprintf(stderr, "encfs.exe [options] rootdir mountPoint \n"
+		"  rootdir (ex. c:\\test)\t\t\t Directory source to EncFS.\n"
+		"  mountPoint (ex. m)\t\t\t Mount point. Can be M:\\ (drive letter) or empty NTFS folder C:\\mount\\dokan .\n\n"
+		"Options:\n"
+		"  -u mountPoint \t\t\t Unmount.\n"
+		"  -v \t\t\t\t\t Enable debug output to an attached debugger.\n"
+		"  -s \t\t\t\t\t Enable debug output to stderr.\n"
+		"  -i Timeout (Milliseconds ex. 30000)\t Timeout until a running operation is aborted and the device is unmounted. Default to 30000.\n"
+		"  -t ThreadCount (ex. 5)\t\t Number of threads to be used internally by Dokan library.\n\t\t\t\t\t More threads will handle more event at the same time. Default to 5.\n"
+		"  --dokan-network UNC (ex. \\host\\myfs)\t UNC name used for network volume.\n"
+		"  --dokan-removable \t\t\t Show device as removable media.\n"
+		"  --dokan-write-protect \t\t Read only filesystem.\n"
+		"  --dokan-mount-manager \t\t Register device to Windows mount manager.\n\t\t\t\t\t This enables advanced Windows features like recycle bin and more...\n"
+		"  --dokan-current-session \t\t Device only visible for current user session.\n"
+		"  --dokan-filelock-user-mode \t\t Enable Lockfile/Unlockfile operations. Otherwise Dokan will take care of it.\n"
+		"  --public \t\t\t\t Impersonate Caller User when getting the handle in CreateFile for operations.\n\t\t\t\t\t This option requires administrator right to work properly.\n"
+		"  --allocation-unit-size Bytes (ex. 512) Allocation Unit Size of the volume. This will behave on the disk file size.\n"
+		"  --sector-size Bytes (ex. 512)\t\t Sector Size of the volume. This will behave on the disk file size.\n\n"
 		"Examples:\n"
-		"\tEncFSy.exe /r C:\\Users /l M:\t\t\t# EncFS C:\\Users as RootDirectory into a drive of letter M:\\.\n"
-		"\tEncFSy.exe /r C:\\Users /l C:\\mount\\dokan\t# EncFS C:\\Users as RootDirectory into NTFS folder C:\\mount\\dokan.\n"
-		"\tEncFSy.exe /r C:\\Users /l M: /n /u \\myfs\\myfs1\t# EncFS C:\\Users as RootDirectory into a network drive M:\\. with UNC \\\\myfs\\myfs1\n\n"
-		"Unmount the drive with CTRL + C in the console or alternatively via \"EncFSy.exe /v MountPoint\".\n");
+		"\tencfs.exe C:\\Users M:\t\t\t\t\t # EncFS C:\\Users as RootDirectory into a drive of letter M:\\.\n"
+		"\tencfs.exe C:\\Users C:\\mount\\dokan \t\t\t # EncFS C:\\Users as RootDirectory into NTFS folder C:\\mount\\dokan.\n"
+		"\tencfs.exe C:\\Users M: --dokan-network \\myfs\\myfs1 \t # EncFS C:\\Users as RootDirectory into a network drive M:\\. with UNC \\\\myfs\\myfs1\n\n"
+		"Unmount the drive with CTRL + C in the console or alternatively via \"encfs.exe -u MountPoint\".\n");
 	// clang-format on
 }
 
@@ -105,85 +106,82 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 	EncFSOptions efo;
 	ZeroMemory(&efo, sizeof(EncFSOptions));
 	efo.Timeout = 30000;
+	efo.ThreadCount = 5;
 
-	//WCHAR RootDirectory[DOKAN_MAX_PATH];
-	//WCHAR MountPoint[DOKAN_MAX_PATH];
 	WCHAR ConfigFile[DOKAN_MAX_PATH];
 
 	for (command = 1; command < argc; command++) {
-		switch (towlower(argv[command][1])) {
-		case L'r':
-			command++;
-			wcscpy_s(efo.RootDirectory, sizeof(efo.RootDirectory) / sizeof(WCHAR), argv[command]);
-			//efo.RootDirectory = RootDirectory;
-			break;
-		case L'l':
-			command++;
-			wcscpy_s(efo.MountPoint, sizeof(efo.MountPoint) / sizeof(WCHAR), argv[command]);
-			//efo.MountPoint = MountPoint;
-			break;
-		case L'g':
-			command++;
-			wcscpy_s(ConfigFile, sizeof(ConfigFile) / sizeof(WCHAR), argv[command]);
-			efo.ConfigFile = ConfigFile;
-			break;
-		case L'e':
-			unmount = true;
-			break;
-		case L't':
-			command++;
-			efo.ThreadCount = (USHORT)_wtoi(argv[command]);
-			break;
-		case L'd':
-			efo.g_DebugMode = TRUE;
-			break;
-		case L's':
-			efo.g_UseStdErr = TRUE;
-			break;
-		case L'n':
-			efo.DokanOptions |= DOKAN_OPTION_NETWORK;
-			break;
-		case L'm':
-			efo.DokanOptions |= DOKAN_OPTION_REMOVABLE;
-			break;
-		case L'w':
-			efo.DokanOptions |= DOKAN_OPTION_WRITE_PROTECT;
-			break;
-		case L'o':
-			efo.DokanOptions |= DOKAN_OPTION_MOUNT_MANAGER;
-			break;
-		case L'c':
-			efo.DokanOptions |= DOKAN_OPTION_CURRENT_SESSION;
-			break;
-		case L'f':
-			efo.DokanOptions |= DOKAN_OPTION_FILELOCK_USER_MODE;
-			break;
-		case L'v':
-			efo.Reverse = TRUE;
-			break;
-		case L'u':
-			command++;
-			wcscpy_s(efo.UNCName, sizeof(efo.UNCName) / sizeof(WCHAR), argv[command]);
-			//efo.UNCName = UNCName;
-			break;
-		case L'p':
-			efo.g_ImpersonateCallerUser = TRUE;
-			break;
-		case L'i':
-			command++;
-			efo.Timeout = (ULONG)_wtol(argv[command]);
-			break;
-		case L'a':
-			command++;
-			efo.AllocationUnitSize = (ULONG)_wtol(argv[command]);
-			break;
-		case L'k':
-			command++;
-			efo.SectorSize = (ULONG)_wtol(argv[command]);
-			break;
-		default:
-			fwprintf(stderr, L"unknown command: %s\n", argv[command]);
-			return EXIT_FAILURE;
+		if (argv[command][0] == L'-') {
+			// options
+			switch (towlower(argv[command][1])) {
+			case L'u':
+				command++;
+				wcscpy_s(efo.MountPoint, sizeof(efo.MountPoint) / sizeof(WCHAR), argv[command]);
+				unmount = true;
+				break;
+			case L'v':
+				efo.g_DebugMode = TRUE;
+				break;
+			case L's':
+				efo.g_UseStdErr = TRUE;
+				break;
+			case L'i':
+				command++;
+				efo.Timeout = (ULONG)_wtol(argv[command]);
+				break;
+			case L't':
+				command++;
+				efo.ThreadCount = (USHORT)_wtoi(argv[command]);
+				break;
+			case L'-':
+				if (wcscmp(argv[command], L"--dokan-network")) {
+					command++;
+					wcscpy_s(efo.UNCName, sizeof(efo.UNCName) / sizeof(WCHAR), argv[command]);
+					efo.DokanOptions |= DOKAN_OPTION_NETWORK;
+				}
+				else if (wcscmp(argv[command], L"--dokan-removable")) {
+					efo.DokanOptions |= DOKAN_OPTION_REMOVABLE;
+				}
+				else if (wcscmp(argv[command], L"--dokan-write-protect")) {
+					efo.DokanOptions |= DOKAN_OPTION_WRITE_PROTECT;
+				}
+				else if (wcscmp(argv[command], L"--dokan-mount-manager")) {
+					efo.DokanOptions |= DOKAN_OPTION_MOUNT_MANAGER;
+				}
+				else if (wcscmp(argv[command], L"--dokan-current-session")) {
+					efo.DokanOptions |= DOKAN_OPTION_CURRENT_SESSION;
+				}
+				else if (wcscmp(argv[command], L"--dokan-filelock-user-mode")) {
+					efo.DokanOptions |= DOKAN_OPTION_FILELOCK_USER_MODE;
+				}
+				else if (wcscmp(argv[command], L"--reverse")) {
+					efo.Reverse = TRUE;
+				}
+				else if (wcscmp(argv[command], L"--public")) {
+					efo.g_ImpersonateCallerUser = TRUE;
+				}
+				else if (wcscmp(argv[command], L"--allocation-unit-size")) {
+					command++;
+					efo.AllocationUnitSize = (ULONG)_wtol(argv[command]);
+				}
+				else if (wcscmp(argv[command], L"--sector-size")) {
+					command++;
+					efo.SectorSize = (ULONG)_wtol(argv[command]);
+				}
+				break;
+			default:
+				fwprintf(stderr, L"unknown command: %s\n", argv[command]);
+				return EXIT_FAILURE;
+			}
+		}
+		else {
+			// path
+			if (efo.RootDirectory[0] == L'\0') {
+				wcscpy_s(efo.RootDirectory, sizeof(efo.RootDirectory) / sizeof(WCHAR), argv[command]);
+			}
+			else {
+				wcscpy_s(efo.MountPoint, sizeof(efo.MountPoint) / sizeof(WCHAR), argv[command]);
+			}
 		}
 	}
 
