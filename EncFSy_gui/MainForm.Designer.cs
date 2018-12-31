@@ -28,6 +28,7 @@ namespace EncFSy_gui
         /// </summary>
         private void InitializeComponent()
         {
+            System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(MainForm));
             this.selectDirectoryButton = new System.Windows.Forms.Button();
             this.mountButton = new System.Windows.Forms.Button();
             this.unmountButton = new System.Windows.Forms.Button();
@@ -123,6 +124,7 @@ namespace EncFSy_gui
             this.Controls.Add(this.mountButton);
             this.Controls.Add(this.selectDirectoryButton);
             this.FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedSingle;
+            this.Icon = ((System.Drawing.Icon)(resources.GetObject("$this.Icon")));
             this.Margin = new System.Windows.Forms.Padding(2);
             this.MaximizeBox = false;
             this.Name = "MainForm";

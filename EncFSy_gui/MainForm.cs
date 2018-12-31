@@ -18,15 +18,12 @@ namespace EncFSy_gui
 {
     public partial class MainForm : Form
     {
-        string baseDir = System.IO.Path.GetDirectoryName(Application.ExecutablePath);
-        string historyFile;
-        string encfsExecutable;
+        string historyFile = Application.LocalUserAppDataPath + "\\history.txt";
+        string encfsExecutable = System.IO.Path.GetDirectoryName(Application.ExecutablePath) + "\\encfs.exe";
 
         public MainForm()
         {
-            this.historyFile = baseDir + "\\history.txt";
-            this.encfsExecutable = baseDir + "\\encfs.exe";
-            InitializeComponent();
+             InitializeComponent();
         }
 
         private void selectDirectory_Click(object sender, EventArgs e)
@@ -87,7 +84,6 @@ namespace EncFSy_gui
             Thread t1 = new Thread(new ThreadStart(delegate ()
             {
                 process.StandardInput.WriteLine(password);
-                process.StandardInput.Close();
             }));
             t1.Start();
 
@@ -95,9 +91,15 @@ namespace EncFSy_gui
             {
                 process.StandardOutput.ReadLine();
                 string encfsOut = process.StandardOutput.ReadLine();
+                if (encfsOut != null && encfsOut.Equals("Enter new password: "))
+                {
+                    process.StandardInput.WriteLine(password);
+                    encfsOut = process.StandardOutput.ReadLine();
+                    encfsOut = process.StandardOutput.ReadLine();
+                }
                 if (encfsOut != null && !encfsOut.Equals("Success"))
                 {
-                    MessageBox.Show(encfsOut);
+                    MessageBox.Show("'"+encfsOut+ "'");
                 }
             }));
             t2.IsBackground = true;
