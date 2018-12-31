@@ -51,4 +51,7 @@
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
+  <ItemGroup>
+    <None Include="..\EncFSy_gui\EncFSy_gui.csproj" />
+  </ItemGroup>
 </Project>

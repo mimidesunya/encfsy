@@ -25,6 +25,8 @@ THE SOFTWARE.
 #include <malloc.h>
 #include <iostream>
 #include <windows.h>
+#include <codecvt>
+
 using namespace std;
 
 void ShowUsage() {
@@ -34,8 +36,8 @@ void ShowUsage() {
 		"  mountPoint (ex. m)\t\t\t Mount point. Can be M:\\ (drive letter) or empty NTFS folder C:\\mount\\dokan .\n\n"
 		"Options:\n"
 		"  -u mountPoint \t\t\t Unmount.\n"
+		"  -l \t\t\t\t\t List mount pounts.\n"
 		"  -v \t\t\t\t\t Enable debug output to an attached debugger.\n"
-		"  -s \t\t\t\t\t Enable debug output to stderr.\n"
 		"  -i Timeout (Milliseconds ex. 30000)\t Timeout until a running operation is aborted and the device is unmounted. Default to 30000.\n"
 		"  -t ThreadCount (ex. 5)\t\t Number of threads to be used internally by Dokan library.\n\t\t\t\t\t More threads will handle more event at the same time. Default to 5.\n"
 		"  --dokan-network UNC (ex. \\host\\myfs)\t UNC name used for network volume.\n"
@@ -73,9 +75,15 @@ void getpass(const char *prompt, char* password, int size)
 	GetConsoleMode(hIn, &con_mode);
 	SetConsoleMode(hIn, con_mode & ~(ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT));
 
-	while (a < size - 1 && ReadConsoleA(hIn, &ch, 1, &dwRead, NULL) && ch != RETURN)
+	while (a < size - 1)
 	{
-		if (ch == BACKSPACE)
+		if (!ReadConsole(hIn, &ch, 1, &dwRead, NULL)) {
+			ch = getc(stdin);
+		}
+		if (ch == RETURN || ch == '\n') {
+			break;
+		}
+		else if (ch == BACKSPACE)
 		{
 			if (a > 0)
 			{
@@ -97,12 +105,7 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 	int status;
 	ULONG command;
 
-	if (argc < 3) {
-		ShowUsage();
-		return EXIT_FAILURE;
-	}
-
-	bool unmount = false;
+	bool unmount = false, list = false;
 	EncFSOptions efo;
 	ZeroMemory(&efo, sizeof(EncFSOptions));
 	efo.Timeout = 30000;
@@ -118,6 +121,9 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 				command++;
 				wcscpy_s(efo.MountPoint, sizeof(efo.MountPoint) / sizeof(WCHAR), argv[command]);
 				unmount = true;
+				break;
+			case L'l':
+				list = true;
 				break;
 			case L'v':
 				efo.g_DebugMode = TRUE;
@@ -185,10 +191,35 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 		}
 	}
 
-	if (unmount) {
+	if (list) {
+		// List drives.
+		ULONG nbRead = 0;
+		DOKAN_CONTROL dokanControl[DOKAN_MAX_INSTANCES];
+		if (!DokanGetMountPointList(dokanControl, DOKAN_MAX_INSTANCES, FALSE,
+			&nbRead)) {
+			return -1;
+		}
+
+		wstring_convert<codecvt_utf8_utf16<wchar_t>> strConv;
+		for (int i = 0; i < nbRead; ++i) {
+			string cMountPoint = strConv.to_bytes(wstring(dokanControl[i].MountPoint));
+			printf("%s\n", cMountPoint.c_str());
+		}
+	}
+	else if (unmount) {
+		// Unmount drive.
+		if (argc < 3) {
+			ShowUsage();
+			return EXIT_FAILURE;
+		}
 		return DokanRemoveMountPoint(efo.MountPoint);
 	}
 	else {
+		// Mount drive.
+		if (argc < 3) {
+			ShowUsage();
+			return EXIT_FAILURE;
+		}
 		char password[100];
 		if (!IsEncFSExists(efo.RootDirectory)) {
 			printf("EncFS configuration file doesn't exist.\n");

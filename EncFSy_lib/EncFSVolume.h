@@ -137,7 +137,7 @@ namespace EncFS
 		~EncFSUnlockFailedException() {};
 
 		const char* what() const noexcept {
-			return "キーを復号できませんでした。";
+			return "Unlock failed.";
 		}
 	};
 
@@ -147,7 +147,7 @@ namespace EncFS
 		~EncFSInvalidBlockException() {};
 
 		const char* what() const noexcept {
-			return "不適切な暗号化が行われています。";
+			return "Invalid block.";
 		}
 	};
 }
