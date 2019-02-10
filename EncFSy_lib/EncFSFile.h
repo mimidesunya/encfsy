@@ -45,6 +45,7 @@ namespace EncFS
 
 		int32_t read(const LPCWSTR FileName, char* buff, size_t off, DWORD len);
 		int32_t write(const LPCWSTR FileName, size_t fileSize, const char* buff, size_t off, DWORD len);
+		int32_t reverseRead(const LPCWSTR FileName, char* buff, size_t off, DWORD len);
 		bool flush();
 		bool setLength(const LPCWSTR FileName, const size_t length);
 		bool changeFileIV(const LPCWSTR FileName, const LPCWSTR NewFileName);

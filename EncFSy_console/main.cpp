@@ -48,7 +48,9 @@ void ShowUsage() {
 		"  --dokan-filelock-user-mode \t\t Enable Lockfile/Unlockfile operations. Otherwise Dokan will take care of it.\n"
 		"  --public \t\t\t\t Impersonate Caller User when getting the handle in CreateFile for operations.\n\t\t\t\t\t This option requires administrator right to work properly.\n"
 		"  --allocation-unit-size Bytes (ex. 512) Allocation Unit Size of the volume. This will behave on the disk file size.\n"
-		"  --sector-size Bytes (ex. 512)\t\t Sector Size of the volume. This will behave on the disk file size.\n\n"
+		"  --sector-size Bytes (ex. 512)\t\t Sector Size of the volume. This will behave on the disk file size.\n"
+		"  --paranoia AES-256bit / changed name IV / external IV chaining \n"
+		"  --reverse Encrypt rootdir to mountPoint.\n"
 		"Examples:\n"
 		"\tencfs.exe C:\\Users M:\t\t\t\t\t # EncFS C:\\Users as RootDirectory into a drive of letter M:\\.\n"
 		"\tencfs.exe C:\\Users C:\\mount\\dokan \t\t\t # EncFS C:\\Users as RootDirectory into NTFS folder C:\\mount\\dokan.\n"
@@ -106,8 +108,10 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 	ULONG command;
 
 	bool unmount = false, list = false;
+	EncFSMode mode = STANDARD;
 	EncFSOptions efo;
 	ZeroMemory(&efo, sizeof(EncFSOptions));
+	efo.Reverse = FALSE;
 	efo.Timeout = 30000;
 	efo.ThreadCount = 5;
 
@@ -140,39 +144,42 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 				efo.ThreadCount = (USHORT)_wtoi(argv[command]);
 				break;
 			case L'-':
-				if (wcscmp(argv[command], L"--dokan-network")) {
+				if (wcscmp(argv[command], L"--dokan-network") == 0) {
 					command++;
 					wcscpy_s(efo.UNCName, sizeof(efo.UNCName) / sizeof(WCHAR), argv[command]);
 					efo.DokanOptions |= DOKAN_OPTION_NETWORK;
 				}
-				else if (wcscmp(argv[command], L"--dokan-removable")) {
+				else if (wcscmp(argv[command], L"--dokan-removable") == 0) {
 					efo.DokanOptions |= DOKAN_OPTION_REMOVABLE;
 				}
-				else if (wcscmp(argv[command], L"--dokan-write-protect")) {
+				else if (wcscmp(argv[command], L"--dokan-write-protect") == 0) {
 					efo.DokanOptions |= DOKAN_OPTION_WRITE_PROTECT;
 				}
-				else if (wcscmp(argv[command], L"--dokan-mount-manager")) {
+				else if (wcscmp(argv[command], L"--dokan-mount-manager") == 0) {
 					efo.DokanOptions |= DOKAN_OPTION_MOUNT_MANAGER;
 				}
-				else if (wcscmp(argv[command], L"--dokan-current-session")) {
+				else if (wcscmp(argv[command], L"--dokan-current-session") == 0) {
 					efo.DokanOptions |= DOKAN_OPTION_CURRENT_SESSION;
 				}
-				else if (wcscmp(argv[command], L"--dokan-filelock-user-mode")) {
+				else if (wcscmp(argv[command], L"--dokan-filelock-user-mode") == 0) {
 					efo.DokanOptions |= DOKAN_OPTION_FILELOCK_USER_MODE;
 				}
-				else if (wcscmp(argv[command], L"--reverse")) {
-					efo.Reverse = TRUE;
-				}
-				else if (wcscmp(argv[command], L"--public")) {
+				else if (wcscmp(argv[command], L"--public") == 0) {
 					efo.g_ImpersonateCallerUser = TRUE;
 				}
-				else if (wcscmp(argv[command], L"--allocation-unit-size")) {
+				else if (wcscmp(argv[command], L"--allocation-unit-size") == 0) {
 					command++;
 					efo.AllocationUnitSize = (ULONG)_wtol(argv[command]);
 				}
-				else if (wcscmp(argv[command], L"--sector-size")) {
+				else if (wcscmp(argv[command], L"--sector-size") == 0) {
 					command++;
 					efo.SectorSize = (ULONG)_wtol(argv[command]);
+				}
+				else if (wcscmp(argv[command], L"--paranoia") == 0) {
+					mode = PARANOIA;
+				}
+				else if (wcscmp(argv[command], L"--reverse") == 0) {
+					efo.Reverse = TRUE;
 				}
 				break;
 			default:
@@ -224,7 +231,7 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 		if (!IsEncFSExists(efo.RootDirectory)) {
 			printf("EncFS configuration file doesn't exist.\n");
 			getpass("Enter new password: ", password, sizeof password);
-			CreateEncFS(efo.RootDirectory, password, false);
+			CreateEncFS(efo.RootDirectory, password, mode, efo.Reverse);
 
 		}
 		getpass("Enter password: ", password, sizeof password);

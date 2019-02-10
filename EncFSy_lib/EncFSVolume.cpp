@@ -19,7 +19,7 @@ namespace EncFS {
 	/*
 	設定ファイルを読み込み。
 	*/
-	void EncFSVolume::load(const string &xml) {
+	void EncFSVolume::load(const string &xml, bool reverse) {
 		xml_document<> doc;
 		try {
 			doc.parse<0>((char*)(xml.c_str()));
@@ -131,22 +131,38 @@ namespace EncFS {
 				}
 				this->desiredKDFDuration = strtol(node->value(), NULL, 10);
 			}
+			if (this->reverse = reverse) {
+				// Reverse mode constraints.
+				this->uniqueIV = false;
+				this->chainedNameIV = false;
+				this->blockMACBytes = 0;
+				this->blockMACRandBytes = 0;
+			}
 		}
 		catch (parse_error ex) {
 			throw EncFSBadConfigurationException(string(ex.what()) + " : " + ex.where<char>());
 		}
 	}
 
-	void EncFSVolume::create(char* password) {
-		this->keySize = 192;
+	void EncFSVolume::create(char* password, EncFSMode mode, bool reverse) {
 		this->blockSize = 1024;
 		this->uniqueIV = true;
-		this->chainedNameIV = false;
-		this->externalIVChaining = false;
-			this->blockMACBytes = 8;
-			this->blockMACRandBytes = 0;
+		this->blockMACBytes = 8;
+		this->blockMACRandBytes = 0;
 		this->allowHoles = true;
-
+		switch (mode) {
+			default:
+				this->keySize = 192;
+				this->chainedNameIV = false;
+				this->externalIVChaining = false;
+				break;
+			case PARANOIA:
+				this->keySize = 256;
+				this->chainedNameIV = true;
+				this->externalIVChaining = true;
+				break;
+		}
+	
 		this->saltLen = 20;
 		string salt;
 		salt.resize(this->saltLen);
@@ -158,6 +174,14 @@ namespace EncFS {
 			this->saltData.resize(encoder.MaxRetrievable());
 			encoder.Get((byte*)this->saltData.data(), this->saltData.size());
 			trim(this->saltData);
+		}
+
+		if (this->reverse = reverse) {
+			// Reverse mode constraints.
+			this->uniqueIV = false;
+			this->chainedNameIV = false;
+			this->blockMACBytes = 0;
+			this->blockMACRandBytes = 0;
 		}
 
 		this->kdfIterations = 170203;
@@ -319,10 +343,9 @@ R"(<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 	void EncFSVolume::encodeFileName(const string &plainFileName, const string &plainDirPath, string &encodedFileName) {
 		// 暗号化する必要のないファイル名
 		if (plainFileName == "." || plainFileName == "..") {
+			encodedFileName.append(plainFileName);
 			return;
 		}
-
-		char iv[2];
 
 		// getPaddedDecFilename
 		int padBytesSize = 16;
@@ -342,6 +365,7 @@ R"(<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 		}
 
 		string paddedFileName(plainFileName);
+		char iv[2];
 		for (int i = 0; i < padLen; ++i) {
 			paddedFileName += (char)padLen;
 		}
@@ -408,15 +432,16 @@ R"(<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 		iv1[0] = binFileName[0];
 		iv1[1] = binFileName[1];
 		binFileName.erase(0, 2);
+		size_t pos = plainFileName.size();
 		this->processFileName(this->aesCbcDec, this->aesCbcDecLock, fileIv, binFileName, plainFileName);
 
 		// ivとpadを検証
 		char iv2[2];
 		if (this->chainedNameIV) {
-			mac16withIv(this->volumeHmac, this->hmacLock, plainFileName, chainIv, iv2);
+			mac16withIv(this->volumeHmac, this->hmacLock, plainFileName.substr(pos), chainIv, iv2);
 		}
 		else {
-			mac16(this->volumeHmac, this->hmacLock, plainFileName, iv2);
+			mac16(this->volumeHmac, this->hmacLock, plainFileName.substr(pos), iv2);
 		}
 		for (size_t i = 0; i < sizeof iv2; ++i) {
 			if (iv1[i] != iv2[i]) {
@@ -424,7 +449,7 @@ R"(<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 				throw EncFSInvalidBlockException();
 			}
 		}
-
+	
 		int padLen = plainFileName[plainFileName.size() - 1];
 		for (size_t i = 0; i < padLen; ++i) {
 			if (plainFileName[plainFileName.size() - padLen + i] != padLen) {
@@ -435,34 +460,46 @@ R"(<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 		plainFileName.erase(plainFileName.size() - padLen, padLen);
 	}
 
-	void EncFSVolume::encodeFilePath(const string &plainFilePath, string &encodedFilePath) {
-		// ファイル名の暗号化
-		string plainDirPath;
+	void EncFSVolume::codeFilePath(const string &srcFilePath, string &destFilePath, bool encode) {
+		string dirPath;
 		string::size_type pos1 = 0;
 		string::size_type pos2;
 		do {
-			pos2 = plainFilePath.find(g_pathSeparator, pos1);
+			pos2 = srcFilePath.find(g_pathSeparator, pos1);
 			if (pos2 == string::npos) {
-				pos2 = plainFilePath.size();
+				pos2 = srcFilePath.size();
 			}
 			if (pos2 > pos1) {
-				string plainName = plainFilePath.substr(pos1, pos2 - pos1);
-				encodedFilePath += g_pathSeparator;
-				this->encodeFileName(plainName, plainDirPath, encodedFilePath);
-				plainDirPath += g_pathSeparator;
-				plainDirPath += plainName;
+				string destName = srcFilePath.substr(pos1, pos2 - pos1);
+				destFilePath += g_pathSeparator;
+				if (encode) {
+					this->encodeFileName(destName, dirPath, destFilePath);
+				}
+				else {
+					this->decodeFileName(destName, dirPath, destFilePath);
+				}
+				dirPath += g_pathSeparator;
+				dirPath += destName;
 			}
 			pos1 = pos2 + 1;
-		} while (pos2 != plainFilePath.size());
-		if (encodedFilePath.size() == 0) {
-			encodedFilePath += g_pathSeparator;
+		} while (pos2 != srcFilePath.size());
+		if (destFilePath.size() == 0) {
+			destFilePath += g_pathSeparator;
 		}
+	}
+
+	void EncFSVolume::encodeFilePath(const string &plainFilePath, string &encodedFilePath) {
+		this->codeFilePath(plainFilePath, encodedFilePath, true);
+	}
+
+	void EncFSVolume::decodeFilePath(const string &encodedFilePath, string &plainFilePath) {
+		this->codeFilePath(encodedFilePath, plainFilePath, false);
 	}
 
 	size_t EncFSVolume::toDecodedLength(const size_t encodedLength) {
 		size_t size = encodedLength;
 		size_t headerLength = this->getHeaderSize();
-		if (size < HEADER_SIZE + headerLength) {
+		if (size < (this->uniqueIV ? HEADER_SIZE : 0) + headerLength) {
 			return 0;
 		}
 		if (this->uniqueIV) {

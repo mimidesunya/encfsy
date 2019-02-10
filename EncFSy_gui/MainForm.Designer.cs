@@ -116,7 +116,7 @@ namespace EncFSy_gui
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(331, 242);
+            this.ClientSize = new System.Drawing.Size(330, 242);
             this.Controls.Add(this.driveListView);
             this.Controls.Add(this.rootPathCombo);
             this.Controls.Add(this.quitButton);

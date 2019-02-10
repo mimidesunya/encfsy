@@ -3,6 +3,11 @@
 
 #define DOKAN_MAX_PATH 32768
 
+enum EncFSMode {
+	STANDARD = 1,
+	PARANOIA = 2
+};
+
 struct EncFSOptions {
 	BOOL g_UseStdErr;
 	BOOL g_DebugMode;
@@ -26,6 +31,6 @@ struct EncFSOptions {
 
 bool IsEncFSExists(LPCWSTR rootDir);
 
-int CreateEncFS(LPCWSTR rootDir, char *password, bool paranoia);
+int CreateEncFS(LPCWSTR rootDir, char *password, EncFSMode mode, bool paranoia);
 
 int StartEncFS(EncFSOptions &options, char *password);

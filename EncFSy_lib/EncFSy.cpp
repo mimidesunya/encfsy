@@ -74,27 +74,40 @@ static void DbgPrint(LPCWSTR format, ...) {
 	}
 }
 
-static void GetFilePath(PWCHAR filePath, ULONG numberOfElements,
-	LPCWSTR FileName) {
-	wstring wFileName(FileName);
-	string cFileName = strConv.to_bytes(wFileName);
+/**
+ Convert virtual path to real path.
+*/
+static void GetFilePath(PWCHAR encodedFilePath, ULONG numberOfElements,
+	LPCWSTR plainFilePath) {
+	wstring wFilePath(plainFilePath);
+	string cFilePath = strConv.to_bytes(wFilePath);
 	string cEncodedFileName;
-	encfs.encodeFilePath(cFileName, cEncodedFileName);
-	wFileName = strConv.from_bytes(cEncodedFileName);
-	WCHAR fileName[DOKAN_MAX_PATH];
-	wcscpy_s(fileName, wFileName.c_str());
-
-	wcsncpy_s(filePath, numberOfElements, L"\\\\?\\", 4);
-	wcsncat_s(filePath, numberOfElements, g_efo.RootDirectory, wcslen(g_efo.RootDirectory));
-	size_t unclen = wcslen(g_efo.UNCName);
-	if (unclen > 0 && _wcsnicmp(fileName, g_efo.UNCName, unclen) == 0) {
-		if (_wcsnicmp(fileName + unclen, L".", 1) != 0) {
-			wcsncat_s(filePath, numberOfElements, fileName + unclen,
-				wcslen(fileName) - unclen);
+	if (encfs.isReverse()) {
+		try {
+			encfs.decodeFilePath(cFilePath, cEncodedFileName);
+		}
+		catch (const EncFS::EncFSInvalidBlockException &ex) {
+			cEncodedFileName = cFilePath;
 		}
 	}
 	else {
-		wcsncat_s(filePath, numberOfElements, fileName, wcslen(fileName));
+		encfs.encodeFilePath(cFilePath, cEncodedFileName);
+	}
+	wFilePath = strConv.from_bytes(cEncodedFileName);
+	WCHAR filePath[DOKAN_MAX_PATH];
+	wcscpy_s(filePath, wFilePath.c_str());
+
+	wcsncpy_s(encodedFilePath, numberOfElements, L"\\\\?\\", 4);
+	wcsncat_s(encodedFilePath, numberOfElements, g_efo.RootDirectory, wcslen(g_efo.RootDirectory));
+	size_t unclen = wcslen(g_efo.UNCName);
+	if (unclen > 0 && _wcsnicmp(filePath, g_efo.UNCName, unclen) == 0) {
+		if (_wcsnicmp(filePath + unclen, L".", 1) != 0) {
+			wcsncat_s(encodedFilePath, numberOfElements, filePath + unclen,
+				wcslen(filePath) - unclen);
+		}
+	}
+	else {
+		wcsncat_s(encodedFilePath, numberOfElements, filePath, wcslen(filePath));
 	}
 }
 
@@ -560,7 +573,29 @@ static NTSTATUS DOKAN_CALLBACK EncFSReadFile(LPCWSTR FileName, LPVOID Buffer,
 		opened = TRUE;
 	}
 
-	int32_t readLen = encfsFile->read(FileName, (char*)Buffer, offset, BufferLength);
+	int32_t readLen;
+	if (encfs.isReverse()) {
+		size_t len = wcslen(filePath);
+		if (len >= 12 && wcscmp(filePath + len - 12, L"\\.encfs6.xml") == 0) {
+			LARGE_INTEGER distanceToMove;
+			distanceToMove.QuadPart = Offset;
+			if (!SetFilePointerEx(encfsFile->getHandle(), distanceToMove, NULL, FILE_BEGIN)) {
+				readLen = -1;
+			}
+			else if (!ReadFile(encfsFile->getHandle(), Buffer, BufferLength, ReadLength, NULL)) {
+				readLen = -1;
+			}
+			else {
+				readLen = *ReadLength;
+			}
+		}
+		else {
+			readLen = encfsFile->reverseRead(FileName, (char*)Buffer, offset, BufferLength);
+		}
+	}
+	else {
+		readLen = encfsFile->read(FileName, (char*)Buffer, offset, BufferLength);
+	}
 	if (readLen == -1) {
 		DWORD error = GetLastError();
 		DbgPrint(L"\tread error = %u, buffer length = %d, read length = %d\n\n",
@@ -714,12 +749,23 @@ EncFSFindFiles(LPCWSTR FileName,
 		if (!rootFolder || (wcscmp(findData.cFileName, L".") != 0 &&
 			wcscmp(findData.cFileName, L"..") != 0)) {
 
-			// ファイル名を復号
+			// Decrypt file name
 			wstring wcFileName(findData.cFileName);
 			string ccFileName = strConv.to_bytes(wcFileName);
 			string cPlainFileName;
 			try {
-				encfs.decodeFileName(ccFileName, cPath, cPlainFileName);
+				if (encfs.isReverse()) {
+					// Encrypt when reverse mode.
+					if (wcscmp(findData.cFileName, L".encfs6.xml") != 0) {
+						encfs.encodeFileName(ccFileName, cPath, cPlainFileName);
+					}
+					else {
+						cPlainFileName = ccFileName;
+					}
+				}
+				else {
+					encfs.decodeFileName(ccFileName, cPath, cPlainFileName);
+				}
 			}
 			catch (const EncFS::EncFSInvalidBlockException &ex) {
 				continue;
@@ -727,9 +773,9 @@ EncFSFindFiles(LPCWSTR FileName,
 			wstring wPlainFileName = strConv.from_bytes(cPlainFileName);
 			wcscpy_s(findData.cFileName, wPlainFileName.c_str());
 
-			// 復号後のファイルサイズを計算
+			// Calculate file size
 			int64_t size = (findData.nFileSizeHigh * ((int64_t)MAXDWORD + 1)) + findData.nFileSizeLow;
-			size = encfs.toDecodedLength(size);
+			size = encfs.isReverse() ? encfs.toEncodedLength(size) : encfs.toDecodedLength(size);
 			findData.nFileSizeLow = size & MAXDWORD;
 			findData.nFileSizeHigh = (size >> 32) & MAXDWORD;
 
@@ -1195,9 +1241,9 @@ static NTSTATUS DOKAN_CALLBACK EncFSGetFileInformation(
 			HandleFileInformation->nFileSizeLow);
 	}
 
-	// 復号後のファイルサイズを計算
+	// Caluclate file size
 	int64_t size = (HandleFileInformation->nFileSizeHigh * ((int64_t)MAXDWORD + 1)) + HandleFileInformation->nFileSizeLow;
-	size = encfs.toDecodedLength(size);
+	size = encfs.isReverse() ? encfs.toEncodedLength(size) : encfs.toDecodedLength(size);
 	HandleFileInformation->nFileSizeLow = size & MAXDWORD;
 	HandleFileInformation->nFileSizeHigh = (size >> 32) & MAXDWORD;
 
@@ -1623,7 +1669,7 @@ bool IsEncFSExists(LPCWSTR rootDir) {
 	return in.is_open();
 }
 
-int CreateEncFS(LPCWSTR rootDir, char *password, bool paranoia) {
+int CreateEncFS(LPCWSTR rootDir, char *password, EncFSMode mode, bool reverse) {
 	const wstring wRootDir(rootDir);
 	string cRootDir = strConv.to_bytes(wRootDir);
 	string configFile = cRootDir + CONFIG_XML;
@@ -1633,7 +1679,7 @@ int CreateEncFS(LPCWSTR rootDir, char *password, bool paranoia) {
 		return EXIT_FAILURE;
 	}
 
-	encfs.create(password);
+	encfs.create(password, (EncFS::EncFSMode)mode, reverse);
 	string xml;
 	encfs.save(xml);
 	ofstream out(configFile);
@@ -1671,7 +1717,7 @@ int StartEncFS(EncFSOptions &efo, char *password) {
 			string xml((istreambuf_iterator<char>(in)),
 				istreambuf_iterator<char>());
 			in.close();
-			encfs.load(xml);
+			encfs.load(xml, efo.Reverse);
 		}
 		else {
 			return EXIT_FAILURE;
@@ -1757,6 +1803,9 @@ int StartEncFS(EncFSOptions &efo, char *password) {
 	}
 	if (efo.g_UseStdErr) {
 		dokanOptions->Options |= DOKAN_OPTION_STDERR;
+	}
+	if (efo.Reverse) {
+		dokanOptions->Options |= DOKAN_OPTION_WRITE_PROTECT;
 	}
 
 	dokanOptions->Options |= DOKAN_OPTION_ALT_STREAM;

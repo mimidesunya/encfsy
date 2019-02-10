@@ -7,11 +7,15 @@ static AutoSeededX917RNG<CryptoPP::AES> random;
 
 namespace EncFS {
 	bool EncFSFile::getFileIV(const LPCWSTR FileName, int64_t *fileIv, bool create) {
+		if (!encfs.isUniqueIV()) {
+			*fileIv = 0L;
+			return true;
+		}
 		if (this->fileIvAvailable) {
 			*fileIv = this->fileIv;
 			return true;
 		}
-		// ファイルヘッダ読み込み
+		// Read file header.
 		LARGE_INTEGER distanceToMove;
 		distanceToMove.QuadPart = 0;
 		if (!SetFilePointerEx(this->handle, distanceToMove, NULL, FILE_BEGIN)) {
@@ -28,7 +32,7 @@ namespace EncFS {
 			if (!create) {
 				return false;
 			}
-			// ファイルヘッダ新規作成
+			// Create file header.
 			fileHeader.resize(EncFSVolume::HEADER_SIZE);
 			random.GenerateBlock((byte*)&fileHeader[0], EncFSVolume::HEADER_SIZE);
 			if (!SetFilePointerEx(this->handle, distanceToMove, NULL, FILE_BEGIN)) {
@@ -48,7 +52,6 @@ namespace EncFS {
 
 	int32_t EncFSFile::read(const LPCWSTR FileName, char* buff, size_t off, DWORD len) {
 		lock_guard<decltype(this->mutexLock)> lock(this->mutexLock);
-
 		if (!this->canRead) {
 			return -1;
 		}
@@ -61,15 +64,16 @@ namespace EncFS {
 
 			//printf("read %d %d %d %d\n", fileIv, this->lastBlockNum, off, len);
 
-			// 読み込むブロックの範囲を特定
+			// Calculate block position.
+			size_t blockSize = encfs.getBlockSize();
 			size_t blockHeaderSize = encfs.getHeaderSize();
-			size_t blockDataSize = encfs.getBlockSize() - blockHeaderSize;
+			size_t blockDataSize = blockSize - blockHeaderSize;
 			size_t shift = off % blockDataSize;
 			size_t blockNum = off / blockDataSize;
 			size_t lastBlockNum = (off + len - 1) / blockDataSize;
 
 			int32_t copiedLen = 0;
-			// 直前に読み込んだブロックを利用
+			// Copy from buffer.
 			if (blockNum == this->lastBlockNum) {
 				uint32_t blockLen = (uint32_t)(this->decodeBuffer.size() - shift);
 				if (blockLen > len) {
@@ -85,19 +89,21 @@ namespace EncFS {
 				}
 			}
 
-			size_t blocksOffset = blockNum * encfs.getBlockSize();
-			size_t blocksLength = (lastBlockNum + 1) * encfs.getBlockSize() - blocksOffset;
-			blocksOffset += EncFS::EncFSVolume::HEADER_SIZE;
+			size_t blocksOffset = blockNum * blockSize;
+			size_t blocksLength = (lastBlockNum + 1) * blockSize - blocksOffset;
+			if (encfs.isUniqueIV()) {
+				blocksOffset += EncFS::EncFSVolume::HEADER_SIZE;
+			}
 
 			if (blocksLength) {
-				// 読み込み開始ブロックに移動
+				// Seek for read.
 				LARGE_INTEGER distanceToMove;
 				distanceToMove.QuadPart = blocksOffset;
 				if (!SetFilePointerEx(this->handle, distanceToMove, NULL, FILE_BEGIN)) {
 					return -1;
 				}
 
-				// 読み込み
+				// Read encrypted data.
 				DWORD readLen;
 				this->blockBuffer.resize(blocksLength);
 				if (!ReadFile(this->handle, &this->blockBuffer[0], (DWORD)blocksLength, &readLen, NULL)) {
@@ -145,32 +151,35 @@ namespace EncFS {
 			}
 			//printf("write %d %d %d %d\n", fileSize, fileIv, off, len);
 
-			// 書き込み先がファイルより大きい場合
 			if (off > fileSize) {
+				// Expand file.
 				if (!this->_setLength(FileName, fileSize, off)) {
 					return -1;
 				}
 			}
 
-			// 書き込むブロックの範囲を特定
+			// Calculate position.
+			size_t blockSize = encfs.getBlockSize();
 			size_t blockHeaderSize = encfs.getHeaderSize();
-			size_t blockDataSize = encfs.getBlockSize() - blockHeaderSize;
+			size_t blockDataSize = blockSize - blockHeaderSize;
 			size_t shift = off % blockDataSize;
 			size_t blockNum = off / blockDataSize;
 			size_t lastBlockNum = (off + len - 1) / blockDataSize;
-			size_t blocksOffset = blockNum * encfs.getBlockSize();
-			size_t blocksLength = (lastBlockNum + 1) * encfs.getBlockSize() - blocksOffset;
-			blocksOffset += EncFS::EncFSVolume::HEADER_SIZE;
+			size_t blocksOffset = blockNum * blockSize;
+			size_t blocksLength = (lastBlockNum + 1) * blockSize - blocksOffset;
+			if (encfs.isUniqueIV()) {
+				blocksOffset += EncFS::EncFSVolume::HEADER_SIZE;
+			}
 
-			// 書き込み開始ブロックに移動
+			// Seek for write,
 			LARGE_INTEGER distanceToMove;
 			distanceToMove.QuadPart = blocksOffset;
 			if (!SetFilePointerEx(this->handle, distanceToMove, NULL, FILE_BEGIN)) {
 				return -1;
 			}
 
-			// ブロックの一部に書き込む場合
 			if (shift != 0) {
+				// Write to a part of block.
 				//printf("write2 %d %d %d %d\n", blockNum, this->lastBlockNum, shift, this->decodeBuffer.size());
 				if (blockNum != this->lastBlockNum) {
 					DWORD readLen;
@@ -238,6 +247,78 @@ namespace EncFS {
 
 	}
 
+
+	int32_t EncFSFile::reverseRead(const LPCWSTR FileName, char* buff, size_t off, DWORD len) {
+		lock_guard<decltype(this->mutexLock)> lock(this->mutexLock);
+		if (!this->canRead) {
+			return -1;
+		}
+
+		int64_t fileIv = 0; // Cannot use fileIv on reverse mode.
+
+		// Calculate position.
+		// File header and block header sizes are zero on reverse mode.
+		size_t blockSize = encfs.getBlockSize();
+		size_t shift = off % blockSize;
+		size_t blockNum = off / blockSize;
+		size_t lastBlockNum = (off + len - 1) / blockSize;
+
+		size_t blocksOffset = blockNum * blockSize;
+		size_t blocksLength = (lastBlockNum + 1) * blockSize - blocksOffset;
+
+		size_t i = 0;
+		size_t blockDataLen;
+
+		if (blockNum == this->lastBlockNum) {
+			// Copy from buffer.
+			blockDataLen = len > this->encodeBuffer.size() - shift ? this->encodeBuffer.size() - shift : len;
+			memcpy(buff, &this->encodeBuffer[shift], blockDataLen);
+			blocksOffset = blockNum++ * blockSize;
+			shift = 0;
+			i += blockDataLen;
+			if (i >= len || this->encodeBuffer.size() < blockSize) {
+				return i;
+			}
+		}
+
+		// Seek for read.
+		LARGE_INTEGER distanceToMove;
+		distanceToMove.QuadPart = blocksOffset;
+		if (!SetFilePointerEx(this->handle, distanceToMove, NULL, FILE_BEGIN)) {
+			return -1;
+		}
+
+		// Read plain data.
+		DWORD readLen;
+		this->blockBuffer.resize(blocksLength);
+		if (!ReadFile(this->handle, &this->blockBuffer[0], (DWORD)blocksLength, &readLen, NULL)) {
+			return -1;
+		}
+		len = readLen;
+		if (i >= len) {
+			return i;
+		}
+
+		size_t bufferPos = 0;
+		for (; i < len; i += blockDataLen) {
+			blockDataLen = (len - i) > blockSize - shift ? blockSize - shift : (len - i);
+
+			this->decodeBuffer.resize(blockDataLen + shift);
+			memcpy(&this->decodeBuffer[0], &this->blockBuffer[bufferPos * blockSize], this->decodeBuffer.size());
+
+			this->encodeBuffer.clear();
+			encfs.encodeBlock(fileIv, this->lastBlockNum = blockNum, this->decodeBuffer, this->encodeBuffer);
+
+			memcpy(buff + i, &this->encodeBuffer[shift], blockDataLen);
+			// printf("encode %d %d\n", shift, blockDataLen);
+
+			blockNum++;
+			bufferPos++;
+			shift = 0;
+		}
+		return i;
+	}
+
 	bool EncFSFile::flush() {
 		return FlushFileBuffers(this->handle);
 	}
@@ -293,7 +374,9 @@ namespace EncFS {
 		}
 		if (shift != 0) {
 			blocksOffset = blockNum * encfs.getBlockSize();
-			blocksOffset += EncFS::EncFSVolume::HEADER_SIZE;
+			if (encfs.isUniqueIV()) {
+				blocksOffset += EncFS::EncFSVolume::HEADER_SIZE;
+			}
 			DWORD readLen;
 			this->encodeBuffer.resize(encfs.getBlockSize());
 			distanceToMove.QuadPart = blocksOffset;

@@ -14,25 +14,33 @@ using namespace CryptoPP;
 
 namespace EncFS
 {
+	enum EncFSMode {
+		STANDARD = 1,
+		PARANOIA = 2
+	};
+
 	/**
-	EncFSのボリューム設定です。
-	このクラスは基礎的な暗号化、復号化機能を提供しています。
-	loadConfig(), unlock() を除いてマルチスレッドに対応しています。
+	EncFS volume configuration.
+	This class provides foundermental encode/decode functions.
+	Functions are thread-safe except loadConfig(), unlock().
 	**/
 	class EncFSVolume {
 	public:
-		/** ブロックのヘッダーサイズ。 **/
+		/** Block header size **/
 		static const size_t HEADER_SIZE = 8;
 
 	private:
-		/** 暗号化キーのサイズ。192または256。 */
+		bool reverse;
+
+		/** Key size. 192 or 256。 */
 		int keySize;
-		/** ファイル内のブロックサイズ。1024だけ。 */
+		/** Block size of data. Fixed to 1024. */
 		int blockSize;
+		/** Generated different IV for each files. */
 		bool uniqueIV;
-		/** ファイル名の暗号化を上位のディレクトリ名に依存させるか。 */
+		/** Generate filename IV from parent file path. */
 		bool chainedNameIV;
-		/** ファイル内の暗号化を上位のディレクトリ名に依存させるか。 */
+		/** Generate content IV from parent file path. */
 		bool externalIVChaining;
 		int blockMACBytes;
 		int blockMACRandBytes;
@@ -44,9 +52,9 @@ namespace EncFS
 		int saltLen;
 		string saltData;
 
-		/** 鍵導出関数の繰り返し回数。 */
+		/** Iteration count of key derivation function. */
 		int kdfIterations;
-		/**  鍵導出関数にかかる見積もり時間。　*/
+		/** Expected time for execute key derivation function.　*/
 		int desiredKDFDuration;
 
 		string volumeKey;
@@ -74,14 +82,14 @@ namespace EncFS
 		~EncFSVolume() {};
 
 		/**
-		EncFSの設定を読み込みます。次の形式に固定されます。
-		.encfs6.xml 形式
+		Load EncFS configuration file. There are rectrictions:
+		.encfs6.xml format
 		cipherAlg ssl/aes 3.0
 		nameAlg nameio/block 3.0
 		**/
-		void load(const string &xml);
+		void load(const string &xml, bool reverse);
 
-		void create(char* password);
+		void create(char* password, EncFSMode mode, bool reverse);
 
 		void save(string &xml);
 
@@ -97,15 +105,22 @@ namespace EncFS
 		inline bool isExternalIVChaining() {
 			return this->externalIVChaining;
 		}
+		inline bool isUniqueIV() {
+			return this->uniqueIV;
+		}
+		inline bool isReverse() {
+			return this->reverse;
+		}
 
 		/**
-		ボリュームの暗号化を解除して読み書きの操作を実行可能にします。
+		Decode volume key.
 		**/
 		void unlock(char* password);
 
 		void encodeFileName(const string &plainFileName, const string &plainDirPath, string &encodedFileName);
 		void decodeFileName(const string &encodedFileName, const string &plainDirPath, string &plainFileName);
 		void encodeFilePath(const string &plainFilePath, string &encodedFilePath);
+		void decodeFilePath(const string &plainFilePath, string &encodedFilePath);
 		size_t toDecodedLength(const size_t encodedLength);
 		size_t toEncodedLength(const size_t decodedLength);
 
@@ -119,6 +134,7 @@ namespace EncFS
 		void deriveKey(char* password, string &pbkdf2Key);
 		void processFileName(SymmetricCipher &cipher, mutex &cipherLock, const string &fileIv, const string &binFileName, string &fileName);
 		void codeBlock(const int64_t fileIv, const int64_t blockNum, const bool encode, const string &encodedBlock, string &plainBlock);
+		void codeFilePath(const string &srcFilePath, string &destFilePath, bool encode);
 	};
 
 	class EncFSBadConfigurationException : runtime_error {
