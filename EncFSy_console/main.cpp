@@ -201,9 +201,8 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 	if (list) {
 		// List drives.
 		ULONG nbRead = 0;
-		DOKAN_CONTROL dokanControl[DOKAN_MAX_INSTANCES];
-		if (!DokanGetMountPointList(dokanControl, DOKAN_MAX_INSTANCES, FALSE,
-			&nbRead)) {
+		PDOKAN_CONTROL dokanControl = DokanGetMountPointList(FALSE, &nbRead);
+		if (!dokanControl) {
 			return -1;
 		}
 

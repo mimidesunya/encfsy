@@ -110,13 +110,13 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>C:\Program Files\Dokan\Dokan Library-1.2.1\include\dokan;$(SolutionDir)..\cryptopp-CRYPTOPP_7_0_0;$(SolutionDir)\EncFSy_lib</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Program Files\Dokan\DokanLibrary-1.4.0\include\dokan;$(SolutionDir)..\cryptopp-CRYPTOPP_8_2_0;$(SolutionDir)\EncFSy_lib</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>C:\Program Files\Dokan\Dokan Library-1.2.1\lib;$(SolutionDir)..\cryptopp-CRYPTOPP_7_0_0\x64\Output\Debug</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>C:\Program Files\Dokan\DokanLibrary-1.4.0\lib;$(SolutionDir)..\cryptopp-CRYPTOPP_8_2_0\x64\Output\Release</AdditionalLibraryDirectories>
       <AdditionalDependencies>dokan1.lib;cryptlib.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <StackReserveSize>12582912</StackReserveSize>
     </Link>
@@ -150,7 +150,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>C:\Program Files\Dokan\Dokan Library-1.2.1\include\dokan;$(SolutionDir)..\cryptopp-CRYPTOPP_7_0_0;$(SolutionDir)\EncFSy_lib</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Program Files\Dokan\DokanLibrary-1.4.0\include\dokan;$(SolutionDir)..\cryptopp-CRYPTOPP_8_2_0;$(SolutionDir)\EncFSy_lib</AdditionalIncludeDirectories>
       <ForcedIncludeFiles>stdafx.h</ForcedIncludeFiles>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <PrecompiledHeaderFile />
@@ -160,7 +160,7 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>false</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>C:\Program Files\Dokan\Dokan Library-1.2.1\lib;$(SolutionDir)..\cryptopp-CRYPTOPP_7_0_0\x64\Output\Release</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>C:\Program Files\Dokan\DokanLibrary-1.4.0\lib;$(SolutionDir)..\cryptopp-CRYPTOPP_8_2_0\x64\Output\Release</AdditionalLibraryDirectories>
       <AdditionalDependencies>dokan1.lib;cryptlib.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <StackReserveSize>12582912</StackReserveSize>
     </Link>

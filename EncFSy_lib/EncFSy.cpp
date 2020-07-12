@@ -1583,11 +1583,17 @@ static NTSTATUS DOKAN_CALLBACK EncFSDokanGetDiskFreeSpace(
 	PULONGLONG TotalNumberOfFreeBytes, PDOKAN_FILE_INFO DokanFileInfo) {
 	UNREFERENCED_PARAMETER(DokanFileInfo);
 
+	WCHAR volumeRoot[4];
+	volumeRoot[0] = g_efo.RootDirectory[0];
+	volumeRoot[1] = ':';
+	volumeRoot[2] = '\\';
+	volumeRoot[3] = '\0';
+
 	ULARGE_INTEGER lpFreeBytesAvailable;
 	ULARGE_INTEGER lpTotalNumberOfBytes;
 	ULARGE_INTEGER lpTotalNumberOfFreeBytes;
 	GetDiskFreeSpaceExW(
-		L"G:\\",
+		volumeRoot,
 		&lpFreeBytesAvailable,
 		&lpTotalNumberOfBytes,
 		&lpTotalNumberOfFreeBytes);
