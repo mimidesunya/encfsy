@@ -38,6 +38,7 @@ void ShowUsage() {
 		"  -u mountPoint \t\t\t Unmount.\n"
 		"  -l \t\t\t\t\t List mount pounts.\n"
 		"  -v \t\t\t\t\t Enable debug output to an attached debugger.\n"
+		"  -s \t\t\t\t\t Use stderr for debug output.\n"
 		"  -i Timeout (Milliseconds ex. 30000)\t Timeout until a running operation is aborted and the device is unmounted. Default to 30000.\n"
 		"  -t ThreadCount (ex. 5)\t\t Number of threads to be used internally by Dokan library.\n\t\t\t\t\t More threads will handle more event at the same time. Default to 5.\n"
 		"  --dokan-network UNC (ex. \\host\\myfs)\t UNC name used for network volume.\n"

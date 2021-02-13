@@ -425,7 +425,6 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
 		}
 
 		// ファイルヘッダを見るため、書込み可能なファイルは全て読める
-		bool canRead = genericDesiredAccess & GENERIC_READ;
 		if (genericDesiredAccess & GENERIC_WRITE) {
 			genericDesiredAccess |= GENERIC_READ;
 		}
@@ -467,7 +466,7 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
 			}
 
 			DokanFileInfo->Context =
-				(ULONG64)new EncFS::EncFSFile(handle, canRead); // save the file handle in Context
+				(ULONG64)new EncFS::EncFSFile(handle, true); // save the file handle in Context
 
 			if (creationDisposition == OPEN_ALWAYS ||
 				creationDisposition == CREATE_ALWAYS) {
@@ -580,7 +579,11 @@ static NTSTATUS DOKAN_CALLBACK EncFSReadFile(LPCWSTR FileName, LPVOID Buffer,
 			LARGE_INTEGER distanceToMove;
 			distanceToMove.QuadPart = Offset;
 			if (!SetFilePointerEx(encfsFile->getHandle(), distanceToMove, NULL, FILE_BEGIN)) {
-				readLen = -1;
+				DWORD error = GetLastError();
+				DbgPrint(L"\tseek error, offset = %d\n\n", offset);
+				if (opened)
+					delete encfsFile;
+				return DokanNtStatusFromWin32(error);
 			}
 			else if (!ReadFile(encfsFile->getHandle(), Buffer, BufferLength, ReadLength, NULL)) {
 				readLen = -1;
@@ -598,14 +601,16 @@ static NTSTATUS DOKAN_CALLBACK EncFSReadFile(LPCWSTR FileName, LPVOID Buffer,
 	}
 	if (readLen == -1) {
 		DWORD error = GetLastError();
-		DbgPrint(L"\tread error = %u, buffer length = %d, read length = %d\n\n",
-			error, BufferLength, readLen);
+		DbgPrint(L"\tread error = %u, buffer length = %d, read length = %d, offset = %d\n\n",
+			error, BufferLength, *ReadLength, offset);
 		if (opened)
 			delete encfsFile;
 		return DokanNtStatusFromWin32(error);
 
 	}
 	*ReadLength = readLen;
+	DbgPrint(L"\tByte to read: %d, Byte read %d, offset %d\n\n", BufferLength,
+		*ReadLength, offset);
 
 	if (opened)
 		delete encfsFile;
@@ -640,7 +645,7 @@ static NTSTATUS DOKAN_CALLBACK EncFSWriteFile(LPCWSTR FileName, LPCVOID Buffer,
 				DbgPrint(L"\tCreateFile error : %d\n\n", error);
 				return DokanNtStatusFromWin32(error);
 			}
-			encfsFile = new EncFS::EncFSFile(handle, false);
+			encfsFile = new EncFS::EncFSFile(handle, true);
 			opened = TRUE;
 		}
 		else {
@@ -729,6 +734,8 @@ EncFSFindFiles(LPCWSTR FileName,
 	if (filePath[fileLen - 1] != L'\\') {
 		filePath[fileLen++] = L'\\';
 	}
+	if (fileLen + 1 >= DOKAN_MAX_PATH)
+		return STATUS_BUFFER_OVERFLOW;
 	filePath[fileLen] = L'*';
 	filePath[fileLen + 1] = L'\0';
 
@@ -772,6 +779,7 @@ EncFSFindFiles(LPCWSTR FileName,
 			}
 			wstring wPlainFileName = strConv.from_bytes(cPlainFileName);
 			wcscpy_s(findData.cFileName, wPlainFileName.c_str());
+			findData.cAlternateFileName[0] = 0;
 
 			// Calculate file size
 			int64_t size = (findData.nFileSizeHigh * ((int64_t)MAXDWORD + 1)) + findData.nFileSizeLow;
@@ -819,6 +827,8 @@ EncFSDeleteDirectory(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInfo) {
 	if (filePath[fileLen - 1] != L'\\') {
 		filePath[fileLen++] = L'\\';
 	}
+	if (fileLen + 1 >= DOKAN_MAX_PATH)
+		return STATUS_BUFFER_OVERFLOW;
 	filePath[fileLen] = L'*';
 	filePath[fileLen + 1] = L'\0';
 
@@ -1246,6 +1256,8 @@ static NTSTATUS DOKAN_CALLBACK EncFSGetFileInformation(
 	size = encfs.isReverse() ? encfs.toEncodedLength(size) : encfs.toDecodedLength(size);
 	HandleFileInformation->nFileSizeLow = size & MAXDWORD;
 	HandleFileInformation->nFileSizeHigh = (size >> 32) & MAXDWORD;
+	DbgPrint(L"\tVirtualFileSize = %d\n",
+		HandleFileInformation->nFileSizeLow);
 
 	DbgPrint(L"FILE ATTRIBUTE  = %d\n", HandleFileInformation->dwFileAttributes);
 
@@ -1509,8 +1521,16 @@ static NTSTATUS DOKAN_CALLBACK EncFSSetFileSecurity(
 
 	if (!SetUserObjectSecurity(handle, SecurityInformation, SecurityDescriptor)) {
 		int error = GetLastError();
-		DbgPrint(L"  SetUserObjectSecurity error: %d\n", error);
-		return DokanNtStatusFromWin32(error);
+		if (error == ERROR_INSUFFICIENT_BUFFER) {
+			DbgPrint(L"  GetUserObjectSecurity error: ERROR_INSUFFICIENT_BUFFER\n");
+			CloseHandle(handle);
+			return STATUS_BUFFER_OVERFLOW;
+		}
+		else {
+			DbgPrint(L"  SetUserObjectSecurity error: %d\n", error);
+			CloseHandle(handle);
+			return DokanNtStatusFromWin32(error);
+		}
 	}
 	return STATUS_SUCCESS;
 }

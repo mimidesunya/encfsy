@@ -53,6 +53,7 @@ namespace EncFS {
 	int32_t EncFSFile::read(const LPCWSTR FileName, char* buff, size_t off, DWORD len) {
 		lock_guard<decltype(this->mutexLock)> lock(this->mutexLock);
 		if (!this->canRead) {
+			SetLastError(ERROR_READ_FAULT);
 			return -1;
 		}
 
@@ -137,6 +138,7 @@ namespace EncFS {
 			return copiedLen;
 		}
 		catch (const EncFSInvalidBlockException &ex) {
+			SetLastError(ERROR_FILE_CORRUPT);
 			return -1;
 		}
 	}
@@ -251,6 +253,7 @@ namespace EncFS {
 	int32_t EncFSFile::reverseRead(const LPCWSTR FileName, char* buff, size_t off, DWORD len) {
 		lock_guard<decltype(this->mutexLock)> lock(this->mutexLock);
 		if (!this->canRead) {
+			SetLastError(ERROR_READ_FAULT);
 			return -1;
 		}
 
