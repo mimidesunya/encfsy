@@ -13,6 +13,7 @@ For 64bit environment only.
 	  -u mountPoint                          Unmount.
 	  -l                                     List mount pounts.
 	  -v                                     Enable debug output to an attached debugger.
+	  -s                                     Use stderr for debug output.
 	  -i Timeout (Milliseconds ex. 30000)    Timeout until a running operation is aborted and the device is unmounted. Default to 30000.
 	  -t ThreadCount (ex. 5)                 Number of threads to be used internally by Dokan library.
 	                                         More threads will handle more event at the same time. Default to 5.
