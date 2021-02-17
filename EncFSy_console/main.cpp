@@ -65,7 +65,7 @@ void getpass(const char *prompt, char* password, int size)
 	const char BACKSPACE = 8;
 	const char RETURN = 13;
 
-	unsigned char ch = 0;
+	unsigned long ch = 0; // ReadConsoleで2バイト以上読み込まれる可能性があるため
 	int a = 0;
 
 	cout << prompt;
@@ -99,7 +99,7 @@ void getpass(const char *prompt, char* password, int size)
 		}
 	}
 	cout << endl;
-	password[a++] = '\0';
+	password[a] = '\0';
 }
 
 

@@ -44,7 +44,7 @@ namespace EncFS {
 			}
 		}
 	
-		string cFileName = strConv.to_bytes(wstring(FileName));
+		string cFileName = this->strConv.to_bytes(wstring(FileName));
 		this->fileIv = *fileIv = encfs.decodeFileIv(cFileName, fileHeader);
 		this->fileIvAvailable = true;
 		return true;
@@ -145,10 +145,10 @@ namespace EncFS {
 
 	int32_t EncFSFile::write(const LPCWSTR FileName, size_t fileSize, const char* buff, size_t off, DWORD len) {
 		lock_guard<decltype(this->mutexLock)> lock(this->mutexLock);
-
 		try {
 			int64_t fileIv;
 			if (!this->getFileIV(FileName, &fileIv, true)) {
+				SetLastError(ERROR_FILE_CORRUPT);
 				return -1;
 			}
 			//printf("write %d %d %d %d\n", fileSize, fileIv, off, len);
@@ -156,6 +156,7 @@ namespace EncFS {
 			if (off > fileSize) {
 				// Expand file.
 				if (!this->_setLength(FileName, fileSize, off)) {
+					SetLastError(ERROR_FILE_CORRUPT);
 					return -1;
 				}
 			}
@@ -244,6 +245,7 @@ namespace EncFS {
 			return len;
 		}
 		catch (const EncFSInvalidBlockException &ex) {
+			SetLastError(ERROR_FILE_CORRUPT);
 			return -1;
 		}
 

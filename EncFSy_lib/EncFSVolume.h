@@ -157,6 +157,16 @@ namespace EncFS
 		}
 	};
 
+	class EncFSIllegalStateException : exception {
+	public:
+		EncFSIllegalStateException() {}
+		~EncFSIllegalStateException() {};
+
+		const char* what() const noexcept {
+			return "Illegal state.";
+		}
+	};
+
 	class EncFSInvalidBlockException : exception {
 	public:
 		EncFSInvalidBlockException() {}

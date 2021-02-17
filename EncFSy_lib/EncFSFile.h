@@ -9,7 +9,6 @@
 #include <mutex>
 
 extern EncFS::EncFSVolume encfs;
-extern wstring_convert<codecvt_utf8_utf16<wchar_t>> strConv;
 
 namespace EncFS
 {
@@ -26,17 +25,23 @@ namespace EncFS
 		string encodeBuffer;
 		string decodeBuffer;
 		mutex mutexLock;
+		wstring_convert<codecvt_utf8_utf16<wchar_t>> strConv;
 
 	public:
 		EncFSFile(HANDLE handle, bool canRead) {
+			if (!handle || handle == INVALID_HANDLE_VALUE) {
+				throw EncFSIllegalStateException();
+			}
 			this->handle = handle;
 			this->canRead = canRead;
 			this->fileIvAvailable = false;
+			this->fileIv = 0L;
 			this->lastBlockNum = -1;
 		}
 
 		~EncFSFile() {
 			CloseHandle(this->handle);
+			this->handle = 0L; // HACK
 		}
 
 		inline HANDLE getHandle() {
