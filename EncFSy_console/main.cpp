@@ -65,7 +65,7 @@ void getpass(const char *prompt, char* password, int size)
 	const char BACKSPACE = 8;
 	const char RETURN = 13;
 
-	unsigned long ch = 0; // ReadConsoleで2バイト以上読み込まれる可能性があるため
+	int ch = 0; // ReadConsoleで2バイト以上読み込まれる可能性があるため
 	int a = 0;
 
 	cout << prompt;
@@ -95,7 +95,7 @@ void getpass(const char *prompt, char* password, int size)
 		}
 		else
 		{
-			password[a++] = ch;
+			password[a++] = (char)ch;
 		}
 	}
 	cout << endl;
@@ -105,7 +105,6 @@ void getpass(const char *prompt, char* password, int size)
 
 // .\WinEncFS.exe /r G:\EncFSTest /l i /t 5
 int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
-	int status;
 	ULONG command;
 
 	bool unmount = false, list = false;
@@ -114,9 +113,7 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 	ZeroMemory(&efo, sizeof(EncFSOptions));
 	efo.Reverse = FALSE;
 	efo.Timeout = 30000;
-	efo.ThreadCount = 5;
-
-	WCHAR ConfigFile[DOKAN_MAX_PATH];
+	efo.SingleThread = FALSE;
 
 	for (command = 1; command < argc; command++) {
 		if (argv[command][0] == L'-') {
@@ -141,8 +138,7 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 				efo.Timeout = (ULONG)_wtol(argv[command]);
 				break;
 			case L't':
-				command++;
-				efo.ThreadCount = (USHORT)_wtoi(argv[command]);
+				efo.SingleThread = TRUE;
 				break;
 			case L'-':
 				if (wcscmp(argv[command], L"--dokan-network") == 0) {
@@ -202,14 +198,14 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 	if (list) {
 		// List drives.
 		ULONG nbRead = 0;
-		PDOKAN_CONTROL dokanControl = DokanGetMountPointList(FALSE, &nbRead);
-		if (!dokanControl) {
+		PDOKAN_MOUNT_POINT_INFO mountPoints = DokanGetMountPointList(FALSE, &nbRead);
+		if (!mountPoints) {
 			return -1;
 		}
 
 		wstring_convert<codecvt_utf8_utf16<wchar_t>> strConv;
-		for (int i = 0; i < nbRead; ++i) {
-			string cMountPoint = strConv.to_bytes(wstring(dokanControl[i].MountPoint));
+		for (ULONG i = 0; i < nbRead; ++i) {
+			string cMountPoint = strConv.to_bytes(wstring(mountPoints[i].MountPoint));
 			printf("%s\n", cMountPoint.c_str());
 		}
 	}
@@ -224,9 +220,18 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 	else {
 		// Mount drive.
 		if (argc < 3) {
-			ShowUsage();
-			return EXIT_FAILURE;
+			//ShowUsage();
+			//return EXIT_FAILURE;
+
+			//efo.g_DebugMode = FALSE;
+			//efo.g_UseStdErr = TRUE;
+			wcscpy_s(efo.RootDirectory, sizeof(efo.RootDirectory) / sizeof(WCHAR), L"G:\\EncFS");
+			wcscpy_s(efo.MountPoint, sizeof(efo.MountPoint) / sizeof(WCHAR), L"L");
+			char password[100];
+			strcpy_s(password, "kalmaegi");
+			return StartEncFS(efo, password);
 		}
+
 		char password[100];
 		if (!IsEncFSExists(efo.RootDirectory)) {
 			printf("EncFS configuration file doesn't exist.\n");

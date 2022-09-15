@@ -7,12 +7,13 @@ static AutoSeededX917RNG<CryptoPP::AES> random;
 
 namespace EncFS {
 	bool EncFSFile::getFileIV(const LPCWSTR FileName, int64_t *fileIv, bool create) {
-		if (!encfs.isUniqueIV()) {
-			*fileIv = 0L;
-			return true;
-		}
 		if (this->fileIvAvailable) {
 			*fileIv = this->fileIv;
+			return true;
+		}
+		if (!encfs.isUniqueIV()) {
+			this->fileIv = *fileIv = 0L;
+			this->fileIvAvailable = true;
 			return true;
 		}
 		// Read file header.
@@ -60,7 +61,7 @@ namespace EncFS {
 		try {
 			int64_t fileIv;
 			if (!this->getFileIV(FileName, &fileIv, false)) {
-				return 0;
+				return -1;
 			}
 
 			//printf("read %d %d %d %d\n", fileIv, this->lastBlockNum, off, len);

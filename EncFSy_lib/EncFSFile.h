@@ -41,7 +41,7 @@ namespace EncFS
 
 		~EncFSFile() {
 			CloseHandle(this->handle);
-			this->handle = 0L; // HACK
+			this->handle = INVALID_HANDLE_VALUE;
 		}
 
 		inline HANDLE getHandle() {

@@ -9,12 +9,12 @@ enum EncFSMode {
 };
 
 struct EncFSOptions {
-	BOOL g_UseStdErr;
-	BOOL g_DebugMode;
-	BOOL g_HasSeSecurityPrivilege;
-	BOOL g_ImpersonateCallerUser;
+	BOOLEAN g_UseStdErr;
+	BOOLEAN g_DebugMode;
+	BOOLEAN g_HasSeSecurityPrivilege;
+	BOOLEAN g_ImpersonateCallerUser;
 
-	USHORT ThreadCount;
+	BOOLEAN SingleThread;
 	ULONG Timeout;
 	ULONG AllocationUnitSize;
 	ULONG DokanOptions;
@@ -25,7 +25,7 @@ struct EncFSOptions {
 	WCHAR MountPoint[DOKAN_MAX_PATH];
 	WCHAR UNCName[DOKAN_MAX_PATH];
 
-	BOOL Reverse;
+	BOOLEAN Reverse;
 	PWCHAR ConfigFile;
 };
 

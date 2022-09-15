@@ -44,33 +44,57 @@ EncFSOptions g_efo;
 
 mutex dirMoveLock;
 
-static void DbgPrint(LPCWSTR format, ...) {
-	if (g_efo.g_DebugMode) {
-		const WCHAR *outputString;
-		WCHAR *buffer = NULL;
-		size_t length;
-		va_list argp;
+static void PrintF(LPCWSTR format, ...) {
+	const WCHAR* outputString;
+	WCHAR* buffer = NULL;
+	size_t length;
+	va_list argp;
 
-		va_start(argp, format);
-		length = _vscwprintf(format, argp) + 1;
-		buffer = (WCHAR*)_malloca(length * sizeof(WCHAR));
-		if (buffer) {
-			vswprintf_s(buffer, length, format, argp);
-			outputString = buffer;
-		}
-		else {
-			outputString = format;
-		}
-		if (g_efo.g_UseStdErr)
-			fputws(outputString, stderr);
-		else
-			OutputDebugStringW(outputString);
-		if (buffer)
-			_freea(buffer);
-		va_end(argp);
-		if (g_efo.g_UseStdErr)
-			fflush(stderr);
+	va_start(argp, format);
+	length = _vscwprintf(format, argp) + 1;
+	buffer = (WCHAR*)_malloca(length * sizeof(WCHAR));
+	if (buffer) {
+		vswprintf_s(buffer, length, format, argp);
+		outputString = buffer;
 	}
+	else {
+		outputString = format;
+	}
+	fputws(outputString, stderr);
+	_freea(buffer);
+	va_end(argp);
+	fflush(stderr);
+}
+
+static void DbgPrint(LPCWSTR format, ...) {
+	if (!g_efo.g_DebugMode) {
+		return;
+	}
+
+	const WCHAR* outputString;
+	WCHAR* buffer = NULL;
+	size_t length;
+	va_list argp;
+
+	va_start(argp, format);
+	length = _vscwprintf(format, argp) + 1;
+	buffer = (WCHAR*)_malloca(length * sizeof(WCHAR));
+	if (buffer) {
+		vswprintf_s(buffer, length, format, argp);
+		outputString = buffer;
+	}
+	else {
+		outputString = format;
+	}
+	if (g_efo.g_UseStdErr)
+		fputws(outputString, stderr);
+	else
+		OutputDebugStringW(outputString);
+	if (buffer)
+		_freea(buffer);
+	va_end(argp);
+	if (g_efo.g_UseStdErr)
+		fflush(stderr);
 }
 
 /**
@@ -312,7 +336,6 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
 
 	if (DokanFileInfo->IsDirectory) {
 		// It is a create directory request
-
 		if (creationDisposition == CREATE_NEW ||
 			creationDisposition == OPEN_ALWAYS) {
 
@@ -346,7 +369,6 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
 		}
 
 		if (status == STATUS_SUCCESS) {
-
 			//Check first if we're trying to open a file as a directory.
 			if (fileAttr != INVALID_FILE_ATTRIBUTES &&
 				!(fileAttr & FILE_ATTRIBUTE_DIRECTORY) &&
@@ -384,7 +406,6 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
 			else {
 				DokanFileInfo->Context =
 					(ULONG64)new EncFS::EncFSFile(handle, false); // save the file handle in Context
-
 																  // Open succeed but we need to inform the driver
 																  // that the dir open and not created by returning STATUS_OBJECT_NAME_COLLISION
 				if (creationDisposition == OPEN_ALWAYS &&
@@ -433,6 +454,11 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
 		// ヘッダの修正のため削除・移動可能なファイルは全て読み書きできる
 		if (genericDesiredAccess & DELETE) {
 			genericDesiredAccess |= GENERIC_READ | GENERIC_WRITE;
+		}
+
+		// FILE_ATTRIBUTE_NORMALは単独のみ有効
+		if (fileAttributesAndFlags & FILE_ATTRIBUTE_NORMAL) {
+			fileAttributesAndFlags = FILE_ATTRIBUTE_NORMAL;
 		}
 
 		handle = CreateFileW(
@@ -612,7 +638,7 @@ static NTSTATUS DOKAN_CALLBACK EncFSReadFile(LPCWSTR FileName, LPVOID Buffer,
 	if (readLen == -1) {
 		DWORD error = GetLastError();
 		DbgPrint(L"\tread error = %u, buffer length = %d, read length = %d, offset = %d\n\n",
-			error, BufferLength, *ReadLength, offset);
+			error, BufferLength, readLen, offset);
 		if (opened) {
 			delete encfsFile;
 		}
@@ -1658,11 +1684,12 @@ NTSYSCALLAPI NTSTATUS NTAPI NtQueryInformationFile(
 * END
 */
 
-static NTSTATUS DOKAN_CALLBACK EncFSMounted(PDOKAN_FILE_INFO DokanFileInfo) {
+static NTSTATUS DOKAN_CALLBACK EncFSMounted(LPCWSTR MountPoint,
+	PDOKAN_FILE_INFO DokanFileInfo) {
 	UNREFERENCED_PARAMETER(DokanFileInfo);
 
-	DbgPrint(L"Mounted\n");
-	ShellExecute(NULL, L"open", DokanFileInfo->DokanOptions->MountPoint, NULL, NULL, SW_SHOWDEFAULT);
+	DbgPrint(L"Mounted as %s\n", MountPoint);
+	ShellExecute(NULL, L"open", MountPoint, NULL, NULL, SW_SHOWDEFAULT);
 	return STATUS_SUCCESS;
 }
 
@@ -1722,17 +1749,8 @@ int CreateEncFS(LPCWSTR rootDir, char *password, EncFSMode mode, bool reverse) {
 }
 
 int StartEncFS(EncFSOptions &efo, char *password) {
-	PDOKAN_OPERATIONS dokanOperations =
-		(PDOKAN_OPERATIONS)malloc(sizeof(DOKAN_OPERATIONS));
-	if (dokanOperations == NULL) {
-		return EXIT_FAILURE;
-	}
-	PDOKAN_OPTIONS dokanOptions = (PDOKAN_OPTIONS)malloc(sizeof(DOKAN_OPTIONS));
-	if (dokanOptions == NULL) {
-		free(dokanOperations);
-		return EXIT_FAILURE;
-	}
-
+	DOKAN_OPERATIONS dokanOperations;
+	DOKAN_OPTIONS dokanOptions;
 
 	string configFile;
 	wstring_convert<codecvt_utf8_utf16<wchar_t>> strConv;
@@ -1763,48 +1781,42 @@ int StartEncFS(EncFSOptions &efo, char *password) {
 		return EXIT_FAILURE;
 	}
 
-	ZeroMemory(dokanOptions, sizeof(DOKAN_OPTIONS));
-	dokanOptions->Version = DOKAN_VERSION;
-	dokanOptions->Timeout = efo.Timeout;
-	dokanOptions->MountPoint = efo.MountPoint;
-	dokanOptions->ThreadCount = efo.ThreadCount;
-	dokanOptions->Options = efo.DokanOptions;
-	dokanOptions->AllocationUnitSize = efo.AllocationUnitSize;
-	dokanOptions->SectorSize = efo.SectorSize;
+	ZeroMemory(&dokanOptions, sizeof(DOKAN_OPTIONS));
+	dokanOptions.Version = DOKAN_VERSION;
+	dokanOptions.Timeout = efo.Timeout;
+	dokanOptions.MountPoint = efo.MountPoint;
+	dokanOptions.SingleThread = efo.SingleThread;
+	dokanOptions.Options = efo.DokanOptions;
+	dokanOptions.AllocationUnitSize = efo.AllocationUnitSize;
+	dokanOptions.SectorSize = efo.SectorSize;
 
 	if (efo.UNCName && wcscmp(efo.UNCName, L"") != 0 &&
-		!(dokanOptions->Options & DOKAN_OPTION_NETWORK)) {
+		!(dokanOptions.Options & DOKAN_OPTION_NETWORK)) {
 		fwprintf(
 			stderr,
 			L"  Warning: UNC provider name should be set on network drive only.\n");
-		dokanOptions->UNCName = efo.UNCName;
+		dokanOptions.UNCName = efo.UNCName;
 	}
 	else {
-		dokanOptions->UNCName = L"";
+		dokanOptions.UNCName = L"";
 	}
 
-	if (dokanOptions->Options & DOKAN_OPTION_NETWORK &&
-		dokanOptions->Options & DOKAN_OPTION_MOUNT_MANAGER) {
+	if (dokanOptions.Options & DOKAN_OPTION_NETWORK &&
+		dokanOptions.Options & DOKAN_OPTION_MOUNT_MANAGER) {
 		fwprintf(stderr, L"Mount manager cannot be used on network drive.\n");
-		free(dokanOperations);
-		free(dokanOptions);
 		return EXIT_FAILURE;
 	}
 
-	if (!(dokanOptions->Options & DOKAN_OPTION_MOUNT_MANAGER) &&
+	if (!(dokanOptions.Options & DOKAN_OPTION_MOUNT_MANAGER) &&
 		wcscmp(efo.MountPoint, L"") == 0) {
 		fwprintf(stderr, L"Mount Point required.\n");
-		free(dokanOperations);
-		free(dokanOptions);
 		return EXIT_FAILURE;
 	}
 
-	if ((dokanOptions->Options & DOKAN_OPTION_MOUNT_MANAGER) &&
-		(dokanOptions->Options & DOKAN_OPTION_CURRENT_SESSION)) {
+	if ((dokanOptions.Options & DOKAN_OPTION_MOUNT_MANAGER) &&
+		(dokanOptions.Options & DOKAN_OPTION_CURRENT_SESSION)) {
 		fwprintf(stderr,
 			L"Mount Manager always mount the drive for all user sessions.\n");
-		free(dokanOperations);
-		free(dokanOptions);
 		return EXIT_FAILURE;
 	}
 
@@ -1834,42 +1846,42 @@ int StartEncFS(EncFSOptions &efo, char *password) {
 	}
 
 	if (efo.g_DebugMode) {
-		dokanOptions->Options |= DOKAN_OPTION_DEBUG;
+		dokanOptions.Options |= DOKAN_OPTION_DEBUG;
 	}
 	if (efo.g_UseStdErr) {
-		dokanOptions->Options |= DOKAN_OPTION_STDERR;
+		dokanOptions.Options |= DOKAN_OPTION_STDERR;
 	}
 	if (efo.Reverse) {
-		dokanOptions->Options |= DOKAN_OPTION_WRITE_PROTECT;
+		dokanOptions.Options |= DOKAN_OPTION_WRITE_PROTECT;
 	}
 
-	dokanOptions->Options |= DOKAN_OPTION_ALT_STREAM;
+	dokanOptions.Options |= DOKAN_OPTION_ALT_STREAM;
 
-	ZeroMemory(dokanOperations, sizeof(DOKAN_OPERATIONS));
-	dokanOperations->ZwCreateFile = EncFSCreateFile;
-	dokanOperations->Cleanup = EncFSCleanup;
-	dokanOperations->CloseFile = EncFSCloseFile;
-	dokanOperations->ReadFile = EncFSReadFile;
-	dokanOperations->WriteFile = EncFSWriteFile;
-	dokanOperations->FlushFileBuffers = EncFSFlushFileBuffers;
-	dokanOperations->GetFileInformation = EncFSGetFileInformation;
-	dokanOperations->FindFiles = EncFSFindFiles;
-	dokanOperations->FindFilesWithPattern = NULL;
-	dokanOperations->SetFileAttributes = EncFSSetFileAttributes;
-	dokanOperations->SetFileTime = EncFSSetFileTime;
-	dokanOperations->DeleteFile = EncFSDeleteFile;
-	dokanOperations->DeleteDirectory = EncFSDeleteDirectory;
-	dokanOperations->MoveFile = EncFSMoveFile;
-	dokanOperations->SetEndOfFile = EncFSSetEndOfFile;
-	dokanOperations->SetAllocationSize = EncFSSetAllocationSize;
-	dokanOperations->LockFile = EncFSLockFile;
-	dokanOperations->UnlockFile = EncFSUnlockFile;
-	dokanOperations->GetFileSecurity = EncFSGetFileSecurity;
-	dokanOperations->SetFileSecurity = EncFSSetFileSecurity;
-	dokanOperations->GetDiskFreeSpace = EncFSDokanGetDiskFreeSpace;
-	dokanOperations->GetVolumeInformation = EncFSGetVolumeInformation;
-	dokanOperations->Unmounted = EncFSUnmounted;
-	dokanOperations->Mounted = EncFSMounted;
+	ZeroMemory(&dokanOperations, sizeof(DOKAN_OPERATIONS));
+	dokanOperations.ZwCreateFile = EncFSCreateFile;
+	dokanOperations.Cleanup = EncFSCleanup;
+	dokanOperations.CloseFile = EncFSCloseFile;
+	dokanOperations.ReadFile = EncFSReadFile;
+	dokanOperations.WriteFile = EncFSWriteFile;
+	dokanOperations.FlushFileBuffers = EncFSFlushFileBuffers;
+	dokanOperations.GetFileInformation = EncFSGetFileInformation;
+	dokanOperations.FindFiles = EncFSFindFiles;
+	dokanOperations.FindFilesWithPattern = NULL;
+	dokanOperations.SetFileAttributes = EncFSSetFileAttributes;
+	dokanOperations.SetFileTime = EncFSSetFileTime;
+	dokanOperations.DeleteFile = EncFSDeleteFile;
+	dokanOperations.DeleteDirectory = EncFSDeleteDirectory;
+	dokanOperations.MoveFile = EncFSMoveFile;
+	dokanOperations.SetEndOfFile = EncFSSetEndOfFile;
+	dokanOperations.SetAllocationSize = EncFSSetAllocationSize;
+	dokanOperations.LockFile = EncFSLockFile;
+	dokanOperations.UnlockFile = EncFSUnlockFile;
+	dokanOperations.GetFileSecurity = EncFSGetFileSecurity;
+	dokanOperations.SetFileSecurity = EncFSSetFileSecurity;
+	dokanOperations.GetDiskFreeSpace = EncFSDokanGetDiskFreeSpace;
+	dokanOperations.GetVolumeInformation = EncFSGetVolumeInformation;
+	dokanOperations.Unmounted = EncFSUnmounted;
+	dokanOperations.Mounted = EncFSMounted;
 
 	// EncFS
 	try {
@@ -1881,7 +1893,9 @@ int StartEncFS(EncFSOptions &efo, char *password) {
 	}
 
 	g_efo = efo;
-	int status = DokanMain(dokanOptions, dokanOperations);
+	DokanInit();
+	int status = DokanMain(&dokanOptions, &dokanOperations);
+	DokanShutdown();
 	switch (status) {
 	case DOKAN_SUCCESS:
 		fprintf(stderr, "Success\n");
@@ -1911,8 +1925,5 @@ int StartEncFS(EncFSOptions &efo, char *password) {
 		fprintf(stderr, "Unknown error: %d\n", status);
 		break;
 	}
-
-	free(dokanOptions);
-	free(dokanOperations);
 	return EXIT_SUCCESS;
 }
