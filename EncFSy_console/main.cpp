@@ -220,16 +220,8 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 	else {
 		// Mount drive.
 		if (argc < 3) {
-			//ShowUsage();
-			//return EXIT_FAILURE;
-
-			//efo.g_DebugMode = FALSE;
-			//efo.g_UseStdErr = TRUE;
-			wcscpy_s(efo.RootDirectory, sizeof(efo.RootDirectory) / sizeof(WCHAR), L"G:\\EncFS");
-			wcscpy_s(efo.MountPoint, sizeof(efo.MountPoint) / sizeof(WCHAR), L"L");
-			char password[100];
-			strcpy_s(password, "kalmaegi");
-			return StartEncFS(efo, password);
+			ShowUsage();
+			return EXIT_FAILURE;
 		}
 
 		char password[100];
