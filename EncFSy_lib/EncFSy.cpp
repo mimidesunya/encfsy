@@ -86,10 +86,13 @@ static void DbgPrint(LPCWSTR format, ...) {
 	else {
 		outputString = format;
 	}
-	if (g_efo.g_UseStdErr)
+	if (g_efo.g_UseStdErr) {
+		fputws(L"EncFSy ", stderr);
 		fputws(outputString, stderr);
-	else
+	}
+	else {
 		OutputDebugStringW(outputString);
+	}
 	if (buffer)
 		_freea(buffer);
 	va_end(argp);
@@ -521,14 +524,16 @@ static void DOKAN_CALLBACK EncFSCloseFile(LPCWSTR FileName,
 	WCHAR filePath[DOKAN_MAX_PATH];
 	GetFilePath(filePath, DOKAN_MAX_PATH, FileName);
 	if (DokanFileInfo->Context) {
-		DbgPrint(L"CloseFile: %s\n", filePath);
+		DbgPrint(L"CloseFile: %s %s\n", FileName, filePath);
 		DbgPrint(L"\terror : not cleanuped file\n\n");
 		EncFS::EncFSFile* encfsFile = (EncFS::EncFSFile*)DokanFileInfo->Context;
 		// Cleanup‚ÆCloseFile‚ª“¯Žž‚ÉŽÀs‚³‚ê‚é‚ÆDokanFileInfo‚ª•ÊX‚ÅDokanFileInfo->Context‚ª“¯‚¶‚É‚È‚Á‚Ä‚µ‚Ü‚¤Œ»Û‚ª‹N‚±‚é HACK
-		// printf("delA %x %x %x\n", DokanFileInfo->Context, DokanFileInfo->ProcessId, DokanFileInfo);
+		//printf("delA %x %x %x\n", DokanFileInfo->Context, DokanFileInfo->ProcessId, DokanFileInfo);
 		DokanFileInfo->Context = 0;
-		if (encfsFile->getHandle())
+		if (encfsFile->getHandle() != INVALID_HANDLE_VALUE)
 			delete encfsFile;
+		else
+			DbgPrint(L"Close: encfs invalid handle%s %s\n", FileName, filePath);
 	}
 	else {
 		DbgPrint(L"Close: %s\n\n", filePath);
@@ -541,12 +546,14 @@ static void DOKAN_CALLBACK EncFSCleanup(LPCWSTR FileName,
 	WCHAR filePath[DOKAN_MAX_PATH];
 	GetFilePath(filePath, DOKAN_MAX_PATH, FileName);
 	if (DokanFileInfo->Context) {
-		DbgPrint(L"Cleanup: %s\n\n", filePath);
+		DbgPrint(L"Cleanup: %s %s\n", FileName, filePath);
 		EncFS::EncFSFile* encfsFile = (EncFS::EncFSFile*)DokanFileInfo->Context;
 		DokanFileInfo->Context = 0;
-		// printf("delB %x %x %x\n", encfsFile, DokanFileInfo->ProcessId, DokanFileInfo);
-		if (encfsFile->getHandle())
+		//printf("delB %x %x %x\n", encfsFile, DokanFileInfo->ProcessId, DokanFileInfo);
+		if (encfsFile->getHandle() != INVALID_HANDLE_VALUE)
 			delete encfsFile;
+		else
+			DbgPrint(L"Cleanup: encfs invalid handle%s %s\n", FileName, filePath);
 	}
 	else {
 		DbgPrint(L"Cleanup: %s\n\tinvalid handle\n\n", filePath);
@@ -911,6 +918,8 @@ static NTSTATUS changeIVRecursive(LPCWSTR newFilePath, const string cOldPlainDir
 	size_t oldPathLen = wcslen(oldPath);
 	WCHAR newPath[DOKAN_MAX_PATH];
 	wcscpy_s(newPath, oldPath);
+
+	DbgPrint(L"ChangeIV: %s %s\n", cOldPlainDirPath, cNewPlainDirPath);
 
 	WIN32_FIND_DATAW find;
 	ZeroMemory(&find, sizeof(WIN32_FIND_DATAW));
@@ -1684,6 +1693,62 @@ NTSYSCALLAPI NTSTATUS NTAPI NtQueryInformationFile(
 * END
 */
 
+NTSTATUS DOKAN_CALLBACK
+EncFSFindStreams(LPCWSTR FileName, PFillFindStreamData FillFindStreamData,
+	PVOID FindStreamContext,
+	PDOKAN_FILE_INFO DokanFileInfo) {
+	UNREFERENCED_PARAMETER(DokanFileInfo);
+
+	WCHAR filePath[DOKAN_MAX_PATH];
+	HANDLE hFind;
+	WIN32_FIND_STREAM_DATA findData;
+	DWORD error;
+	int count = 0;
+
+	GetFilePath(filePath, DOKAN_MAX_PATH, FileName);
+
+	DbgPrint(L"FindStreams :%s\n", filePath);
+
+	hFind = FindFirstStreamW(filePath, FindStreamInfoStandard, &findData, 0);
+
+	if (hFind == INVALID_HANDLE_VALUE) {
+		error = GetLastError();
+		DbgPrint(L"\tinvalid file handle. Error is %u\n\n", error);
+		return DokanNtStatusFromWin32(error);
+	}
+
+	BOOL bufferFull = FillFindStreamData(&findData, FindStreamContext);
+	if (bufferFull) {
+		count++;
+		while (FindNextStreamW(hFind, &findData) != 0) {
+			bufferFull = FillFindStreamData(&findData, FindStreamContext);
+			if (!bufferFull)
+				break;
+			count++;
+		}
+	}
+
+	error = GetLastError();
+	FindClose(hFind);
+
+	if (!bufferFull) {
+		DbgPrint(L"\tFindStreams returned %d entries in %s with "
+			L"STATUS_BUFFER_OVERFLOW\n\n",
+			count, filePath);
+		// https://msdn.microsoft.com/en-us/library/windows/hardware/ff540364(v=vs.85).aspx
+		return STATUS_BUFFER_OVERFLOW;
+	}
+
+	if (error != ERROR_HANDLE_EOF) {
+		DbgPrint(L"\tFindNextStreamW error. Error is %u\n\n", error);
+		return DokanNtStatusFromWin32(error);
+	}
+
+	DbgPrint(L"\tFindStreams return %d entries in %s\n\n", count, filePath);
+
+	return STATUS_SUCCESS;
+}
+
 static NTSTATUS DOKAN_CALLBACK EncFSMounted(LPCWSTR MountPoint,
 	PDOKAN_FILE_INFO DokanFileInfo) {
 	UNREFERENCED_PARAMETER(DokanFileInfo);
@@ -1881,6 +1946,7 @@ int StartEncFS(EncFSOptions &efo, char *password) {
 	dokanOperations.GetDiskFreeSpace = EncFSDokanGetDiskFreeSpace;
 	dokanOperations.GetVolumeInformation = EncFSGetVolumeInformation;
 	dokanOperations.Unmounted = EncFSUnmounted;
+	dokanOperations.FindStreams = EncFSFindStreams;
 	dokanOperations.Mounted = EncFSMounted;
 
 	// EncFS

@@ -1,4 +1,4 @@
-!define VERSION "0.11"
+!define VERSION "0.12"
 
 !include LogicLib.nsh
 !include x64.nsh
