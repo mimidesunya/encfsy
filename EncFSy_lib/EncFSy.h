@@ -25,6 +25,7 @@ struct EncFSOptions {
 	WCHAR MountPoint[DOKAN_MAX_PATH];
 	WCHAR UNCName[DOKAN_MAX_PATH];
 
+	BOOLEAN AltStream;
 	BOOLEAN Reverse;
 	PWCHAR ConfigFile;
 };

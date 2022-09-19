@@ -51,6 +51,7 @@ void ShowUsage() {
 		"  --allocation-unit-size Bytes (ex. 512) Allocation Unit Size of the volume. This will behave on the disk file size.\n"
 		"  --sector-size Bytes (ex. 512)\t\t Sector Size of the volume. This will behave on the disk file size.\n"
 		"  --paranoia AES-256bit / changed name IV / external IV chaining \n"
+		"  --alt-stream Enable NTFS alternate data stream.\n"
 		"  --reverse Encrypt rootdir to mountPoint.\n"
 		"Examples:\n"
 		"\tencfs.exe C:\\Users M:\t\t\t\t\t # EncFS C:\\Users as RootDirectory into a drive of letter M:\\.\n"
@@ -111,6 +112,7 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 	EncFSMode mode = STANDARD;
 	EncFSOptions efo;
 	ZeroMemory(&efo, sizeof(EncFSOptions));
+	efo.AltStream = FALSE;
 	efo.Reverse = FALSE;
 	efo.Timeout = 30000;
 	efo.SingleThread = FALSE;
@@ -175,6 +177,9 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 				else if (wcscmp(argv[command], L"--paranoia") == 0) {
 					mode = PARANOIA;
 				}
+				else if (wcscmp(argv[command], L"--alt-stream") == 0) {
+					efo.AltStream = TRUE;
+				}
 				else if (wcscmp(argv[command], L"--reverse") == 0) {
 					efo.Reverse = TRUE;
 				}
@@ -229,7 +234,6 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 			printf("EncFS configuration file doesn't exist.\n");
 			getpass("Enter new password: ", password, sizeof password);
 			CreateEncFS(efo.RootDirectory, password, mode, efo.Reverse);
-
 		}
 		getpass("Enter password: ", password, sizeof password);
 

@@ -402,7 +402,7 @@ R"(<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 
 		string binFileName;
 		decodeBase64FileName(this->base64Lookup, encodedFileName, binFileName);
-		if (binFileName.size() <= 2) {
+		if (binFileName.size() < 2 + this->aesCbcDec.MandatoryBlockSize()) {
 			throw EncFSInvalidBlockException();
 		}
 
@@ -465,9 +465,22 @@ R"(<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 		string::size_type pos1 = 0;
 		string::size_type pos2;
 		do {
+			bool alt = false;
 			pos2 = srcFilePath.find(g_pathSeparator, pos1);
 			if (pos2 == string::npos) {
-				pos2 = srcFilePath.size();
+				if (this->altStream) {
+					string::size_type altPos = srcFilePath.find(g_altSeparator, pos1);
+					if (altPos == string::npos) {
+						pos2 = srcFilePath.size();
+					}
+					else {
+						pos2 = altPos;
+						alt = true;
+					}
+				}
+				else {
+					pos2 = srcFilePath.size();
+				}
 			}
 			if (pos2 > pos1) {
 				string destName = srcFilePath.substr(pos1, pos2 - pos1);
@@ -477,6 +490,12 @@ R"(<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 				}
 				else {
 					this->decodeFileName(destName, dirPath, destFilePath);
+				}
+				if (alt) {
+					string altName = srcFilePath.substr(pos2, srcFilePath.size() - pos2);
+					destFilePath += altName;
+					destName += altName;
+					pos2 = srcFilePath.size();
 				}
 				dirPath += g_pathSeparator;
 				dirPath += destName;

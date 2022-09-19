@@ -1754,7 +1754,11 @@ static NTSTATUS DOKAN_CALLBACK EncFSMounted(LPCWSTR MountPoint,
 	UNREFERENCED_PARAMETER(DokanFileInfo);
 
 	DbgPrint(L"Mounted as %s\n", MountPoint);
-	ShellExecute(NULL, L"open", MountPoint, NULL, NULL, SW_SHOWDEFAULT);
+
+	wchar_t buff[20];
+	swprintf(buff, sizeof(buff), L"%s:\\", MountPoint);
+	ShellExecute(NULL, NULL, buff, NULL, NULL, SW_SHOWNORMAL);
+
 	return STATUS_SUCCESS;
 }
 
@@ -1817,6 +1821,7 @@ int StartEncFS(EncFSOptions &efo, char *password) {
 	DOKAN_OPERATIONS dokanOperations;
 	DOKAN_OPTIONS dokanOptions;
 
+	encfs.altStream = efo.AltStream;
 	string configFile;
 	wstring_convert<codecvt_utf8_utf16<wchar_t>> strConv;
 	if (false && efo.ConfigFile) {

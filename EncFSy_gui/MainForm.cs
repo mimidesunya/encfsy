@@ -79,7 +79,16 @@ namespace EncFSy_gui
                 return;
             }
 
-            Process process = this.startEncFS("\"" + rootPath + "\"" + " " + drive);
+            String args = "\"" + rootPath + "\"" + " " + drive;
+            if (this.altStreamCheckBox.Checked)
+            {
+                args += " --alt-stream";
+            }
+            if (this.reverseCheckBox.Checked)
+            {
+                args += " --reverse";
+            }
+            Process process = this.startEncFS(args);
 
             Thread t1 = new Thread(new ThreadStart(delegate ()
             {
@@ -204,6 +213,11 @@ namespace EncFSy_gui
         private void driveListView_SelectedIndexChanged(object sender, EventArgs e)
         {
             this.updateButtons();
+        }
+
+        private void checkBox1_CheckedChanged(object sender, EventArgs e)
+        {
+
         }
     }
 }

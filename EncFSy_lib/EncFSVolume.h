@@ -29,7 +29,11 @@ namespace EncFS
 		/** Block header size **/
 		static const size_t HEADER_SIZE = 8;
 
+		/** NTFS alt data stream support. **/
+		bool altStream;
+
 	private:
+		/** reverse mode */
 		bool reverse;
 
 		/** Key size. 192 or 256ÅB */

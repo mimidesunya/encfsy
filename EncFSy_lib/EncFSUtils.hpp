@@ -20,6 +20,11 @@ namespace EncFS
 	static const string g_pathSeparator("\\");
 
 	/**
+	NTFS alt-stream separator.
+	*/
+	static const string g_altSeparator(":");
+
+	/**
 	Apply left trim.
 	*/
 	static inline void ltrim(string &s) {

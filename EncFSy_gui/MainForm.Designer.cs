@@ -37,6 +37,8 @@ namespace EncFSy_gui
             this.driveListView = new System.Windows.Forms.ListView();
             this.Drive = ((System.Windows.Forms.ColumnHeader)(new System.Windows.Forms.ColumnHeader()));
             this.Volume = ((System.Windows.Forms.ColumnHeader)(new System.Windows.Forms.ColumnHeader()));
+            this.altStreamCheckBox = new System.Windows.Forms.CheckBox();
+            this.reverseCheckBox = new System.Windows.Forms.CheckBox();
             this.SuspendLayout();
             // 
             // selectDirectoryButton
@@ -52,7 +54,7 @@ namespace EncFSy_gui
             // 
             // mountButton
             // 
-            this.mountButton.Location = new System.Drawing.Point(12, 211);
+            this.mountButton.Location = new System.Drawing.Point(12, 237);
             this.mountButton.Name = "mountButton";
             this.mountButton.Size = new System.Drawing.Size(99, 20);
             this.mountButton.TabIndex = 5;
@@ -62,7 +64,7 @@ namespace EncFSy_gui
             // 
             // unmountButton
             // 
-            this.unmountButton.Location = new System.Drawing.Point(117, 211);
+            this.unmountButton.Location = new System.Drawing.Point(117, 237);
             this.unmountButton.Name = "unmountButton";
             this.unmountButton.Size = new System.Drawing.Size(99, 20);
             this.unmountButton.TabIndex = 6;
@@ -72,7 +74,7 @@ namespace EncFSy_gui
             // 
             // quitButton
             // 
-            this.quitButton.Location = new System.Drawing.Point(223, 211);
+            this.quitButton.Location = new System.Drawing.Point(223, 237);
             this.quitButton.Name = "quitButton";
             this.quitButton.Size = new System.Drawing.Size(95, 20);
             this.quitButton.TabIndex = 7;
@@ -95,6 +97,7 @@ namespace EncFSy_gui
             this.Drive,
             this.Volume});
             this.driveListView.FullRowSelect = true;
+            this.driveListView.HideSelection = false;
             this.driveListView.Location = new System.Drawing.Point(13, 12);
             this.driveListView.Name = "driveListView";
             this.driveListView.Size = new System.Drawing.Size(305, 167);
@@ -112,11 +115,36 @@ namespace EncFSy_gui
             this.Volume.Text = "Volume";
             this.Volume.Width = 180;
             // 
+            // altStreamCheckBox
+            // 
+            this.altStreamCheckBox.AutoSize = true;
+            this.altStreamCheckBox.Checked = true;
+            this.altStreamCheckBox.CheckState = System.Windows.Forms.CheckState.Checked;
+            this.altStreamCheckBox.Location = new System.Drawing.Point(13, 214);
+            this.altStreamCheckBox.Name = "altStreamCheckBox";
+            this.altStreamCheckBox.Size = new System.Drawing.Size(100, 17);
+            this.altStreamCheckBox.TabIndex = 10;
+            this.altStreamCheckBox.Text = "Alt Data Stream";
+            this.altStreamCheckBox.UseVisualStyleBackColor = true;
+            this.altStreamCheckBox.CheckedChanged += new System.EventHandler(this.checkBox1_CheckedChanged);
+            // 
+            // reverseCheckBox
+            // 
+            this.reverseCheckBox.AutoSize = true;
+            this.reverseCheckBox.Location = new System.Drawing.Point(119, 214);
+            this.reverseCheckBox.Name = "reverseCheckBox";
+            this.reverseCheckBox.Size = new System.Drawing.Size(66, 17);
+            this.reverseCheckBox.TabIndex = 11;
+            this.reverseCheckBox.Text = "Reverse";
+            this.reverseCheckBox.UseVisualStyleBackColor = true;
+            // 
             // MainForm
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(330, 242);
+            this.ClientSize = new System.Drawing.Size(330, 269);
+            this.Controls.Add(this.reverseCheckBox);
+            this.Controls.Add(this.altStreamCheckBox);
             this.Controls.Add(this.driveListView);
             this.Controls.Add(this.rootPathCombo);
             this.Controls.Add(this.quitButton);
@@ -131,6 +159,7 @@ namespace EncFSy_gui
             this.Text = "EncFS";
             this.Load += new System.EventHandler(this.MainForm_Load);
             this.ResumeLayout(false);
+            this.PerformLayout();
 
         }
 
@@ -143,6 +172,8 @@ namespace EncFSy_gui
         private System.Windows.Forms.ListView driveListView;
         private System.Windows.Forms.ColumnHeader Drive;
         private System.Windows.Forms.ColumnHeader Volume;
+        private System.Windows.Forms.CheckBox altStreamCheckBox;
+        private System.Windows.Forms.CheckBox reverseCheckBox;
     }
 }
 
