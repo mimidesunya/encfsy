@@ -29,7 +29,7 @@ For 64bit environment only.
 	  --allocation-unit-size Bytes (ex. 512) Allocation Unit Size of the volume. This will behave on the disk file size.
 	  --sector-size Bytes (ex. 512)          Sector Size of the volume. This will behave on the disk file size.
 	  --paranoia AES-256bit / changed name IV / external IV chaining
-          --alt-stream Enable NTFS alternate data stream.
+	  --alt-stream Enable NTFS alternate data stream.
 	  --reverse Encrypt rootdir to mountPoint.
 	Examples:
 	        encfs.exe C:\Users M:                                    # EncFS C:\Users as RootDirectory into a drive of letter M:\.
@@ -39,7 +39,7 @@ For 64bit environment only.
 	Unmount the drive with CTRL + C in the console or alternatively via "encfs.exe -u MountPoint".
 	
 ## Install
-[Download installer](https://github.com/miyabe/encfsy).
+[Download installer](https://github.com/mimidesunya/encfsy/releases).
 
 Please install [Dokany](https://github.com/dokan-dev/dokany/releases) before installation.
 
@@ -49,4 +49,4 @@ Please install [Dokany](https://github.com/dokan-dev/dokany/releases) before ins
 
 ## Author
 
-[Miyabe Tatsuhiko](https://github.com/miyabe/)
+[Mimi](https://github.com/mimidesunya) [Twitter](https://twitter.com/mimidesunya)

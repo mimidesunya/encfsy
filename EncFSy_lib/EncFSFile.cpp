@@ -342,7 +342,7 @@ namespace EncFS {
 	}
 
 	bool EncFSFile::_setLength(const LPCWSTR FileName, const size_t fileSize, const size_t length) {
-		//printf("setLength %d\n", length);
+		//printf("setLength %ld\n", length);
 
 		if (length == 0) {
 			LARGE_INTEGER offset;
@@ -434,7 +434,7 @@ namespace EncFS {
 		// 拡大した末尾をエンコード
 		if (length > fileSize) {
 			shift = length % blockDataSize;
-			if (shift != 0 && blockNum != length / blockDataSize) {
+			if (shift != 0 && (fileSize == 0 || blockNum != length / blockDataSize)) {
 				blockNum = length / blockDataSize;
 				this->decodeBuffer.assign(shift, (char)0);
 				this->encodeBuffer.clear();
