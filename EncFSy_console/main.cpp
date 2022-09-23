@@ -41,6 +41,7 @@ void ShowUsage() {
 		"  -s \t\t\t\t\t Use stderr for debug output.\n"
 		"  -i Timeout (Milliseconds ex. 30000)\t Timeout until a running operation is aborted and the device is unmounted. Default to 30000.\n"
 		"  -t ThreadCount (ex. 5)\t\t Number of threads to be used internally by Dokan library.\n\t\t\t\t\t More threads will handle more event at the same time. Default to 5.\n"
+		"  --dokan-debug Enable Dokan debug output.\n"
 		"  --dokan-network UNC (ex. \\host\\myfs)\t UNC name used for network volume.\n"
 		"  --dokan-removable \t\t\t Show device as removable media.\n"
 		"  --dokan-write-protect \t\t Read only filesystem.\n"
@@ -143,7 +144,10 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 				efo.SingleThread = TRUE;
 				break;
 			case L'-':
-				if (wcscmp(argv[command], L"--dokan-network") == 0) {
+				if (wcscmp(argv[command], L"--dokan-debug") == 0) {
+					efo.g_DokanDebug = TRUE;
+				}
+				else if (wcscmp(argv[command], L"--dokan-network") == 0) {
 					command++;
 					wcscpy_s(efo.UNCName, sizeof(efo.UNCName) / sizeof(WCHAR), argv[command]);
 					efo.DokanOptions |= DOKAN_OPTION_NETWORK;

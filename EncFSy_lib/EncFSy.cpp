@@ -212,7 +212,7 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
 
 	GetFilePath(filePath, DOKAN_MAX_PATH, FileName);
 
-	DbgPrint(L"CreateFile : %s\n", filePath);
+	DbgPrint(L"CreateFile : %s\n", FileName);
 	//PrintF(L"CreateFile : %s\n%s\n", FileName, filePath);
 
 	PrintUserName(DokanFileInfo);
@@ -449,19 +449,30 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
 			}
 		}
 
-		// ファイルヘッダを見るため、書込み可能なファイルは全て読める
+		// Read access is required to read file header
 		if (genericDesiredAccess & GENERIC_WRITE) {
 			genericDesiredAccess |= GENERIC_READ;
+			if (ShareAccess & FILE_SHARE_WRITE) {
+				ShareAccess |= FILE_SHARE_READ;
+			}
 		}
 
-		// ヘッダの修正のため削除・移動可能なファイルは全て読み書きできる
+		// Read/write access are required to modify file header
 		if (genericDesiredAccess & DELETE) {
 			genericDesiredAccess |= GENERIC_READ | GENERIC_WRITE;
+			if (ShareAccess & FILE_SHARE_DELETE) {
+				ShareAccess |= FILE_SHARE_WRITE | FILE_SHARE_READ;
+			}
 		}
 
-		// FILE_ATTRIBUTE_NORMALは単独のみ有効
+		// FILE_ATTRIBUTE_NORMAL is valid only alone
 		if (fileAttributesAndFlags & FILE_ATTRIBUTE_NORMAL) {
 			fileAttributesAndFlags = FILE_ATTRIBUTE_NORMAL;
+		}
+
+		// Cannot suppot no buffering mode (Encrypted files cannot align on the secter size)
+		if (fileAttributesAndFlags & FILE_FLAG_NO_BUFFERING) {
+			fileAttributesAndFlags ^= FILE_FLAG_NO_BUFFERING;
 		}
 
 		handle = CreateFileW(
@@ -470,8 +481,9 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
 			ShareAccess,
 			&securityAttrib, // security attribute
 			creationDisposition,
-			fileAttributesAndFlags, // |FILE_FLAG_NO_BUFFERING,
+			fileAttributesAndFlags,
 			NULL);                  // template file handle
+		DbgPrint(L"handle = %ld\n", handle);
 
 		if (g_efo.g_ImpersonateCallerUser && userTokenHandle != INVALID_HANDLE_VALUE) {
 			// Clean Up operation for impersonate
@@ -594,8 +606,6 @@ static NTSTATUS DOKAN_CALLBACK EncFSReadFile(LPCWSTR FileName, LPVOID Buffer,
 
 	GetFilePath(filePath, DOKAN_MAX_PATH, FileName);
 
-	DbgPrint(L"ReadFile : %s\n", filePath);
-
 	EncFS::EncFSFile* encfsFile;
 	BOOL opened = FALSE;
 	if (!DokanFileInfo->Context) {
@@ -613,6 +623,8 @@ static NTSTATUS DOKAN_CALLBACK EncFSReadFile(LPCWSTR FileName, LPVOID Buffer,
 	else {
 		encfsFile = (EncFS::EncFSFile*)DokanFileInfo->Context;
 	}
+
+	DbgPrint(L"ReadFile : %s, handle = %ld\n", FileName, encfsFile->getHandle());
 
 	int32_t readLen;
 	if (encfs.isReverse()) {
@@ -644,8 +656,8 @@ static NTSTATUS DOKAN_CALLBACK EncFSReadFile(LPCWSTR FileName, LPVOID Buffer,
 	}
 	if (readLen == -1) {
 		DWORD error = GetLastError();
-		DbgPrint(L"\tread error = %u, buffer length = %d, read length = %d, offset = %d\n\n",
-			error, BufferLength, readLen, offset);
+		DbgPrint(L"\tread error = %u, buffer length = %d, offset = %d\n\n",
+			error, BufferLength, offset);
 		if (opened) {
 			delete encfsFile;
 		}
@@ -1507,7 +1519,7 @@ static NTSTATUS DOKAN_CALLBACK EncFSGetFileSecurity(
 		FILE_SHARE_WRITE | FILE_SHARE_READ | FILE_SHARE_DELETE,
 		NULL, // security attribute
 		OPEN_EXISTING,
-		FILE_FLAG_BACKUP_SEMANTICS, // |FILE_FLAG_NO_BUFFERING,
+		FILE_FLAG_BACKUP_SEMANTICS,
 		NULL);
 
 	if (!handle) {
@@ -1915,12 +1927,15 @@ int StartEncFS(EncFSOptions &efo, char *password) {
 			L"rights to fix it\n");
 	}
 
-	if (efo.g_DebugMode) {
-		dokanOptions.Options |= DOKAN_OPTION_DEBUG;
+	if (efo.g_DokanDebug) {
+		if (efo.g_DebugMode) {
+			dokanOptions.Options |= DOKAN_OPTION_DEBUG;
+		}
+		if (efo.g_UseStdErr) {
+			dokanOptions.Options |= DOKAN_OPTION_STDERR;
+		}
 	}
-	if (efo.g_UseStdErr) {
-		dokanOptions.Options |= DOKAN_OPTION_STDERR;
-	}
+
 	if (efo.Reverse) {
 		dokanOptions.Options |= DOKAN_OPTION_WRITE_PROTECT;
 	}

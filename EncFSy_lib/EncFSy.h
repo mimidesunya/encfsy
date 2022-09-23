@@ -11,6 +11,7 @@ enum EncFSMode {
 struct EncFSOptions {
 	BOOLEAN g_UseStdErr;
 	BOOLEAN g_DebugMode;
+	BOOLEAN g_DokanDebug;
 	BOOLEAN g_HasSeSecurityPrivilege;
 	BOOLEAN g_ImpersonateCallerUser;
 
