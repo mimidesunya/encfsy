@@ -28,7 +28,8 @@ UninstPage instfiles
 
   SetOutPath $PROGRAMFILES32\Zamasoft\EncFSy
  
-    File ../x64\Release\*.exe
+    File ../x64\Release\encfsw.exe
+    File ../x64\Release\encfs.exe
 
   SetShellVarContext all
   CreateDirectory $SMPROGRAMS\EncFSy
