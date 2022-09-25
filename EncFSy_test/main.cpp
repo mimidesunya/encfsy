@@ -56,6 +56,40 @@ int main()
         CloseHandle(h);
     }
 
+    // file append
+    {
+        DWORD dwDesiredAccess = FILE_APPEND_DATA;
+        DWORD dwShareMode = FILE_SHARE_WRITE;
+        DWORD dwCreationDisposition = CREATE_ALWAYS;
+        DWORD dwFlagsAndAttribute = FILE_ATTRIBUTE_NORMAL;
+        HANDLE h = CreateFileW(file, dwDesiredAccess, dwShareMode, NULL,
+            dwCreationDisposition, dwFlagsAndAttribute, NULL);
+        if (h == INVALID_HANDLE_VALUE) {
+            DWORD lastError = GetLastError();
+            printf("CreateFileW ERROR: %d\n", lastError);
+            return -1;
+        }
+
+        LARGE_INTEGER distanceToMove;
+        distanceToMove.QuadPart = 0;
+        if (!SetFilePointerEx(h, distanceToMove, NULL, FILE_BEGIN)) {
+            DWORD lastError = GetLastError();
+            printf("SetFilePointerEx ERROR: %d\n", lastError);
+            return -1;
+        }
+
+        const char* writeData = "ABCDEFG";
+        const DWORD size = sizeof(writeData);
+        DWORD readLen;
+        if (!WriteFile(h, writeData, size, &readLen, NULL)) {
+            DWORD lastError = GetLastError();
+            printf("WriteFile ERROR: %d\n", lastError);
+            return -1;
+        }
+
+        CloseHandle(h);
+    }
+
     // no buffering mode
     {
         DWORD dwDesiredAccess = GENERIC_READ | GENERIC_WRITE;

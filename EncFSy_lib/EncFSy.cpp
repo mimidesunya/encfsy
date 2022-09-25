@@ -449,17 +449,17 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
 			}
 		}
 
-		// Read access is required to read file header
-		if (genericDesiredAccess & GENERIC_WRITE) {
-			genericDesiredAccess |= GENERIC_READ;
+		// Read/write access are required to modify file header
+		if (genericDesiredAccess & GENERIC_WRITE
+			|| genericDesiredAccess & FILE_WRITE_DATA
+			|| genericDesiredAccess & FILE_APPEND_DATA) {
+			genericDesiredAccess |= FILE_READ_DATA | FILE_WRITE_DATA;
 			if (ShareAccess & FILE_SHARE_WRITE) {
 				ShareAccess |= FILE_SHARE_READ;
 			}
 		}
-
-		// Read/write access are required to modify file header
 		if (genericDesiredAccess & DELETE) {
-			genericDesiredAccess |= GENERIC_READ | GENERIC_WRITE;
+			genericDesiredAccess |= FILE_READ_DATA | FILE_WRITE_DATA;
 			if (ShareAccess & FILE_SHARE_DELETE) {
 				ShareAccess |= FILE_SHARE_WRITE | FILE_SHARE_READ;
 			}
@@ -470,7 +470,7 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
 			fileAttributesAndFlags = FILE_ATTRIBUTE_NORMAL;
 		}
 
-		// Cannot suppot no buffering mode (Encrypted files cannot align on the secter size)
+		// Cannot suppot no buffering mode (Encrypted files cannot align on the sector size)
 		if (fileAttributesAndFlags & FILE_FLAG_NO_BUFFERING) {
 			fileAttributesAndFlags ^= FILE_FLAG_NO_BUFFERING;
 		}

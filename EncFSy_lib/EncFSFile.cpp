@@ -24,7 +24,6 @@ namespace EncFS {
 		}
 		string fileHeader;
 		fileHeader.resize(EncFSVolume::HEADER_SIZE);
-
 		DWORD ReadLength;
 		if (!ReadFile(this->handle, &fileHeader[0], (DWORD)fileHeader.size(), (LPDWORD)&ReadLength, NULL)) {
 			return false;
@@ -152,7 +151,7 @@ namespace EncFS {
 				SetLastError(ERROR_FILE_CORRUPT);
 				return -1;
 			}
-			//printf("write %d %d %d %d\n", fileSize, fileIv, off, len);
+			//printf("write %d %ld %d %d\n", fileSize, fileIv, off, len);
 
 			if (off > fileSize) {
 				// Expand file.
