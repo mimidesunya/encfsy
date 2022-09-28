@@ -84,6 +84,10 @@ namespace EncFSy_gui
             {
                 args += " --alt-stream";
             }
+            if (this.mountManagerCheckBox.Checked)
+            {
+                args += " --dokan-mount-manager";
+            }
             if (this.reverseCheckBox.Checked)
             {
                 args += " --reverse";
@@ -216,6 +220,11 @@ namespace EncFSy_gui
         }
 
         private void checkBox1_CheckedChanged(object sender, EventArgs e)
+        {
+
+        }
+
+        private void checkBox1_CheckedChanged_1(object sender, EventArgs e)
         {
 
         }

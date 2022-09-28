@@ -151,7 +151,7 @@ namespace EncFS {
 				SetLastError(ERROR_FILE_CORRUPT);
 				return -1;
 			}
-			//printf("write %d %ld %d %d\n", fileSize, fileIv, off, len);
+			// wprintf(L"Write %s %ld %ld\n", FileName, off, len);
 
 			if (off > fileSize) {
 				// Expand file.
@@ -336,6 +336,9 @@ namespace EncFS {
 			return false;
 		}
 		size_t fileSize = encfs.toDecodedLength(encodedFileSize.QuadPart);
+		if (fileSize == length) {
+			return true;
+		}
 
 		return this->_setLength(FileName, fileSize, length);
 	}
@@ -359,7 +362,7 @@ namespace EncFS {
 		// 境界部分をデコード
 		size_t blockHeaderSize = encfs.getHeaderSize();
 		size_t blockDataSize = encfs.getBlockSize() - blockHeaderSize;
-		size_t shift = 0;
+		size_t shift;
 		size_t blockNum;
 		size_t blocksOffset;
 		LARGE_INTEGER distanceToMove;
@@ -368,7 +371,7 @@ namespace EncFS {
 			shift = length % blockDataSize;
 			blockNum = length / blockDataSize;
 		}
-		else if (length > fileSize) {
+		else {
 			// 拡大
 			shift = fileSize % blockDataSize;
 			blockNum = fileSize / blockDataSize;
@@ -378,6 +381,7 @@ namespace EncFS {
 			return false;
 		}
 		if (shift != 0) {
+			// 境界部分をデコード
 			blocksOffset = blockNum * encfs.getBlockSize();
 			if (encfs.isUniqueIV()) {
 				blocksOffset += EncFS::EncFSVolume::HEADER_SIZE;
@@ -407,8 +411,8 @@ namespace EncFS {
 		}
 		this->lastBlockNum = -1;
 
-		// 境界部分をエンコード
 		if (shift != 0) {
+			// 境界部分をエンコード
 			size_t blockDataLen = length - blockNum * blockDataSize;
 			if (blockDataLen > blockDataSize) {
 				blockDataLen = blockDataSize;
@@ -437,7 +441,7 @@ namespace EncFS {
 				blockNum = length / blockDataSize;
 				this->decodeBuffer.assign(shift, (char)0);
 				this->encodeBuffer.clear();
-				encfs.encodeBlock(fileIv, blockNum, this->decodeBuffer, this->encodeBuffer);
+				encfs.encodeBlock(fileIv, this->lastBlockNum = blockNum, this->decodeBuffer, this->encodeBuffer);
 				distanceToMove.QuadPart = -(int64_t)shift - (int64_t)blockHeaderSize;
 				if (!SetFilePointerEx(this->handle, distanceToMove, NULL, FILE_END)) {
 					return false;

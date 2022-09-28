@@ -10,8 +10,31 @@ int main()
 {
     //const WCHAR* drive = L"G:\\";
     //const WCHAR* file = L"G:\\Dokan\\TEST_FILE.txt";
-    const WCHAR* drive = L"M:\\";
-    const WCHAR* file = L"M:\\TEST_FILE.txt";
+    const WCHAR* drive = L"O:\\";
+    const WCHAR* file = L"O:\\TEST_FILE.txt";
+
+    // file information
+    {
+        DWORD dwDesiredAccess = GENERIC_READ | GENERIC_WRITE;
+        DWORD dwShareMode = FILE_SHARE_READ | FILE_SHARE_WRITE;
+        DWORD dwCreationDisposition = OPEN_ALWAYS;
+        DWORD dwFlagsAndAttribute = FILE_ATTRIBUTE_NORMAL;
+        HANDLE h = CreateFileW(file, dwDesiredAccess, dwShareMode, NULL,
+            dwCreationDisposition, dwFlagsAndAttribute, NULL);
+        if (h == INVALID_HANDLE_VALUE) {
+            DWORD lastError = GetLastError();
+            printf("CreateFileW ERROR: %d\n", lastError);
+            return -1;
+        }
+        TCHAR name[255];
+        if (!GetFinalPathNameByHandle(h, name, 255, FILE_NAME_NORMALIZED)) {
+            DWORD lastError = GetLastError();
+            printf("GetFinalPathNameByHandle ERROR: %d\n", lastError);
+            return -1;
+        }
+        wprintf(L"%s\n", name);
+        CloseHandle(h);
+    }
 
     // buffer mode
     {
@@ -145,8 +168,121 @@ int main()
 
         if (!ReadFile(h, buff, SecBytes - 1, &readLen, NULL)) {
             DWORD lastError = GetLastError();
-            printf("ReadFile error: %d\n", lastError);
+            printf("ReadFile error (normal): %d\n", lastError);
         }
+        free(buff);
+
+        CloseHandle(h);
+    }
+
+    // expand shrink
+    {
+        DWORD dwDesiredAccess = GENERIC_READ | GENERIC_WRITE;
+        DWORD dwShareMode = FILE_SHARE_READ | FILE_SHARE_WRITE;
+        DWORD dwCreationDisposition = CREATE_ALWAYS;
+        DWORD dwFlagsAndAttribute = FILE_ATTRIBUTE_NORMAL;
+        HANDLE h = CreateFileW(file, dwDesiredAccess, dwShareMode, NULL,
+            dwCreationDisposition, dwFlagsAndAttribute, NULL);
+        if (h == INVALID_HANDLE_VALUE) {
+            DWORD lastError = GetLastError();
+            printf("CreateFileW ERROR: %d\n", lastError);
+            return -1;
+        }
+
+        LARGE_INTEGER distanceToMove;
+
+        // expand
+        distanceToMove.QuadPart = 3686L;
+        if (!SetFilePointerEx(h, distanceToMove, NULL, FILE_BEGIN)) {
+            DWORD lastError = GetLastError();
+            printf("SetFilePointerEx ERROR: %d\n", lastError);
+            return -1;
+        }
+        if (!SetEndOfFile(h)) {
+            DWORD lastError = GetLastError();
+            printf("SetEndOfFile ERROR: %d\n", lastError);
+            return -1;
+        }
+
+        // expand
+        distanceToMove.QuadPart = 5529L;
+        if (!SetFilePointerEx(h, distanceToMove, NULL, FILE_BEGIN)) {
+            DWORD lastError = GetLastError();
+            printf("SetFilePointerEx ERROR: %d\n", lastError);
+            return -1;
+        }
+        if (!SetEndOfFile(h)) {
+            DWORD lastError = GetLastError();
+            printf("SetEndOfFile ERROR: %d\n", lastError);
+            return -1;
+        }
+
+        // write
+        distanceToMove.QuadPart = 3686L;
+        if (!SetFilePointerEx(h, distanceToMove, NULL, FILE_BEGIN)) {
+            DWORD lastError = GetLastError();
+            printf("SetFilePointerEx ERROR: %d\n", lastError);
+            return -1;
+        }
+        {
+            DWORD size = 4;
+            char* buff = (char*)malloc(size);
+            memset(buff, 'A', size);
+            DWORD readLen;
+            if (!WriteFile(h, buff, size, &readLen, NULL)) {
+                DWORD lastError = GetLastError();
+                printf("WriteFile ERROR: %d\n", lastError);
+                return -1;
+            }
+            free(buff);
+        }
+
+        // same size
+        distanceToMove.QuadPart = 5529L;
+        if (!SetFilePointerEx(h, distanceToMove, NULL, FILE_BEGIN)) {
+            DWORD lastError = GetLastError();
+            printf("SetFilePointerEx ERROR: %d\n", lastError);
+            return -1;
+        }
+        if (!SetEndOfFile(h)) {
+            DWORD lastError = GetLastError();
+            printf("SetEndOfFile ERROR: %d\n", lastError);
+            return -1;
+        }
+
+        // shrink
+        distanceToMove.QuadPart = 4505L;
+        if (!SetFilePointerEx(h, distanceToMove, NULL, FILE_BEGIN)) {
+            DWORD lastError = GetLastError();
+            printf("SetFilePointerEx ERROR: %d\n", lastError);
+            return -1;
+        }
+        if (!SetEndOfFile(h)) {
+            DWORD lastError = GetLastError();
+            printf("SetEndOfFile ERROR: %d\n", lastError);
+            return -1;
+        }
+
+        // write
+        distanceToMove.QuadPart = 3686L;
+        if (!SetFilePointerEx(h, distanceToMove, NULL, FILE_BEGIN)) {
+            DWORD lastError = GetLastError();
+            printf("SetFilePointerEx ERROR: %d\n", lastError);
+            return -1;
+        }
+        {
+            DWORD size = 108;
+            char* buff = (char*)malloc(size);
+            memset(buff, 'A', size);
+            DWORD readLen;
+            if (!WriteFile(h, buff, size, &readLen, NULL)) {
+                DWORD lastError = GetLastError();
+                printf("WriteFile ERROR: %d\n", lastError);
+                return -1;
+            }
+            free(buff);
+        }
+
 
         CloseHandle(h);
     }

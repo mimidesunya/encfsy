@@ -39,6 +39,7 @@ namespace EncFSy_gui
             this.Volume = ((System.Windows.Forms.ColumnHeader)(new System.Windows.Forms.ColumnHeader()));
             this.altStreamCheckBox = new System.Windows.Forms.CheckBox();
             this.reverseCheckBox = new System.Windows.Forms.CheckBox();
+            this.mountManagerCheckBox = new System.Windows.Forms.CheckBox();
             this.SuspendLayout();
             // 
             // selectDirectoryButton
@@ -131,18 +132,32 @@ namespace EncFSy_gui
             // reverseCheckBox
             // 
             this.reverseCheckBox.AutoSize = true;
-            this.reverseCheckBox.Location = new System.Drawing.Point(119, 214);
+            this.reverseCheckBox.Location = new System.Drawing.Point(252, 214);
             this.reverseCheckBox.Name = "reverseCheckBox";
             this.reverseCheckBox.Size = new System.Drawing.Size(66, 17);
             this.reverseCheckBox.TabIndex = 11;
             this.reverseCheckBox.Text = "Reverse";
             this.reverseCheckBox.UseVisualStyleBackColor = true;
             // 
+            // mountManagerCheckBox
+            // 
+            this.mountManagerCheckBox.AutoSize = true;
+            this.mountManagerCheckBox.Checked = true;
+            this.mountManagerCheckBox.CheckState = System.Windows.Forms.CheckState.Checked;
+            this.mountManagerCheckBox.Location = new System.Drawing.Point(117, 214);
+            this.mountManagerCheckBox.Name = "mountManagerCheckBox";
+            this.mountManagerCheckBox.Size = new System.Drawing.Size(101, 17);
+            this.mountManagerCheckBox.TabIndex = 12;
+            this.mountManagerCheckBox.Text = "Mount Manager";
+            this.mountManagerCheckBox.UseVisualStyleBackColor = true;
+            this.mountManagerCheckBox.CheckedChanged += new System.EventHandler(this.checkBox1_CheckedChanged_1);
+            // 
             // MainForm
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.ClientSize = new System.Drawing.Size(330, 269);
+            this.Controls.Add(this.mountManagerCheckBox);
             this.Controls.Add(this.reverseCheckBox);
             this.Controls.Add(this.altStreamCheckBox);
             this.Controls.Add(this.driveListView);
@@ -174,6 +189,7 @@ namespace EncFSy_gui
         private System.Windows.Forms.ColumnHeader Volume;
         private System.Windows.Forms.CheckBox altStreamCheckBox;
         private System.Windows.Forms.CheckBox reverseCheckBox;
+        private System.Windows.Forms.CheckBox mountManagerCheckBox;
     }
 }
 

@@ -348,8 +348,8 @@ R"(<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 		}
 
 		// getPaddedDecFilename
-		int padBytesSize = 16;
-		int padLen = padBytesSize - (plainFileName.size() % padBytesSize);
+		size_t padBytesSize = 16;
+		size_t padLen = padBytesSize - (plainFileName.size() % padBytesSize);
 		if (padLen == 0) {
 			padLen = padBytesSize;
 		}
@@ -366,7 +366,7 @@ R"(<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 
 		string paddedFileName(plainFileName);
 		char iv[2];
-		for (int i = 0; i < padLen; ++i) {
+		for (size_t i = 0; i < padLen; ++i) {
 			paddedFileName += (char)padLen;
 		}
 		if (this->chainedNameIV) {
@@ -450,7 +450,7 @@ R"(<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 			}
 		}
 	
-		int padLen = plainFileName[plainFileName.size() - 1];
+		size_t padLen = plainFileName[plainFileName.size() - 1];
 		for (size_t i = 0; i < padLen; ++i) {
 			if (plainFileName[plainFileName.size() - padLen + i] != padLen) {
 				throw EncFSInvalidBlockException();
@@ -603,7 +603,7 @@ R"(<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 			// 暗号化
 			if (this->allowHoles && srcBlock.size() + headerSize == this->blockSize) {
 				bool zeroBlock = true;
-				for (int i = 0; i < srcBlock.size(); ++i) {
+				for (size_t i = 0; i < srcBlock.size(); ++i) {
 					if (srcBlock[i] != 0) {
 						zeroBlock = false;
 						break;
@@ -623,7 +623,7 @@ R"(<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 			string mac;
 			mac.resize(this->blockMACBytes);
 			mac64(this->volumeHmac, this->hmacLock, (const byte*)srcBlock.data(), srcBlock.size(), &mac[0]);
-			for (int i = 0; i < this->blockMACBytes; i++) {
+			for (size_t i = 0; i < this->blockMACBytes; i++) {
 				block[i] = mac[7 - i];
 			}
 
@@ -641,7 +641,7 @@ R"(<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 			// 復号
 			if (this->allowHoles && srcBlock.size() == this->blockSize) {
 				bool zeroBlock = true;
-				for (int i = 0; i < srcBlock.size(); ++i) {
+				for (size_t i = 0; i < srcBlock.size(); ++i) {
 					if (srcBlock[i] != 0) {
 						zeroBlock = false;
 						break;
@@ -667,7 +667,7 @@ R"(<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 			string mac;
 			mac.resize(this->blockMACBytes);
 			mac64(this->volumeHmac, this->hmacLock, (const byte*)destBlock.data() + this->blockMACBytes, destBlock.size() - this->blockMACBytes, &mac[0]);
-			for (int i = 0; i < this->blockMACBytes; i++) {
+			for (size_t i = 0; i < this->blockMACBytes; i++) {
 				if (destBlock[i] != mac[7 - i]) {
 					valid = false;
 					break;
@@ -680,5 +680,4 @@ R"(<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 			destBlock.assign(destBlock.data() + headerSize, destBlock.size() - headerSize);
 		}
 	}
-
 }
