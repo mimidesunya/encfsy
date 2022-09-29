@@ -12,6 +12,12 @@ extern EncFS::EncFSVolume encfs;
 
 namespace EncFS
 {
+	enum EncFSGetFileIVResult {
+		EXISTS,
+		READ_ERROR,
+		EMPTY
+	};
+
 	class EncFSFile {
 	private:
 		HANDLE handle;
@@ -56,7 +62,7 @@ namespace EncFS
 		bool changeFileIV(const LPCWSTR FileName, const LPCWSTR NewFileName);
 
 	private:
-		bool getFileIV(const LPCWSTR FileName, int64_t *fileIv, bool create);
+		EncFSGetFileIVResult getFileIV(const LPCWSTR FileName, int64_t *fileIv, bool create);
 		bool _setLength(const LPCWSTR FileName, const size_t fileSize, const size_t length);
 	};
 }

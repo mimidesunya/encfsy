@@ -515,9 +515,9 @@ R"(<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 		this->codeFilePath(encodedFilePath, plainFilePath, false);
 	}
 
-	size_t EncFSVolume::toDecodedLength(const size_t encodedLength) {
-		size_t size = encodedLength;
-		size_t headerSize = this->getHeaderSize();
+	int64_t EncFSVolume::toDecodedLength(const int64_t encodedLength) {
+		int64_t size = encodedLength;
+		int64_t headerSize = this->getHeaderSize();
 		if (size < (this->uniqueIV ? HEADER_SIZE : 0) + headerSize) {
 			return 0;
 		}
@@ -525,18 +525,18 @@ R"(<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 			size -= HEADER_SIZE;
 		}
 		if (headerSize > 0) {
-			size_t numBlocks = ((size - 1) / this->blockSize) + 1;
+			int64_t numBlocks = ((size - 1) / this->blockSize) + 1;
 			size -= numBlocks * headerSize;
 		}
 		return size;
 	}
 
-	size_t EncFSVolume::toEncodedLength(const size_t decodedLength) {
-		size_t size = decodedLength;
+	int64_t EncFSVolume::toEncodedLength(const int64_t decodedLength) {
+		int64_t size = decodedLength;
 		if (size != 0) {
-			size_t headerSize = this->getHeaderSize();
+			int64_t headerSize = this->getHeaderSize();
 			if (headerSize > 0) {
-				size_t numBlocks = ((size - 1) / (this->blockSize - headerSize)) + 1;
+				int64_t numBlocks = ((size - 1) / (this->blockSize - headerSize)) + 1;
 				size += numBlocks * headerSize;
 			}
 			if (this->uniqueIV) {

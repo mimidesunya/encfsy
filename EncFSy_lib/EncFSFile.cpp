@@ -6,48 +6,52 @@ using namespace std;
 static AutoSeededX917RNG<CryptoPP::AES> random;
 
 namespace EncFS {
-	bool EncFSFile::getFileIV(const LPCWSTR FileName, int64_t *fileIv, bool create) {
+	EncFSGetFileIVResult EncFSFile::getFileIV(const LPCWSTR FileName, int64_t *fileIv, bool create) {
 		if (this->fileIvAvailable) {
 			*fileIv = this->fileIv;
-			return true;
+			return EXISTS;
 		}
 		if (!encfs.isUniqueIV()) {
 			this->fileIv = *fileIv = 0L;
 			this->fileIvAvailable = true;
-			return true;
+			return EXISTS;
 		}
 		// Read file header.
 		LARGE_INTEGER distanceToMove;
 		distanceToMove.QuadPart = 0;
 		if (!SetFilePointerEx(this->handle, distanceToMove, NULL, FILE_BEGIN)) {
-			return false;
+			return READ_ERROR;
 		}
 		string fileHeader;
 		fileHeader.resize(EncFSVolume::HEADER_SIZE);
 		DWORD ReadLength;
 		if (!ReadFile(this->handle, &fileHeader[0], (DWORD)fileHeader.size(), (LPDWORD)&ReadLength, NULL)) {
-			return false;
+			return READ_ERROR;
 		}
 		if (ReadLength != fileHeader.size()) {
 			if (!create) {
-				return false;
+				if (ReadLength == 0) {
+					return EMPTY;
+				}
+				SetLastError(ERROR_READ_FAULT);
+				return READ_ERROR;
 			}
 			// Create file header.
 			fileHeader.resize(EncFSVolume::HEADER_SIZE);
 			random.GenerateBlock((byte*)&fileHeader[0], EncFSVolume::HEADER_SIZE);
 			if (!SetFilePointerEx(this->handle, distanceToMove, NULL, FILE_BEGIN)) {
-				return false;
+				return READ_ERROR;
 			}
 			DWORD writtenLen;
 			if (!WriteFile(this->handle, fileHeader.data(), (DWORD)fileHeader.size(), &writtenLen, NULL)) {
-				return false;
+				return READ_ERROR;
 			}
 		}
 	
 		string cFileName = this->strConv.to_bytes(wstring(FileName));
 		this->fileIv = *fileIv = encfs.decodeFileIv(cFileName, fileHeader);
 		this->fileIvAvailable = true;
-		return true;
+		return EXISTS;
 	}
 
 	int32_t EncFSFile::read(const LPCWSTR FileName, char* buff, size_t off, DWORD len) {
@@ -59,8 +63,12 @@ namespace EncFS {
 
 		try {
 			int64_t fileIv;
-			if (!this->getFileIV(FileName, &fileIv, false)) {
+			EncFSGetFileIVResult ivResult = this->getFileIV(FileName, &fileIv, false);
+			if (ivResult == READ_ERROR) {
 				return -1;
+			}
+			if (ivResult == EMPTY) {
+				return 0;
 			}
 
 			//printf("read %d %d %d %d\n", fileIv, this->lastBlockNum, off, len);
@@ -109,7 +117,6 @@ namespace EncFS {
 				this->blockBuffer.resize(blocksLength);
 				if (!ReadFile(this->handle, &this->blockBuffer[0], (DWORD)blocksLength, &readLen, NULL)) {
 					return -1;
-
 				}
 
 				//printf("read2 %d %d %d %d %d\n", shift, blockNum, lastBlockNum, blocksLength, readLen);
@@ -147,7 +154,7 @@ namespace EncFS {
 		lock_guard<decltype(this->mutexLock)> lock(this->mutexLock);
 		try {
 			int64_t fileIv;
-			if (!this->getFileIV(FileName, &fileIv, true)) {
+			if (this->getFileIV(FileName, &fileIv, true) == READ_ERROR) {
 				SetLastError(ERROR_FILE_CORRUPT);
 				return -1;
 			}
@@ -263,16 +270,16 @@ namespace EncFS {
 
 		// Calculate position.
 		// File header and block header sizes are zero on reverse mode.
-		size_t blockSize = encfs.getBlockSize();
-		size_t shift = off % blockSize;
-		size_t blockNum = off / blockSize;
-		size_t lastBlockNum = (off + len - 1) / blockSize;
+		int32_t blockSize = encfs.getBlockSize();
+		int32_t shift = off % blockSize;
+		int64_t blockNum = off / blockSize;
+		int64_t lastBlockNum = (off + len - 1) / blockSize;
 
-		size_t blocksOffset = blockNum * blockSize;
-		size_t blocksLength = (lastBlockNum + 1) * blockSize - blocksOffset;
+		int64_t blocksOffset = blockNum * blockSize;
+		int64_t blocksLength = (lastBlockNum + 1) * blockSize - blocksOffset;
 
-		size_t i = 0;
-		size_t blockDataLen;
+		int32_t i = 0;
+		int32_t blockDataLen;
 
 		if (blockNum == this->lastBlockNum) {
 			// Copy from buffer.
@@ -304,7 +311,7 @@ namespace EncFS {
 			return i;
 		}
 
-		size_t bufferPos = 0;
+		int64_t bufferPos = 0;
 		for (; i < len; i += blockDataLen) {
 			blockDataLen = (len - i) > blockSize - shift ? blockSize - shift : (len - i);
 
@@ -377,7 +384,7 @@ namespace EncFS {
 			blockNum = fileSize / blockDataSize;
 		}
 		int64_t fileIv;
-		if (!this->getFileIV(FileName, &fileIv, true)) {
+		if (this->getFileIV(FileName, &fileIv, true) == READ_ERROR) {
 			return false;
 		}
 		if (shift != 0) {
@@ -458,8 +465,12 @@ namespace EncFS {
 	bool EncFSFile::changeFileIV(const LPCWSTR FileName, const LPCWSTR NewFileName) {
 		int64_t fileIv;
 		//printf("changeFileIV\n");
-		if (!this->getFileIV(FileName, &fileIv, false)) {
+		EncFSGetFileIVResult ivResult = this->getFileIV(FileName, &fileIv, false);
+		if (ivResult == EMPTY) {
 			return true;
+		}
+		if (ivResult == READ_ERROR) {
+			return false;
 		}
 		//printf("changeFileIV A %d\n", fileIv);
 		string cNewFileName = strConv.to_bytes(wstring(NewFileName));

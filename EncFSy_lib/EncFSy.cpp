@@ -1370,7 +1370,7 @@ static NTSTATUS DOKAN_CALLBACK EncFSSetAllocationSize(
 	LARGE_INTEGER encodedFileSize;
 	if (GetFileSizeEx(encfsFile->getHandle(), &encodedFileSize)) {
 		size_t decodedFileSize = encfs.toDecodedLength(encodedFileSize.QuadPart);
-		if (decodedFileSize < AllocSize) {
+		if ((int64_t)decodedFileSize < AllocSize) {
 			if (!encfsFile->setLength(FileName, AllocSize)) {
 				DWORD error = GetLastError();
 				DbgPrint(L"\tSetFilePointer error: %d, offset = %I64d\n", error,
@@ -1771,8 +1771,9 @@ static NTSTATUS DOKAN_CALLBACK EncFSMounted(LPCWSTR MountPoint,
 
 	if (!g_efo.g_DebugMode) {
 		wchar_t buff[20];
-		swprintf(buff, sizeof(buff), L"%s:\\", MountPoint);
-		ShellExecute(NULL, NULL, buff, NULL, NULL, SW_SHOWNORMAL);
+		if (swprintf_s(buff, sizeof(buff), L"%s:\\", MountPoint) != -1) {
+			ShellExecute(NULL, NULL, buff, NULL, NULL, SW_SHOWNORMAL);
+		}
 	}
 
 	return STATUS_SUCCESS;

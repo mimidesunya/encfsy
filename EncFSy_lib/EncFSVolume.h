@@ -27,7 +27,7 @@ namespace EncFS
 	class EncFSVolume {
 	public:
 		/** Block header size **/
-		static const size_t HEADER_SIZE = 8;
+		static const int32_t HEADER_SIZE = 8;
 
 		/** NTFS alt data stream support. **/
 		bool altStream;
@@ -37,29 +37,29 @@ namespace EncFS
 		bool reverse;
 
 		/** Key size. 192 or 256B */
-		int keySize;
+		int32_t keySize;
 		/** Block size of data. Fixed to 1024. */
-		int blockSize;
+		int32_t blockSize;
 		/** Generated different IV for each files. */
 		bool uniqueIV;
 		/** Generate filename IV from parent file path. */
 		bool chainedNameIV;
 		/** Generate content IV from parent file path. */
 		bool externalIVChaining;
-		int blockMACBytes;
-		int blockMACRandBytes;
+		int32_t blockMACBytes;
+		int32_t blockMACRandBytes;
 		bool allowHoles;
 
-		int encodedKeySize;
+		int32_t encodedKeySize;
 		string encodedKeyData;
 
-		int saltLen;
+		int32_t saltLen;
 		string saltData;
 
 		/** Iteration count of key derivation function. */
-		int kdfIterations;
+		int32_t kdfIterations;
 		/** Expected time for execute key derivation function.@*/
-		int desiredKDFDuration;
+		int32_t desiredKDFDuration;
 
 		string volumeKey;
 		string volumeIv;
@@ -97,10 +97,10 @@ namespace EncFS
 
 		void save(string &xml);
 
-		inline size_t getHeaderSize() {
+		inline int32_t getHeaderSize() {
 			return this->blockMACRandBytes + this->blockMACBytes;
 		}
-		inline size_t getBlockSize() {
+		inline int32_t getBlockSize() {
 			return this->blockSize;
 		}
 		inline bool isChainedNameIV() {
@@ -125,8 +125,8 @@ namespace EncFS
 		void decodeFileName(const string &encodedFileName, const string &plainDirPath, string &plainFileName);
 		void encodeFilePath(const string &plainFilePath, string &encodedFilePath);
 		void decodeFilePath(const string &plainFilePath, string &encodedFilePath);
-		size_t toDecodedLength(const size_t encodedLength);
-		size_t toEncodedLength(const size_t decodedLength);
+		int64_t toDecodedLength(const int64_t encodedLength);
+		int64_t toEncodedLength(const int64_t decodedLength);
 
 		void encodeFileIv(const string &plainFilePath, const int64_t fileIv, string &encodedFileHeader);
 		int64_t decodeFileIv(const string &plainFilePath, const string &encodedFileHeader);

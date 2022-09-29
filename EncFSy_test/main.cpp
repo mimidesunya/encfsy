@@ -17,7 +17,7 @@ int main()
     {
         DWORD dwDesiredAccess = GENERIC_READ | GENERIC_WRITE;
         DWORD dwShareMode = FILE_SHARE_READ | FILE_SHARE_WRITE;
-        DWORD dwCreationDisposition = OPEN_ALWAYS;
+        DWORD dwCreationDisposition = CREATE_ALWAYS;
         DWORD dwFlagsAndAttribute = FILE_ATTRIBUTE_NORMAL;
         HANDLE h = CreateFileW(file, dwDesiredAccess, dwShareMode, NULL,
             dwCreationDisposition, dwFlagsAndAttribute, NULL);
@@ -49,17 +49,12 @@ int main()
             printf("CreateFileW ERROR: %d\n", lastError);
             return -1;
         }
-
+        LARGE_INTEGER distanceToMove;
         const char* writeData = "ABCDEFG";
         const DWORD size = sizeof(writeData);
+        char buff[size];
         DWORD readLen;
-        if (!WriteFile(h, writeData, size, &readLen, NULL)) {
-            DWORD lastError = GetLastError();
-            printf("WriteFile ERROR: %d\n", lastError);
-            return -1;
-        }
 
-        LARGE_INTEGER distanceToMove;
         distanceToMove.QuadPart = 0;
         if (!SetFilePointerEx(h, distanceToMove, NULL, FILE_BEGIN)) {
             DWORD lastError = GetLastError();
@@ -67,7 +62,40 @@ int main()
             return -1;
         }
 
-        char buff[size];
+        if (!ReadFile(h, buff, size, &readLen, NULL)) {
+            DWORD lastError = GetLastError();
+            printf("ReadFile ERROR: %d\n", lastError);
+            return -1;
+        }
+        printf("ReadLen: %d\n", readLen);
+
+        distanceToMove.QuadPart = 100;
+        if (!SetFilePointerEx(h, distanceToMove, NULL, FILE_BEGIN)) {
+            DWORD lastError = GetLastError();
+            printf("SetFilePointerEx ERROR: %d\n", lastError);
+            return -1;
+        }
+
+        if (!ReadFile(h, buff, size, &readLen, NULL)) {
+            DWORD lastError = GetLastError();
+            printf("ReadFile ERROR: %d\n", lastError);
+            return -1;
+        }
+        printf("ReadLen: %d\n", readLen);
+
+        if (!WriteFile(h, writeData, size, &readLen, NULL)) {
+            DWORD lastError = GetLastError();
+            printf("WriteFile ERROR: %d\n", lastError);
+            return -1;
+        }
+
+        distanceToMove.QuadPart = 0;
+        if (!SetFilePointerEx(h, distanceToMove, NULL, FILE_BEGIN)) {
+            DWORD lastError = GetLastError();
+            printf("SetFilePointerEx ERROR: %d\n", lastError);
+            return -1;
+        }
+
         if (!ReadFile(h, buff, size, &readLen, NULL)) {
             DWORD lastError = GetLastError();
             printf("ReadFile ERROR: %d\n", lastError);
