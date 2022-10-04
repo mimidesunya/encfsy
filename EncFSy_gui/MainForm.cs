@@ -88,6 +88,14 @@ namespace EncFSy_gui
             {
                 args += " --dokan-mount-manager";
             }
+            if (this.caseInsensitiveCheckBox.Checked)
+            {
+                args += " --case-insensitive";
+            }
+            if (this.readOnlyCheckBox.Checked)
+            {
+                args += " --dokan-write-protect";
+            }
             if (this.reverseCheckBox.Checked)
             {
                 args += " --reverse";
@@ -225,6 +233,11 @@ namespace EncFSy_gui
         }
 
         private void checkBox1_CheckedChanged_1(object sender, EventArgs e)
+        {
+
+        }
+
+        private void checkBox1_CheckedChanged_2(object sender, EventArgs e)
         {
 
         }

@@ -30,6 +30,7 @@ For 64bit environment only.
 	  --sector-size Bytes (ex. 512)          Sector Size of the volume. This will behave on the disk file size.
 	  --paranoia AES-256bit / changed name IV / external IV chaining
 	  --alt-stream Enable NTFS alternate data stream.
+	  --case-insensitive Ignore case in filenames.
 	  --reverse Encrypt rootdir to mountPoint.
 	Examples:
 	        encfs.exe C:\Users M:                                    # EncFS C:\Users as RootDirectory into a drive of letter M:\.

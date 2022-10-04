@@ -53,6 +53,7 @@ void ShowUsage() {
 		"  --sector-size Bytes (ex. 512)\t\t Sector Size of the volume. This will behave on the disk file size.\n"
 		"  --paranoia AES-256bit / changed name IV / external IV chaining \n"
 		"  --alt-stream Enable NTFS alternate data stream.\n"
+		"  --case-insensitive Ignore case in filenames.\n"
 		"  --reverse Encrypt rootdir to mountPoint.\n"
 		"Examples:\n"
 		"\tencfs.exe C:\\Users M:\t\t\t\t\t # EncFS C:\\Users as RootDirectory into a drive of letter M:\\.\n"
@@ -114,6 +115,7 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 	EncFSOptions efo;
 	ZeroMemory(&efo, sizeof(EncFSOptions));
 	efo.AltStream = FALSE;
+	efo.CaseInsensitive = FALSE;
 	efo.Reverse = FALSE;
 	efo.Timeout = 30000;
 	efo.SingleThread = FALSE;
@@ -183,6 +185,9 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 				}
 				else if (wcscmp(argv[command], L"--alt-stream") == 0) {
 					efo.AltStream = TRUE;
+				}
+				else if (wcscmp(argv[command], L"--case-insensitive") == 0) {
+					efo.CaseInsensitive = TRUE;
 				}
 				else if (wcscmp(argv[command], L"--reverse") == 0) {
 					efo.Reverse = TRUE;

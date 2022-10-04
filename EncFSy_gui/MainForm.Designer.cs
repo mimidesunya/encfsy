@@ -40,6 +40,8 @@ namespace EncFSy_gui
             this.altStreamCheckBox = new System.Windows.Forms.CheckBox();
             this.reverseCheckBox = new System.Windows.Forms.CheckBox();
             this.mountManagerCheckBox = new System.Windows.Forms.CheckBox();
+            this.caseInsensitiveCheckBox = new System.Windows.Forms.CheckBox();
+            this.readOnlyCheckBox = new System.Windows.Forms.CheckBox();
             this.SuspendLayout();
             // 
             // selectDirectoryButton
@@ -55,7 +57,7 @@ namespace EncFSy_gui
             // 
             // mountButton
             // 
-            this.mountButton.Location = new System.Drawing.Point(12, 237);
+            this.mountButton.Location = new System.Drawing.Point(12, 263);
             this.mountButton.Name = "mountButton";
             this.mountButton.Size = new System.Drawing.Size(99, 20);
             this.mountButton.TabIndex = 5;
@@ -65,7 +67,7 @@ namespace EncFSy_gui
             // 
             // unmountButton
             // 
-            this.unmountButton.Location = new System.Drawing.Point(117, 237);
+            this.unmountButton.Location = new System.Drawing.Point(117, 263);
             this.unmountButton.Name = "unmountButton";
             this.unmountButton.Size = new System.Drawing.Size(99, 20);
             this.unmountButton.TabIndex = 6;
@@ -75,7 +77,7 @@ namespace EncFSy_gui
             // 
             // quitButton
             // 
-            this.quitButton.Location = new System.Drawing.Point(223, 237);
+            this.quitButton.Location = new System.Drawing.Point(223, 263);
             this.quitButton.Name = "quitButton";
             this.quitButton.Size = new System.Drawing.Size(95, 20);
             this.quitButton.TabIndex = 7;
@@ -132,7 +134,7 @@ namespace EncFSy_gui
             // reverseCheckBox
             // 
             this.reverseCheckBox.AutoSize = true;
-            this.reverseCheckBox.Location = new System.Drawing.Point(252, 214);
+            this.reverseCheckBox.Location = new System.Drawing.Point(224, 214);
             this.reverseCheckBox.Name = "reverseCheckBox";
             this.reverseCheckBox.Size = new System.Drawing.Size(66, 17);
             this.reverseCheckBox.TabIndex = 11;
@@ -152,11 +154,36 @@ namespace EncFSy_gui
             this.mountManagerCheckBox.UseVisualStyleBackColor = true;
             this.mountManagerCheckBox.CheckedChanged += new System.EventHandler(this.checkBox1_CheckedChanged_1);
             // 
+            // caseInsensitiveCheckBox
+            // 
+            this.caseInsensitiveCheckBox.AutoSize = true;
+            this.caseInsensitiveCheckBox.Checked = true;
+            this.caseInsensitiveCheckBox.CheckState = System.Windows.Forms.CheckState.Checked;
+            this.caseInsensitiveCheckBox.Location = new System.Drawing.Point(13, 237);
+            this.caseInsensitiveCheckBox.Name = "caseInsensitiveCheckBox";
+            this.caseInsensitiveCheckBox.Size = new System.Drawing.Size(83, 17);
+            this.caseInsensitiveCheckBox.TabIndex = 13;
+            this.caseInsensitiveCheckBox.Text = "Ignore Case";
+            this.caseInsensitiveCheckBox.UseVisualStyleBackColor = true;
+            this.caseInsensitiveCheckBox.CheckedChanged += new System.EventHandler(this.checkBox1_CheckedChanged_2);
+            // 
+            // readOnlyCheckBox
+            // 
+            this.readOnlyCheckBox.AutoSize = true;
+            this.readOnlyCheckBox.Location = new System.Drawing.Point(117, 237);
+            this.readOnlyCheckBox.Name = "readOnlyCheckBox";
+            this.readOnlyCheckBox.Size = new System.Drawing.Size(76, 17);
+            this.readOnlyCheckBox.TabIndex = 14;
+            this.readOnlyCheckBox.Text = "Read Only";
+            this.readOnlyCheckBox.UseVisualStyleBackColor = true;
+            // 
             // MainForm
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(330, 269);
+            this.ClientSize = new System.Drawing.Size(330, 295);
+            this.Controls.Add(this.readOnlyCheckBox);
+            this.Controls.Add(this.caseInsensitiveCheckBox);
             this.Controls.Add(this.mountManagerCheckBox);
             this.Controls.Add(this.reverseCheckBox);
             this.Controls.Add(this.altStreamCheckBox);
@@ -190,6 +217,8 @@ namespace EncFSy_gui
         private System.Windows.Forms.CheckBox altStreamCheckBox;
         private System.Windows.Forms.CheckBox reverseCheckBox;
         private System.Windows.Forms.CheckBox mountManagerCheckBox;
+        private System.Windows.Forms.CheckBox caseInsensitiveCheckBox;
+        private System.Windows.Forms.CheckBox readOnlyCheckBox;
     }
 }
 

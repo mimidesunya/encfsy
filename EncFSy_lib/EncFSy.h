@@ -27,6 +27,7 @@ struct EncFSOptions {
 	WCHAR UNCName[DOKAN_MAX_PATH];
 
 	BOOLEAN AltStream;
+	BOOLEAN CaseInsensitive;
 	BOOLEAN Reverse;
 	PWCHAR ConfigFile;
 };

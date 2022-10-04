@@ -10,8 +10,12 @@ int main()
 {
     //const WCHAR* drive = L"G:\\";
     //const WCHAR* file = L"G:\\Dokan\\TEST_FILE.txt";
+    //const WCHAR* filei = L"G:\\Dokan\\Test_File.txt";
+
     const WCHAR* drive = L"O:\\";
     const WCHAR* file = L"O:\\TEST_FILE.txt";
+    const WCHAR* filei = L"O:\\PATH\\CASE\\TEST_FILE.txt";
+    //const WCHAR* filei = L"O:\\Test_File.txt";
 
     // file information
     {
@@ -20,6 +24,29 @@ int main()
         DWORD dwCreationDisposition = CREATE_ALWAYS;
         DWORD dwFlagsAndAttribute = FILE_ATTRIBUTE_NORMAL;
         HANDLE h = CreateFileW(file, dwDesiredAccess, dwShareMode, NULL,
+            dwCreationDisposition, dwFlagsAndAttribute, NULL);
+        if (h == INVALID_HANDLE_VALUE) {
+            DWORD lastError = GetLastError();
+            printf("CreateFileW ERROR: %d\n", lastError);
+            return -1;
+        }
+        TCHAR name[255];
+        if (!GetFinalPathNameByHandle(h, name, 255, FILE_NAME_NORMALIZED)) {
+            DWORD lastError = GetLastError();
+            printf("GetFinalPathNameByHandle ERROR: %d\n", lastError);
+            return -1;
+        }
+        wprintf(L"%s\n", name);
+        CloseHandle(h);
+    }
+
+    // ignore case
+    {
+        DWORD dwDesiredAccess = GENERIC_READ | GENERIC_WRITE;
+        DWORD dwShareMode = FILE_SHARE_READ | FILE_SHARE_WRITE;
+        DWORD dwCreationDisposition = OPEN_EXISTING;
+        DWORD dwFlagsAndAttribute = FILE_ATTRIBUTE_NORMAL;
+        HANDLE h = CreateFileW(filei, dwDesiredAccess, dwShareMode, NULL,
             dwCreationDisposition, dwFlagsAndAttribute, NULL);
         if (h == INVALID_HANDLE_VALUE) {
             DWORD lastError = GetLastError();
