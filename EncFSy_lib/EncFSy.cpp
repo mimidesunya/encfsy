@@ -1848,9 +1848,10 @@ static NTSTATUS DOKAN_CALLBACK EncFSMounted(LPCWSTR MountPoint,
 	DbgPrint(L"Mounted as %s\n", MountPoint);
 
 	if (!g_efo.g_DebugMode) {
-		wchar_t buff[20];
-		if (swprintf_s(buff, sizeof(buff), L"%s:\\", MountPoint) != -1) {
-			ShellExecute(NULL, NULL, buff, NULL, NULL, SW_SHOWNORMAL);
+		const unsigned int buffSize = 20;
+		wchar_t buff[buffSize];
+		if (swprintf_s(buff, buffSize, L"%s:\\", MountPoint) != -1) {
+			ShellExecuteW(NULL, NULL, buff, NULL, NULL, SW_SHOWNORMAL);
 		}
 	}
 
