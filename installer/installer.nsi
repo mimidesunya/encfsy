@@ -1,4 +1,4 @@
-!define VERSION "0.19"
+!define VERSION "1.0"
 
 !include LogicLib.nsh
 !include x64.nsh
@@ -67,7 +67,7 @@ SectionEnd
 
 Function .onInit
   ${DisableX64FSRedirection}
-  IfFileExists "$SYSDIR\drivers\dokan1.sys" Skip
+  IfFileExists "$SYSDIR\drivers\dokan2.sys" Skip
     MessageBox MB_OK "EncFSy requires Dokany. Please try again after installed Dokany."
     ExecShell "open" "https://github.com/dokan-dev/dokany/releases"
     Abort
