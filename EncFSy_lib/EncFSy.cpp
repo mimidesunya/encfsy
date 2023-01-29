@@ -45,39 +45,10 @@ EncFSOptions g_efo;
 
 mutex dirMoveLock;
 
-static void PrintF(LPCWSTR format, ...) {
+static void PrintF(LPCWSTR format, va_list argp) {
 	const WCHAR* outputString;
 	WCHAR* buffer = NULL;
 	size_t length;
-	va_list argp;
-
-	va_start(argp, format);
-	length = _vscwprintf(format, argp) + 1;
-	buffer = (WCHAR*)_malloca(length * sizeof(WCHAR));
-	if (buffer) {
-		vswprintf_s(buffer, length, format, argp);
-		outputString = buffer;
-	}
-	else {
-		outputString = format;
-	}
-	fputws(outputString, stderr);
-	_freea(buffer);
-	va_end(argp);
-	fflush(stderr);
-}
-
-static void DbgPrint(LPCWSTR format, ...) {
-	if (!g_efo.g_DebugMode) {
-		return;
-	}
-
-	const WCHAR* outputString;
-	WCHAR* buffer = NULL;
-	size_t length;
-	va_list argp;
-
-	va_start(argp, format);
 	length = _vscwprintf(format, argp) + 1;
 	buffer = (WCHAR*)_malloca(length * sizeof(WCHAR));
 	if (buffer) {
@@ -96,9 +67,32 @@ static void DbgPrint(LPCWSTR format, ...) {
 	}
 	if (buffer)
 		_freea(buffer);
-	va_end(argp);
 	if (g_efo.g_UseStdErr)
 		fflush(stderr);
+}
+
+static void MyPrint(LPCWSTR format, ...) {
+	va_list argp;
+	va_start(argp, format);
+	PrintF(format, argp);
+	va_end(argp);
+}
+
+static void DbgPrint(LPCWSTR format, ...) {
+	if (!g_efo.g_DebugMode) {
+		return;
+	}
+	va_list argp;
+	va_start(argp, format);
+	PrintF(format, argp);
+	va_end(argp);
+}
+
+static void ErrorPrint(LPCWSTR format, ...) {
+	va_list argp;
+	va_start(argp, format);
+	DbgPrint(format, argp);
+	va_end(argp);
 }
 
 static void ToWFilePath(wstring_convert<codecvt_utf8_utf16<wchar_t>>& strConv,
@@ -257,7 +251,7 @@ static void PrintUserName(PDOKAN_FILE_INFO DokanFileInfo) {
 
 	if (!GetTokenInformation(handle, TokenUser, buffer, sizeof(buffer),
 		&returnLength)) {
-		DbgPrint(L"  GetTokenInformaiton failed: %d\n", GetLastError());
+		ErrorPrint(L"  GetTokenInformaiton failed: %d\n", GetLastError());
 		CloseHandle(handle);
 		return;
 	}
@@ -267,7 +261,7 @@ static void PrintUserName(PDOKAN_FILE_INFO DokanFileInfo) {
 	tokenUser = (PTOKEN_USER)buffer;
 	if (!LookupAccountSid(NULL, tokenUser->User.Sid, accountName, &accountLength,
 		domainName, &domainLength, &snu)) {
-		DbgPrint(L"  LookupAccountSid failed: %d\n", GetLastError());
+		ErrorPrint(L"  LookupAccountSid failed: %d\n", GetLastError());
 		return;
 	}
 
@@ -310,7 +304,7 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
 		creationDisposition == CREATE_NEW || creationDisposition == CREATE_ALWAYS);
 
 	DbgPrint(L"CreateFile : %s ; %s\n", FileName, filePath);
-	//PrintF(L"CreateFile : %s\n%s\n", FileName, filePath);
+	//MyPrint(L"CreateFile : %s %s 0x%x\n", FileName, filePath, DesiredAccess);
 
 	PrintUserName(DokanFileInfo);
 
@@ -457,7 +451,7 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
 				// Fail to create folder for OPEN_ALWAYS is not an error
 				if (error != ERROR_ALREADY_EXISTS ||
 					creationDisposition == CREATE_NEW) {
-					DbgPrint(L"\terror code = %d\n\n", error);
+					ErrorPrint(L"CreateDirectory error code = %d\n\n", error);
 					status = DokanNtStatusFromWin32(error);
 				}
 			}
@@ -503,7 +497,7 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
 			}
 			if (handle == INVALID_HANDLE_VALUE) {
 				error = GetLastError();
-				DbgPrint(L"\terror code = %d\n\n", error);
+				ErrorPrint(L"CreateFile error code = %d\n\n", error);
 
 				status = DokanNtStatusFromWin32(error);
 			}
@@ -596,7 +590,7 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
 
 		if (handle == INVALID_HANDLE_VALUE) {
 			error = GetLastError();
-			DbgPrint(L"\terror code = %d\n\n", error);
+			ErrorPrint(L"CreateFile2 error code = %d\n", error);
 
 			status = DokanNtStatusFromWin32(error);
 		}
@@ -678,19 +672,19 @@ static void DOKAN_CALLBACK EncFSCleanup(LPCWSTR FileName,
 		if (DokanFileInfo->IsDirectory) {
 			DbgPrint(L"  DeleteDirectory ");
 			if (!RemoveDirectoryW(filePath)) {
-				DbgPrint(L"error code = %d\n\n", GetLastError());
+				ErrorPrint(L"DeleteDirectory error code = %d\n", GetLastError());
 			}
 			else {
-				DbgPrint(L"success\n\n");
+				DbgPrint(L"success\n");
 			}
 		}
 		else {
 			DbgPrint(L"  DeleteFile ");
 			if (DeleteFileW(filePath) == 0) {
-				DbgPrint(L" error code = %d\n\n", GetLastError());
+				ErrorPrint(L"DeleteFile error code = %d\n", GetLastError());
 			}
 			else {
-				DbgPrint(L"success\n\n");
+				DbgPrint(L"success\n");
 			}
 		}
 	}
@@ -713,7 +707,7 @@ static NTSTATUS DOKAN_CALLBACK EncFSReadFile(LPCWSTR FileName, LPVOID Buffer,
 			OPEN_EXISTING, 0, NULL);
 		if (handle == INVALID_HANDLE_VALUE) {
 			DWORD error = GetLastError();
-			DbgPrint(L"\tCreateFile error : %d\n\n", error);
+			ErrorPrint(L"\tCreateFile error : %d\n", error);
 			return DokanNtStatusFromWin32(error);
 		}
 		encfsFile = new EncFS::EncFSFile(handle, true);
@@ -757,7 +751,7 @@ static NTSTATUS DOKAN_CALLBACK EncFSReadFile(LPCWSTR FileName, LPVOID Buffer,
 	}
 	if (readLen == -1) {
 		DWORD error = GetLastError();
-		DbgPrint(L"\tread error = %u, buffer length = %d, offset = %d\n\n",
+		ErrorPrint(L"\tread error = %u, buffer length = %d, offset = %d\n\n",
 			error, BufferLength, offset);
 		if (opened) {
 			delete encfsFile;
@@ -798,7 +792,7 @@ static NTSTATUS DOKAN_CALLBACK EncFSWriteFile(LPCWSTR FileName, LPCVOID Buffer,
 				OPEN_EXISTING, 0, NULL);
 			if (handle == INVALID_HANDLE_VALUE) {
 				DWORD error = GetLastError();
-				DbgPrint(L"\tCreateFile error : %d\n\n", error);
+				ErrorPrint(L"\tCreateFile error : %d\n", error);
 				return DokanNtStatusFromWin32(error);
 			}
 			encfsFile = new EncFS::EncFSFile(handle, false);
@@ -814,7 +808,7 @@ static NTSTATUS DOKAN_CALLBACK EncFSWriteFile(LPCWSTR FileName, LPCVOID Buffer,
 		}
 		else {
 			DWORD error = GetLastError();
-			DbgPrint(L"\terror code = %d\n", error);
+			ErrorPrint(L"GetFileSize error code = %d\n", error);
 			return DokanNtStatusFromWin32(error);
 		}
 		fileSize = encfs.toDecodedLength(fileSize);
@@ -852,7 +846,7 @@ static NTSTATUS DOKAN_CALLBACK EncFSWriteFile(LPCWSTR FileName, LPCVOID Buffer,
 	int32_t writtenLen = encfsFile->write(FileName, fileSize, (char*)Buffer, off, NumberOfBytesToWrite);
 	if (writtenLen == -1) {
 		DWORD error = GetLastError();
-		DbgPrint(L"\twrite error = %u, buffer length = %d, write length = %d\n",
+		ErrorPrint(L"\twrite error = %u, buffer length = %d, write length = %d\n",
 			error, NumberOfBytesToWrite, writtenLen);
 		if (opened) {
 			delete encfsFile;
@@ -902,7 +896,7 @@ EncFSFindFiles(LPCWSTR FileName,
 
 	if (hFind == INVALID_HANDLE_VALUE) {
 		error = GetLastError();
-		DbgPrint(L"\tinvalid file handle. Error is %u\n\n", error);
+		ErrorPrint(L"FindFiles invalid file handle. Error is %u\n\n", error);
 		return DokanNtStatusFromWin32(error);
 	}
 
@@ -956,7 +950,7 @@ EncFSFindFiles(LPCWSTR FileName,
 	FindClose(hFind);
 
 	if (error != ERROR_NO_MORE_FILES) {
-		DbgPrint(L"\tFindNextFile error. Error is %u\n\n", error);
+		ErrorPrint(L"\tFindNextFile error. Error is %u\n\n", error);
 		return DokanNtStatusFromWin32(error);
 	}
 
@@ -995,7 +989,7 @@ EncFSDeleteDirectory(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInfo) {
 
 	if (hFind == INVALID_HANDLE_VALUE) {
 		DWORD error = GetLastError();
-		DbgPrint(L"\tDeleteDirectory error code = %d\n\n", error);
+		ErrorPrint(L"DeleteDirectory error code = %d\n\n", error);
 		return DokanNtStatusFromWin32(error);
 	}
 
@@ -1013,7 +1007,7 @@ EncFSDeleteDirectory(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInfo) {
 	FindClose(hFind);
 
 	if (error != ERROR_NO_MORE_FILES) {
-		DbgPrint(L"\tDeleteDirectory error code = %d\n\n", error);
+		ErrorPrint(L"DeleteDirectory error code = %d\n\n", error);
 		return DokanNtStatusFromWin32(error);
 	}
 
@@ -1199,7 +1193,7 @@ EncFSMoveFile(LPCWSTR FileName, // existing file name
 	}
 	else {
 		DWORD error = GetLastError();
-		DbgPrint(L"\tMoveFile error = %u\n", error);
+		ErrorPrint(L"\tMoveFile error = %u\n", error);
 		return DokanNtStatusFromWin32(error);
 	}
 }
@@ -1225,7 +1219,7 @@ static NTSTATUS DOKAN_CALLBACK EncFSLockFile(LPCWSTR FileName,
 	if (!LockFile(encfsFile->getHandle(), offset.LowPart, offset.HighPart, length.LowPart,
 		length.HighPart)) {
 		DWORD error = GetLastError();
-		DbgPrint(L"\terror code = %d\n\n", error);
+		ErrorPrint(L"LockFile error code = %d\n\n", error);
 		return DokanNtStatusFromWin32(error);
 	}
 
@@ -1244,7 +1238,7 @@ static BOOL AddSeSecurityNamePrivilege() {
 	if (!LookupPrivilegeValue(0, SE_SECURITY_NAME, &luid)) {
 		err = GetLastError();
 		if (err != ERROR_SUCCESS) {
-			DbgPrint(L"  failed: Unable to lookup privilege value. error = %u\n",
+			ErrorPrint(L"  failed: Unable to lookup privilege value. error = %u\n",
 				err);
 			return FALSE;
 		}
@@ -1262,7 +1256,7 @@ static BOOL AddSeSecurityNamePrivilege() {
 		TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &token)) {
 		err = GetLastError();
 		if (err != ERROR_SUCCESS) {
-			DbgPrint(L"  failed: Unable obtain process token. error = %u\n", err);
+			ErrorPrint(L"  failed: Unable obtain process token. error = %u\n", err);
 			return FALSE;
 		}
 	}
@@ -1273,7 +1267,7 @@ static BOOL AddSeSecurityNamePrivilege() {
 		&retSize);
 	err = GetLastError();
 	if (err != ERROR_SUCCESS) {
-		DbgPrint(L"  failed: Unable to adjust token privileges: %u\n", err);
+		ErrorPrint(L"  failed: Unable to adjust token privileges: %u\n", err);
 		CloseHandle(token);
 		return FALSE;
 	}
@@ -1310,7 +1304,7 @@ EncFSFlushFileBuffers(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInfo) {
 	}
 	else {
 		DWORD error = GetLastError();
-		DbgPrint(L"\tflush error code = %d\n", error);
+		ErrorPrint(L"\tflush error code = %d\n", error);
 		return DokanNtStatusFromWin32(error);
 	}
 }
@@ -1329,7 +1323,7 @@ static NTSTATUS DOKAN_CALLBACK EncFSSetEndOfFile(
 	EncFS::EncFSFile* encfsFile = (EncFS::EncFSFile*)DokanFileInfo->Context;
 	if (!encfsFile->setLength(FileName, ByteOffset)) {
 		DWORD error = GetLastError();
-		DbgPrint(L"\tSetFilePointer error: %d, offset = %I64d\n\n", error,
+		ErrorPrint(L"\tSetFilePointer error: %d, offset = %I64d\n\n", error,
 			ByteOffset);
 		return DokanNtStatusFromWin32(error);
 	}
@@ -1353,7 +1347,7 @@ static NTSTATUS DOKAN_CALLBACK EncFSGetFileInformation(
 			OPEN_EXISTING, 0, NULL);
 		if (handle == INVALID_HANDLE_VALUE) {
 			DWORD error = GetLastError();
-			DbgPrint(L"\tCreateFile error : %d\n\n", error);
+			ErrorPrint(L"\tCreateFile error : %d\n", error);
 			return DokanNtStatusFromWin32(error);
 		}
 		encfsFile = new EncFS::EncFSFile(handle, false);
@@ -1364,7 +1358,7 @@ static NTSTATUS DOKAN_CALLBACK EncFSGetFileInformation(
 	}
 
 	if (!GetFileInformationByHandle(encfsFile->getHandle(), HandleFileInformation)) {
-		DbgPrint(L"\terror code = %d\n", GetLastError());
+		ErrorPrint(L"GetFileInfo error code = %d\n", GetLastError());
 		WCHAR filePath[DOKAN_MAX_PATH];
 		GetFilePath(filePath, FileName, false);
 
@@ -1381,7 +1375,7 @@ static NTSTATUS DOKAN_CALLBACK EncFSGetFileInformation(
 			HANDLE findHandle = FindFirstFileW(filePath, &find);
 			if (findHandle == INVALID_HANDLE_VALUE) {
 				DWORD error = GetLastError();
-				DbgPrint(L"\tFindFirstFile error code = %d\n\n", error);
+				ErrorPrint(L"\tFindFirstFile error code = %d\n\n", error);
 				if (opened) {
 					delete encfsFile;
 				}
@@ -1460,10 +1454,10 @@ static NTSTATUS DOKAN_CALLBACK EncFSSetAllocationSize(
 	LARGE_INTEGER encodedFileSize;
 	if (GetFileSizeEx(encfsFile->getHandle(), &encodedFileSize)) {
 		size_t decodedFileSize = encfs.toDecodedLength(encodedFileSize.QuadPart);
-		if ((int64_t)decodedFileSize < AllocSize) {
+		if (AllocSize < (int64_t)decodedFileSize) {
 			if (!encfsFile->setLength(FileName, AllocSize)) {
 				DWORD error = GetLastError();
-				DbgPrint(L"\tSetFilePointer error: %d, offset = %I64d\n", error,
+				ErrorPrint(L"\tSetFilePointer error: %d, offset = %I64d\n", error,
 					AllocSize);
 				return DokanNtStatusFromWin32(error);
 			}
@@ -1472,7 +1466,7 @@ static NTSTATUS DOKAN_CALLBACK EncFSSetAllocationSize(
 	}
 	else {
 		DWORD error = GetLastError();
-		DbgPrint(L"\terror code = %d\n\n", error);
+		ErrorPrint(L"GetFileSize error code = %d\n\n", error);
 		return DokanNtStatusFromWin32(error);
 	}
 	return STATUS_SUCCESS;
@@ -1520,7 +1514,7 @@ EncFSSetFileTime(LPCWSTR FileName, CONST FILETIME *CreationTime,
 
 	if (!SetFileTime(encfsFile->getHandle(), CreationTime, LastAccessTime, LastWriteTime)) {
 		DWORD error = GetLastError();
-		DbgPrint(L"\terror code = %d\n\n", error);
+		ErrorPrint(L"SetFileTime error code = %d\n\n", error);
 		return DokanNtStatusFromWin32(error);
 	}
 
@@ -1549,7 +1543,7 @@ EncFSUnlockFile(LPCWSTR FileName, LONGLONG ByteOffset, LONGLONG Length,
 	if (!UnlockFile(encfsFile->getHandle(), offset.LowPart, offset.HighPart, length.LowPart,
 		length.HighPart)) {
 		DWORD error = GetLastError();
-		DbgPrint(L"\terror code = %d\n\n", error);
+		ErrorPrint(L"UnlockFile error code = %d\n\n", error);
 		return DokanNtStatusFromWin32(error);
 	}
 
@@ -1616,12 +1610,12 @@ static NTSTATUS DOKAN_CALLBACK EncFSGetFileSecurity(
 		BufferLength, LengthNeeded)) {
 		int error = GetLastError();
 		if (error == ERROR_INSUFFICIENT_BUFFER) {
-			DbgPrint(L"  GetUserObjectSecurity error: ERROR_INSUFFICIENT_BUFFER\n");
+			ErrorPrint(L"  GetUserObjectSecurity error: ERROR_INSUFFICIENT_BUFFER\n");
 			CloseHandle(handle);
 			return STATUS_BUFFER_OVERFLOW;
 		}
 		else {
-			DbgPrint(L"  GetUserObjectSecurity error: %d\n", error);
+			ErrorPrint(L"  GetUserObjectSecurity error: %d\n", error);
 			CloseHandle(handle);
 			return DokanNtStatusFromWin32(error);
 		}
@@ -1656,11 +1650,11 @@ static NTSTATUS DOKAN_CALLBACK EncFSSetFileSecurity(
 	if (!SetUserObjectSecurity(encfsFile->getHandle(), SecurityInformation, SecurityDescriptor)) {
 		int error = GetLastError();
 		if (error == ERROR_INSUFFICIENT_BUFFER) {
-			DbgPrint(L"  GetUserObjectSecurity error: ERROR_INSUFFICIENT_BUFFER\n");
+			ErrorPrint(L"  GetUserObjectSecurity error: ERROR_INSUFFICIENT_BUFFER\n");
 			return STATUS_BUFFER_OVERFLOW;
 		}
 		else {
-			DbgPrint(L"  SetUserObjectSecurity error: %d\n", error);
+			ErrorPrint(L"  SetUserObjectSecurity error: %d\n", error);
 			return DokanNtStatusFromWin32(error);
 		}
 	}
@@ -1715,7 +1709,6 @@ static NTSTATUS DOKAN_CALLBACK EncFSGetVolumeInformation(
 		}
 	}
 	else {
-
 		DbgPrint(L"GetVolumeInformation: unable to query underlying fs,"
 			L" using defaults.  Last error = %u\n",
 			GetLastError());
@@ -1805,7 +1798,7 @@ EncFSFindStreams(LPCWSTR FileName, PFillFindStreamData FillFindStreamData,
 
 	if (hFind == INVALID_HANDLE_VALUE) {
 		error = GetLastError();
-		DbgPrint(L"\tinvalid file handle. Error is %u\n\n", error);
+		ErrorPrint(L"FindStream invalid file handle. Error is %u", error);
 		return DokanNtStatusFromWin32(error);
 	}
 
@@ -1824,7 +1817,7 @@ EncFSFindStreams(LPCWSTR FileName, PFillFindStreamData FillFindStreamData,
 	FindClose(hFind);
 
 	if (!bufferFull) {
-		DbgPrint(L"\tFindStreams returned %d entries in %s with "
+		ErrorPrint(L"\tFindStreams returned %d entries in %s with "
 			L"STATUS_BUFFER_OVERFLOW\n\n",
 			count, filePath);
 		// https://msdn.microsoft.com/en-us/library/windows/hardware/ff540364(v=vs.85).aspx
@@ -1832,7 +1825,7 @@ EncFSFindStreams(LPCWSTR FileName, PFillFindStreamData FillFindStreamData,
 	}
 
 	if (error != ERROR_HANDLE_EOF) {
-		DbgPrint(L"\tFindNextStreamW error. Error is %u\n\n", error);
+		ErrorPrint(L"\tFindNextStreamW error. Error is %u\n\n", error);
 		return DokanNtStatusFromWin32(error);
 	}
 

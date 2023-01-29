@@ -348,7 +348,7 @@ R"(<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 		}
 
 		// getPaddedDecFilename
-		size_t padBytesSize = 16;
+		const size_t padBytesSize = 16;
 		size_t padLen = padBytesSize - (plainFileName.size() % padBytesSize);
 		if (padLen == 0) {
 			padLen = padBytesSize;
@@ -450,7 +450,7 @@ R"(<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 			}
 		}
 	
-		size_t padLen = plainFileName[plainFileName.size() - 1];
+		const size_t padLen = plainFileName[plainFileName.size() - 1];
 		for (size_t i = 0; i < padLen; ++i) {
 			if (plainFileName[plainFileName.size() - padLen + i] != padLen) {
 				throw EncFSInvalidBlockException();
@@ -517,7 +517,7 @@ R"(<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 
 	int64_t EncFSVolume::toDecodedLength(const int64_t encodedLength) {
 		int64_t size = encodedLength;
-		int64_t headerSize = this->getHeaderSize();
+		const int64_t headerSize = this->getHeaderSize();
 		if (size < (this->uniqueIV ? HEADER_SIZE : 0) + headerSize) {
 			return 0;
 		}
@@ -595,9 +595,8 @@ R"(<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 
 
 	void EncFSVolume::codeBlock(const int64_t fileIv, const int64_t blockNum, const bool encode, const string &srcBlock, string &destBlock) {
-		int64_t iv = blockNum ^ fileIv;
-
-		size_t headerSize = this->getHeaderSize();
+		const int64_t iv = blockNum ^ fileIv;
+		const size_t headerSize = this->getHeaderSize();
 
 		if (encode) {
 			// 暗号化
@@ -628,12 +627,11 @@ R"(<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 			}
 
 			string blockIv;
+			longToBytesByBE(blockIv, iv);
 			if (block.size() == this->blockSize) {
-				longToBytesByBE(blockIv, iv);
 				blockCipher(this->volumeHmac, this->hmacLock, this->volumeKey, this->volumeIv, blockIv, this->aesCbcEnc, this->aesCbcEncLock, block, destBlock);
 			}
 			else {
-				longToBytesByBE(blockIv, iv);
 				streamEncrypt(this->volumeHmac, this->hmacLock, this->volumeKey, this->volumeIv, blockIv, this->aesCfbEnc, this->aesCfbEncLock, block, destBlock);
 			}
 		}
@@ -653,12 +651,11 @@ R"(<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 				}
 			}
 			string blockIv;
+			longToBytesByBE(blockIv, iv);
 			if (srcBlock.size() == this->blockSize) {
-				longToBytesByBE(blockIv, iv);
 				blockCipher(this->volumeHmac, this->hmacLock, this->volumeKey, this->volumeIv, blockIv, this->aesCbcDec, this->aesCbcDecLock, srcBlock, destBlock);
 			}
 			else {
-				longToBytesByBE(blockIv, iv);
 				streamDecrypt(this->volumeHmac, this->hmacLock, this->volumeKey, this->volumeIv, blockIv, this->aesCfbDec, this->aesCfbDecLock, srcBlock, destBlock);
 			}
 

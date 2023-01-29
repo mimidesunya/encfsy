@@ -74,12 +74,12 @@ namespace EncFS {
 			//printf("read %d %d %d %d\n", fileIv, this->lastBlockNum, off, len);
 
 			// Calculate block position.
-			size_t blockSize = encfs.getBlockSize();
-			size_t blockHeaderSize = encfs.getHeaderSize();
-			size_t blockDataSize = blockSize - blockHeaderSize;
+			const size_t blockSize = encfs.getBlockSize();
+			const size_t blockHeaderSize = encfs.getHeaderSize();
+			const size_t blockDataSize = blockSize - blockHeaderSize;
 			size_t shift = off % blockDataSize;
 			size_t blockNum = off / blockDataSize;
-			size_t lastBlockNum = (off + len - 1) / blockDataSize;
+			const size_t lastBlockNum = (off + len - 1) / blockDataSize;
 
 			int32_t copiedLen = 0;
 			// Copy from buffer.
@@ -99,7 +99,7 @@ namespace EncFS {
 			}
 
 			size_t blocksOffset = blockNum * blockSize;
-			size_t blocksLength = (lastBlockNum + 1) * blockSize - blocksOffset;
+			const size_t blocksLength = (lastBlockNum + 1) * blockSize - blocksOffset;
 			if (encfs.isUniqueIV()) {
 				blocksOffset += EncFS::EncFSVolume::HEADER_SIZE;
 			}
@@ -158,7 +158,6 @@ namespace EncFS {
 				SetLastError(ERROR_FILE_CORRUPT);
 				return -1;
 			}
-			// wprintf(L"Write %s %ld %ld\n", FileName, off, len);
 
 			if (off > fileSize) {
 				// Expand file.
@@ -169,17 +168,19 @@ namespace EncFS {
 			}
 
 			// Calculate position.
-			size_t blockSize = encfs.getBlockSize();
-			size_t blockHeaderSize = encfs.getHeaderSize();
-			size_t blockDataSize = blockSize - blockHeaderSize;
+			const size_t blockSize = encfs.getBlockSize();
+			const size_t blockHeaderSize = encfs.getHeaderSize();
+			const size_t blockDataSize = blockSize - blockHeaderSize;
 			size_t shift = off % blockDataSize;
 			size_t blockNum = off / blockDataSize;
-			size_t lastBlockNum = (off + len - 1) / blockDataSize;
+			const size_t lastBlockNum = (off + len - 1) / blockDataSize;
 			size_t blocksOffset = blockNum * blockSize;
-			size_t blocksLength = (lastBlockNum + 1) * blockSize - blocksOffset;
+			const size_t blocksLength = (lastBlockNum + 1) * blockSize - blocksOffset;
 			if (encfs.isUniqueIV()) {
 				blocksOffset += EncFS::EncFSVolume::HEADER_SIZE;
 			}
+			// wprintf(L"Write %s off=%ld len=%ld blockDataSize=%ld shift=%ld blockNum=%ld lastBlockNum=%ld blocksOffset=%ld blocksLength=%ld\n",
+			//	FileName, off, len, blockDataSize, shift, blockNum, lastBlockNum, blocksOffset, blocksLength);
 
 			// Seek for write,
 			LARGE_INTEGER distanceToMove;
