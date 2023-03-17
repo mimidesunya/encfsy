@@ -6,6 +6,8 @@ using namespace std;
 static AutoSeededX917RNG<CryptoPP::AES> random;
 
 namespace EncFS {
+	int64_t EncFSFile::counter = 0;
+
 	EncFSGetFileIVResult EncFSFile::getFileIV(const LPCWSTR FileName, int64_t *fileIv, bool create) {
 		if (this->fileIvAvailable) {
 			*fileIv = this->fileIv;
@@ -116,6 +118,7 @@ namespace EncFS {
 				DWORD readLen;
 				this->blockBuffer.resize(blocksLength);
 				if (!ReadFile(this->handle, &this->blockBuffer[0], (DWORD)blocksLength, &readLen, NULL)) {
+					this->clearBlockBuffer();
 					return -1;
 				}
 
@@ -140,6 +143,7 @@ namespace EncFS {
 						blockNum++;
 					}
 				}
+				this->clearBlockBuffer();
 			}
 			//printf("readEnd %d\n", copiedLen);
 			return copiedLen;
@@ -305,10 +309,12 @@ namespace EncFS {
 		DWORD readLen;
 		this->blockBuffer.resize(blocksLength);
 		if (!ReadFile(this->handle, &this->blockBuffer[0], (DWORD)blocksLength, &readLen, NULL)) {
+			this->clearBlockBuffer(); 
 			return -1;
 		}
 		len = readLen;
 		if (i >= len) {
+			this->clearBlockBuffer();
 			return i;
 		}
 
@@ -329,6 +335,7 @@ namespace EncFS {
 			bufferPos++;
 			shift = 0;
 		}
+		this->clearBlockBuffer();
 		return i;
 	}
 
@@ -489,5 +496,12 @@ namespace EncFS {
 		}
 		//printf("changeFileIV C %d\n", fileIv);
 		return true;
+	}
+
+	void EncFSFile::clearBlockBuffer() {
+		if (this->blockBuffer.capacity() > encfs.getBlockSize()) {
+			this->blockBuffer.clear();
+			this->blockBuffer.shrink_to_fit();
+		}
 	}
 }

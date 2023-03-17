@@ -507,8 +507,9 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
 																  // Open succeed but we need to inform the driver
 																  // that the dir open and not created by returning STATUS_OBJECT_NAME_COLLISION
 				if (creationDisposition == OPEN_ALWAYS &&
-					fileAttr != INVALID_FILE_ATTRIBUTES)
-					return STATUS_OBJECT_NAME_COLLISION;
+					fileAttr != INVALID_FILE_ATTRIBUTES) {
+					status = STATUS_OBJECT_NAME_COLLISION;
+				}
 			}
 		}
 	}

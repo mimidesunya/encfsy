@@ -1,4 +1,4 @@
-#pragma once
+#pragma once;
 #include <dokan.h>
 #include <winbase.h>
 
@@ -34,6 +34,8 @@ namespace EncFS
 		wstring_convert<codecvt_utf8_utf16<wchar_t>> strConv;
 
 	public:
+		static int64_t counter;
+
 		EncFSFile(HANDLE handle, bool canRead) {
 			if (!handle || handle == INVALID_HANDLE_VALUE) {
 				throw EncFSIllegalStateException();
@@ -43,11 +45,13 @@ namespace EncFS
 			this->fileIvAvailable = false;
 			this->fileIv = 0L;
 			this->lastBlockNum = -1;
+			++counter;
 		}
 
 		~EncFSFile() {
 			CloseHandle(this->handle);
 			this->handle = INVALID_HANDLE_VALUE;
+			--counter;
 		}
 
 		inline HANDLE getHandle() {
@@ -64,5 +68,6 @@ namespace EncFS
 	private:
 		EncFSGetFileIVResult getFileIV(const LPCWSTR FileName, int64_t *fileIv, bool create);
 		bool _setLength(const LPCWSTR FileName, const size_t fileSize, const size_t length);
+		void clearBlockBuffer();
 	};
 }
