@@ -73,7 +73,8 @@ namespace EncFS {
 				return 0;
 			}
 
-			//printf("read %d %d %d %d\n", fileIv, this->lastBlockNum, off, len);
+			//string cFileName = this->strConv.to_bytes(wstring(FileName));
+			//printf("read %s %d %d %d %d\n", cFileName.c_str(), fileIv, this->lastBlockNum, off, len);
 
 			// Calculate block position.
 			const size_t blockSize = encfs.getBlockSize();

@@ -721,38 +721,55 @@ static NTSTATUS DOKAN_CALLBACK EncFSReadFile(LPCWSTR FileName, LPVOID Buffer,
 	DbgPrint(L"ReadFile : %s, handle = %ld\n", FileName, encfsFile->getHandle());
 
 	int32_t readLen;
-	if (encfs.isReverse()) {
-		WCHAR filePath[DOKAN_MAX_PATH];
-		GetFilePath(filePath, FileName, false);
-		size_t len = wcslen(filePath);
-		if (len >= 12 && wcscmp(filePath + len - 12, L"\\.encfs6.xml") == 0) {
-			LARGE_INTEGER distanceToMove;
-			distanceToMove.QuadPart = Offset;
-			if (!SetFilePointerEx(encfsFile->getHandle(), distanceToMove, NULL, FILE_BEGIN)) {
-				DWORD error = GetLastError();
-				DbgPrint(L"\tseek error, offset = %d\n\n", offset);
-				if (opened) {
-					delete encfsFile;
-				}
-				return DokanNtStatusFromWin32(error);
-			}
-			else if (!ReadFile(encfsFile->getHandle(), Buffer, BufferLength, ReadLength, NULL)) {
-				readLen = -1;
+
+	bool plain = false;
+	if (encfs.altStream) {
+		// exclude Dropbox attributes
+		const LPCWSTR suffix = L":com.dropbox.attrs:$DATA";
+		size_t str_len = wcslen(FileName);
+		size_t suffix_len = wcslen(suffix);
+		plain = str_len >= suffix_len &&
+			0 == wcscmp(FileName + str_len - suffix_len, suffix);
+	}
+
+	if (!plain) {
+		if (encfs.isReverse()) {
+			WCHAR filePath[DOKAN_MAX_PATH];
+			GetFilePath(filePath, FileName, false);
+			size_t len = wcslen(filePath);
+			if (len >= 12 && wcscmp(filePath + len - 12, L"\\.encfs6.xml") == 0) {
+				plain = true;
 			}
 			else {
-				readLen = *ReadLength;
+				readLen = encfsFile->reverseRead(FileName, (char*)Buffer, offset, BufferLength);
 			}
 		}
 		else {
-			readLen = encfsFile->reverseRead(FileName, (char*)Buffer, offset, BufferLength);
+			readLen = encfsFile->read(FileName, (char*)Buffer, offset, BufferLength);
 		}
 	}
-	else {
-		readLen = encfsFile->read(FileName, (char*)Buffer, offset, BufferLength);
+
+	if (plain) {
+		LARGE_INTEGER distanceToMove;
+		distanceToMove.QuadPart = Offset;
+		if (!SetFilePointerEx(encfsFile->getHandle(), distanceToMove, NULL, FILE_BEGIN)) {
+			DWORD error = GetLastError();
+			DbgPrint(L"\tseek error, offset = %d\n\n", offset);
+			if (opened) {
+				delete encfsFile;
+			}
+			return DokanNtStatusFromWin32(error);
+		}
+		else if (!ReadFile(encfsFile->getHandle(), Buffer, BufferLength, ReadLength, NULL)) {
+			readLen = -1;
+		}
+		else {
+			readLen = *ReadLength;
+		}
 	}
 	if (readLen == -1) {
 		DWORD error = GetLastError();
-		ErrorPrint(L"\tread error = %u, buffer length = %d, offset = %d\n\n",
+		ErrorPrint(L"\tRead error = %u, buffer length = %d, offset = %d\n\n",
 			error, BufferLength, offset);
 		if (opened) {
 			delete encfsFile;
@@ -844,19 +861,52 @@ static NTSTATUS DOKAN_CALLBACK EncFSWriteFile(LPCWSTR FileName, LPCVOID Buffer,
 		off = Offset;
 	}
 
-	int32_t writtenLen = encfsFile->write(FileName, fileSize, (char*)Buffer, off, NumberOfBytesToWrite);
-	if (writtenLen == -1) {
-		DWORD error = GetLastError();
-		ErrorPrint(L"\twrite error = %u, buffer length = %d, write length = %d\n",
-			error, NumberOfBytesToWrite, writtenLen);
-		if (opened) {
-			delete encfsFile;
-		}
-		return DokanNtStatusFromWin32(error);
+	bool plain = false;
+	if (encfs.altStream) {
+		// exclude Dropbox attributes
+		const LPCWSTR suffix = L":com.dropbox.attrs:$DATA";
+		size_t str_len = wcslen(FileName);
+		size_t suffix_len = wcslen(suffix);
+		plain = str_len >= suffix_len &&
+			0 == wcscmp(FileName + str_len - suffix_len, suffix);
+	}
 
+	int32_t writtenLen;
+	if (!plain) {
+		writtenLen = encfsFile->write(FileName, fileSize, (char*)Buffer, off, NumberOfBytesToWrite);
+		if (writtenLen == -1) {
+			DWORD error = GetLastError();
+			ErrorPrint(L"\twrite error = %u, buffer length = %d, write length = %d\n",
+				error, NumberOfBytesToWrite, writtenLen);
+			if (opened) {
+				delete encfsFile;
+			}
+			return DokanNtStatusFromWin32(error);
+
+		}
+		else {
+			DbgPrint(L"\twrite %d, offset %I64d\n\n", writtenLen, Offset);
+		}
 	}
 	else {
-		DbgPrint(L"\twrite %d, offset %I64d\n\n", writtenLen, Offset);
+		ULONG offset = (ULONG)Offset;
+		LARGE_INTEGER distanceToMove;
+		distanceToMove.QuadPart = Offset;
+		if (!SetFilePointerEx(encfsFile->getHandle(), distanceToMove, NULL, FILE_BEGIN)) {
+			DWORD error = GetLastError();
+			DbgPrint(L"\tseek error, offset = %d\n\n", offset);
+			if (opened) {
+				delete encfsFile;
+			}
+			return DokanNtStatusFromWin32(error);
+		}
+		else if (!WriteFile(encfsFile->getHandle(), Buffer, NumberOfBytesToWrite, NumberOfBytesWritten, NULL)) {
+			writtenLen = -1;
+		}
+		else {
+			writtenLen = *NumberOfBytesWritten;
+		}
+
 	}
 	*NumberOfBytesWritten = writtenLen;
 

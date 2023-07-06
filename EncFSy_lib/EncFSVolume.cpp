@@ -469,6 +469,7 @@ R"(<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 			pos2 = srcFilePath.find(g_pathSeparator, pos1);
 			if (pos2 == string::npos) {
 				if (this->altStream) {
+					// use plain text for alt streams.
 					string::size_type altPos = srcFilePath.find(g_altSeparator, pos1);
 					if (altPos == string::npos) {
 						pos2 = srcFilePath.size();
@@ -660,17 +661,20 @@ R"(<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 			}
 
 			// チェックサム検証
+			//printf("Decode %d\n", blockNum);
 			bool valid = true;
 			string mac;
 			mac.resize(this->blockMACBytes);
 			mac64(this->volumeHmac, this->hmacLock, (const byte*)destBlock.data() + this->blockMACBytes, destBlock.size() - this->blockMACBytes, &mac[0]);
 			for (size_t i = 0; i < this->blockMACBytes; i++) {
+				//printf("destBlock %d\n", destBlock[i]);
 				if (destBlock[i] != mac[7 - i]) {
 					valid = false;
 					break;
 				}
 			}
 			if (!valid) {
+				//printf("Decode Error %d\n", valid);
 				throw EncFSInvalidBlockException();
 			}
 			
