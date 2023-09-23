@@ -25,5 +25,11 @@ namespace EncFSy_gui
             this.password = this.passwordText.Text;
             this.Close();
         }
+
+        private void showPassword_CheckedChanged(object sender, EventArgs e)
+        {
+            // Toggle password visibility
+            this.passwordText.PasswordChar = this.showPassword.Checked ? '\0' : '*';
+        }
     }
 }

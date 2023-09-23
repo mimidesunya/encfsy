@@ -92,6 +92,7 @@ namespace EncFSy_gui
             this.rootPathCombo.Name = "rootPathCombo";
             this.rootPathCombo.Size = new System.Drawing.Size(203, 21);
             this.rootPathCombo.TabIndex = 8;
+            this.rootPathCombo.SelectedIndexChanged += new System.EventHandler(this.driveListView_SelectedIndexChanged);
             // 
             // driveListView
             // 

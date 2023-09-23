@@ -32,6 +32,7 @@ namespace EncFSy_gui
             if (dialog.ShowDialog() == DialogResult.OK)
             {
                 this.rootPathCombo.Text = dialog.SelectedPath;
+                this.updateButtons();
             }
         }
 

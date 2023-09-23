@@ -31,6 +31,7 @@
             this.passwordText = new System.Windows.Forms.TextBox();
             this.okButton = new System.Windows.Forms.Button();
             this.label1 = new System.Windows.Forms.Label();
+            this.showPassword = new System.Windows.Forms.CheckBox();
             this.SuspendLayout();
             // 
             // passwordText
@@ -60,11 +61,23 @@
             this.label1.TabIndex = 2;
             this.label1.Text = "Password";
             // 
+            // showPassword
+            // 
+            this.showPassword.AutoSize = true;
+            this.showPassword.Location = new System.Drawing.Point(71, 32);
+            this.showPassword.Name = "showPassword";
+            this.showPassword.Size = new System.Drawing.Size(102, 17);
+            this.showPassword.TabIndex = 3;
+            this.showPassword.Text = "Show Password";
+            this.showPassword.UseVisualStyleBackColor = true;
+            this.showPassword.CheckedChanged += new System.EventHandler(this.showPassword_CheckedChanged);
+            // 
             // PasswordForm
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(324, 31);
+            this.ClientSize = new System.Drawing.Size(325, 58);
+            this.Controls.Add(this.showPassword);
             this.Controls.Add(this.label1);
             this.Controls.Add(this.okButton);
             this.Controls.Add(this.passwordText);
@@ -83,5 +96,6 @@
         private System.Windows.Forms.TextBox passwordText;
         private System.Windows.Forms.Button okButton;
         private System.Windows.Forms.Label label1;
+        private System.Windows.Forms.CheckBox showPassword;
     }
 }
