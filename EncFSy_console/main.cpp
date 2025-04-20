@@ -1,4 +1,4 @@
-/*
+Ôªø/*
 Dokan : user - mode file system library for Windows
 	Copyright(C) 2015 - 2018 Adrien J. <liryna.stark@gmail.com> and Maxime C. <maxime@islog.com>
 	Copyright(C) 2007 - 2011 Hiroki Asakawa <info@dokan-dev.net>
@@ -29,37 +29,52 @@ THE SOFTWARE.
 
 using namespace std;
 
+
 void ShowUsage() {
 	// clang-format off
-	fprintf(stderr, "encfs.exe [options] rootdir mountPoint \n"
-		"  rootdir (ex. c:\\test)\t\t\t Directory source to EncFS.\n"
-		"  mountPoint (ex. m)\t\t\t Mount point. Can be M:\\ (drive letter) or empty NTFS folder C:\\mount\\dokan .\n\n"
+	fprintf(stderr,
+		"Usage: encfs.exe [options] <rootDir> <mountPoint>\n"
+		"\n"
+		"Arguments:\n"
+		"  rootDir      (e.g., C:\\test)                Directory to be encrypted and mounted.\n"
+		"  mountPoint   (e.g., M: or C:\\mount\\dokan)   Mount location ‚Äî either a drive letter\n"
+		"                                               such as M:\\ or an empty NTFS folder.\n"
+		"\n"
 		"Options:\n"
-		"  -u mountPoint \t\t\t Unmount.\n"
-		"  -l \t\t\t\t\t List mount pounts.\n"
-		"  -v \t\t\t\t\t Enable debug output to an attached debugger.\n"
-		"  -s \t\t\t\t\t Use stderr for debug output.\n"
-		"  -i Timeout (Milliseconds ex. 30000)\t Timeout until a running operation is aborted and the device is unmounted. Default to 30000.\n"
-		"  -t ThreadCount (ex. 5)\t\t Number of threads to be used internally by Dokan library.\n\t\t\t\t\t More threads will handle more event at the same time. Default to 5.\n"
-		"  --dokan-debug Enable Dokan debug output.\n"
-		"  --dokan-network UNC (ex. \\host\\myfs)\t UNC name used for network volume.\n"
-		"  --dokan-removable \t\t\t Show device as removable media.\n"
-		"  --dokan-write-protect \t\t Read only filesystem.\n"
-		"  --dokan-mount-manager \t\t Register device to Windows mount manager.\n\t\t\t\t\t This enables advanced Windows features like recycle bin and more...\n"
-		"  --dokan-current-session \t\t Device only visible for current user session.\n"
-		"  --dokan-filelock-user-mode \t\t Enable Lockfile/Unlockfile operations. Otherwise Dokan will take care of it.\n"
-		"  --public \t\t\t\t Impersonate Caller User when getting the handle in CreateFile for operations.\n\t\t\t\t\t This option requires administrator right to work properly.\n"
-		"  --allocation-unit-size Bytes (ex. 512) Allocation Unit Size of the volume. This will behave on the disk file size.\n"
-		"  --sector-size Bytes (ex. 512)\t\t Sector Size of the volume. This will behave on the disk file size.\n"
-		"  --paranoia AES-256bit / changed name IV / external IV chaining \n"
-		"  --alt-stream Enable NTFS alternate data stream.\n"
-		"  --case-insensitive Ignore case in filenames.\n"
-		"  --reverse Encrypt rootdir to mountPoint.\n"
+		"  -u <mountPoint>                              Unmount the specified volume.\n"
+		"  -l                                           List currently mounted EncFS volumes.\n"
+		"  -v                                           Send debug output to an attached debugger.\n"
+		"  -s                                           Send debug output to stderr.\n"
+		"  -i <ms>              (default: 120000)       Timeout (in milliseconds) before a running\n"
+		"                                               operation is aborted and the volume unmounted.\n"
+		"  -t <count>           (default: 5)            Number of worker threads for the Dokan library.\n"
+		"  --dokan-debug                                Enable Dokan debug output.\n"
+		"  --dokan-network <UNC>                        UNC path for a network volume (e.g., \\\\host\\myfs).\n"
+		"  --dokan-removable                            Present the volume as removable media.\n"
+		"  --dokan-write-protect                        Mount the filesystem read‚Äëonly.\n"
+		"  --dokan-mount-manager                        Register the volume with the Windows Mount Manager\n"
+		"                                               (enables Recycle Bin support, etc.).\n"
+		"  --dokan-current-session                      Make the volume visible only in the current session.\n"
+		"  --dokan-filelock-user-mode                   Handle LockFile/UnlockFile in user mode; otherwise\n"
+		"                                               Dokan manages them automatically.\n"
+		"  --public                                     Impersonate the calling user when opening handles\n"
+		"                                               in CreateFile. Requires administrator privileges.\n"
+		"  --allocation-unit-size <bytes>               Allocation‚Äëunit size reported by the volume.\n"
+		"  --sector-size <bytes>                        Sector size reported by the volume.\n"
+		"  --paranoia                                   Enable AES‚Äë256 encryption, renamed IVs, and external\n"
+		"                                               IV chaining.\n"
+		"  --alt-stream                                 Enable NTFS alternate data streams.\n"
+		"  --case-insensitive                           Perform case‚Äëinsensitive filename matching.\n"
+		"  --reverse                                    Reverse mode: encrypt from <rootDir> to <mountPoint>.\n"
+		"\n"
 		"Examples:\n"
-		"\tencfs.exe C:\\Users M:\t\t\t\t\t # EncFS C:\\Users as RootDirectory into a drive of letter M:\\.\n"
-		"\tencfs.exe C:\\Users C:\\mount\\dokan \t\t\t # EncFS C:\\Users as RootDirectory into NTFS folder C:\\mount\\dokan.\n"
-		"\tencfs.exe C:\\Users M: --dokan-network \\myfs\\myfs1 \t # EncFS C:\\Users as RootDirectory into a network drive M:\\. with UNC \\\\myfs\\myfs1\n\n"
-		"Unmount the drive with CTRL + C in the console or alternatively via \"encfs.exe -u MountPoint\".\n");
+		"  encfs.exe C:\\Users M:                                    # Mount C:\\Users as drive M:\\\n"
+		"  encfs.exe C:\\Users C:\\mount\\dokan                       # Mount C:\\Users at NTFS folder C:\\mount\\dokan\n"
+		"  encfs.exe C:\\Users M: --dokan-network \\\\myfs\\share        # Mount C:\\Users as network drive M:\\ with UNC \\\\myfs\\share\n"
+		"\n"
+		"To unmount, press Ctrl+C in this console or run:\n"
+		"  encfs.exe -u <mountPoint>\n"
+	);
 	// clang-format on
 }
 
@@ -68,7 +83,7 @@ void getpass(const char *prompt, char* password, int size)
 	const char BACKSPACE = 8;
 	const char RETURN = 13;
 
-	int ch = 0; // ReadConsoleÇ≈2ÉoÉCÉgà»è„ì«Ç›çûÇ‹ÇÍÇÈâ¬î\ê´Ç™Ç†ÇÈÇΩÇﬂ
+	int ch = 0; // ReadConsole„Åß2„Éê„Ç§„Éà‰ª•‰∏äË™≠„ÅøËæº„Åæ„Çå„ÇãÂèØËÉΩÊÄß„Åå„ÅÇ„Çã„Åü„ÇÅ
 	int a = 0;
 
 	cout << prompt;
@@ -117,7 +132,7 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 	efo.AltStream = FALSE;
 	efo.CaseInsensitive = FALSE;
 	efo.Reverse = FALSE;
-	efo.Timeout = 30000;
+	efo.Timeout = 120000;
 	efo.SingleThread = FALSE;
 
 	for (command = 1; command < argc; command++) {

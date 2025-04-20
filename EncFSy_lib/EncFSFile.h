@@ -1,4 +1,4 @@
-#pragma once;
+#pragma once
 #include <dokan.h>
 #include <winbase.h>
 
@@ -45,6 +45,13 @@ namespace EncFS
 			this->fileIvAvailable = false;
 			this->fileIv = 0L;
 			this->lastBlockNum = -1;
+			
+			// バッファを一度だけ確保しておく
+			const size_t bs = encfs.getBlockSize();
+			this->blockBuffer.reserve(bs);
+			this->encodeBuffer.reserve(bs);
+			this->decodeBuffer.reserve(bs);
+			
 			++counter;
 		}
 

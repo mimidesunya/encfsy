@@ -99,8 +99,9 @@ static void ToWFilePath(wstring_convert<codecvt_utf8_utf16<wchar_t>>& strConv,
 	string& cEncodedFileName, PWCHAR encodedFilePath) {
 	wstring wFilePath = strConv.from_bytes(cEncodedFileName);
 
-	WCHAR filePath[DOKAN_MAX_PATH];
-	wcscpy_s(filePath, wFilePath.c_str());
+	// Allocate memory on the heap instead of the stack
+	WCHAR* filePath = new WCHAR[DOKAN_MAX_PATH];
+	wcscpy_s(filePath, DOKAN_MAX_PATH, wFilePath.c_str());
 
 	wcsncpy_s(encodedFilePath, DOKAN_MAX_PATH, L"\\\\?\\", 4);
 	wcsncat_s(encodedFilePath, DOKAN_MAX_PATH, g_efo.RootDirectory, wcslen(g_efo.RootDirectory));
@@ -114,7 +115,7 @@ static void ToWFilePath(wstring_convert<codecvt_utf8_utf16<wchar_t>>& strConv,
 	else {
 		wcsncat_s(encodedFilePath, DOKAN_MAX_PATH, filePath, wcslen(filePath));
 	}
-
+	delete[] filePath;
 }
 
 static bool FileExists(PWCHAR path) {
@@ -141,7 +142,7 @@ static void GetFilePath(PWCHAR encodedFilePath, LPCWSTR plainFilePath, bool crea
 		try {
 			encfs.decodeFilePath(cFilePath, cEncodedFileName);
 		}
-		catch (const EncFS::EncFSInvalidBlockException &ex) {
+		catch (const EncFS::EncFSInvalidBlockException&) {
 			cEncodedFileName = cFilePath;
 		}
 		ToWFilePath(strConv, cEncodedFileName, encodedFilePath);
@@ -198,7 +199,7 @@ static void GetFilePath(PWCHAR encodedFilePath, LPCWSTR plainFilePath, bool crea
 						try {
 							encfs.decodeFileName(ccFileName, encPath, cPlainFileName);
 						}
-						catch (const EncFS::EncFSInvalidBlockException& ex) {
+						catch (const EncFS::EncFSInvalidBlockException&) {
 							continue;
 						}
 						wstring wFileName = strConv.from_bytes(cPlainFileName);
@@ -279,7 +280,7 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
 	ULONG ShareAccess, ULONG CreateDisposition,
 	ULONG CreateOptions, PDOKAN_FILE_INFO DokanFileInfo) {
 
-	WCHAR filePath[DOKAN_MAX_PATH];
+	WCHAR* filePath = new WCHAR[DOKAN_MAX_PATH];
 	HANDLE handle;
 	DWORD fileAttr;
 	NTSTATUS status = STATUS_SUCCESS;
@@ -303,7 +304,7 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
 	GetFilePath(filePath, FileName,
 		creationDisposition == CREATE_NEW || creationDisposition == CREATE_ALWAYS);
 
-	DbgPrint(L"CreateFile : %s ; %s\n", FileName, filePath);
+	DbgPrint(L"CreateFile : '%s' ; '%s'\n", FileName, filePath);
 	//MyPrint(L"CreateFile : %s %s 0x%x\n", FileName, filePath, DesiredAccess);
 
 	PrintUserName(DokanFileInfo);
@@ -358,6 +359,7 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
 			}
 			else { // FILE_NON_DIRECTORY_FILE - Cannot open a dir as a file
 				DbgPrint(L"\tCannot open a dir as a file\n");
+				delete[] filePath;
 				return STATUS_FILE_IS_A_DIRECTORY;
 			}
 		}
@@ -471,6 +473,7 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
 			if (fileAttr != INVALID_FILE_ATTRIBUTES &&
 				!(fileAttr & FILE_ATTRIBUTE_DIRECTORY) &&
 				(CreateOptions & FILE_DIRECTORY_FILE)) {
+				delete[] filePath;
 				return STATUS_NOT_A_DIRECTORY;
 			}
 
@@ -519,19 +522,23 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
 		// Cannot overwrite a hidden or system file if flag not set
 		if (fileAttr != INVALID_FILE_ATTRIBUTES &&
 			((!(fileAttributesAndFlags & FILE_ATTRIBUTE_HIDDEN) &&
-			(fileAttr & FILE_ATTRIBUTE_HIDDEN)) ||
+				(fileAttr & FILE_ATTRIBUTE_HIDDEN)) ||
 				(!(fileAttributesAndFlags & FILE_ATTRIBUTE_SYSTEM) &&
-				(fileAttr & FILE_ATTRIBUTE_SYSTEM))) &&
-					(creationDisposition == TRUNCATE_EXISTING ||
-						creationDisposition == CREATE_ALWAYS))
+					(fileAttr & FILE_ATTRIBUTE_SYSTEM))) &&
+			(creationDisposition == TRUNCATE_EXISTING ||
+				creationDisposition == CREATE_ALWAYS)) {
+			delete[] filePath;
 			return STATUS_ACCESS_DENIED;
+		}
 
 		// Cannot delete a read only file
 		if ((fileAttr != INVALID_FILE_ATTRIBUTES &&
 			(fileAttr & FILE_ATTRIBUTE_READONLY) ||
 			(fileAttributesAndFlags & FILE_ATTRIBUTE_READONLY)) &&
-			(fileAttributesAndFlags & FILE_FLAG_DELETE_ON_CLOSE))
+			(fileAttributesAndFlags & FILE_FLAG_DELETE_ON_CLOSE)) {
+			delete[] filePath;
 			return STATUS_CANNOT_DELETE;
+		}
 
 		// Truncate should always be used with write access
 		if (creationDisposition == TRUNCATE_EXISTING)
@@ -619,7 +626,8 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
 		}
 	}
 
-	//PrintF(L"CreateFileEnd %d\n", status);
+	DbgPrint(L"CreateFileEnd %d err=%d\n", status, GetLastError());
+	delete[] filePath;
 	return status;
 }
 
@@ -701,7 +709,7 @@ static NTSTATUS DOKAN_CALLBACK EncFSReadFile(LPCWSTR FileName, LPVOID Buffer,
 	EncFS::EncFSFile* encfsFile;
 	BOOL opened = FALSE;
 	if (!DokanFileInfo->Context) {
-		WCHAR filePath[DOKAN_MAX_PATH];
+		WCHAR* filePath = new WCHAR[DOKAN_MAX_PATH];
 		GetFilePath(filePath, FileName, false);
 		DbgPrint(L"\tinvalid handle, cleanuped?\n");
 		HANDLE handle = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, NULL,
@@ -709,8 +717,10 @@ static NTSTATUS DOKAN_CALLBACK EncFSReadFile(LPCWSTR FileName, LPVOID Buffer,
 		if (handle == INVALID_HANDLE_VALUE) {
 			DWORD error = GetLastError();
 			ErrorPrint(L"\tCreateFile error : %d\n", error);
+			delete[] filePath;
 			return DokanNtStatusFromWin32(error);
 		}
+		delete[] filePath;
 		encfsFile = new EncFS::EncFSFile(handle, true);
 		opened = TRUE;
 	}
@@ -734,7 +744,7 @@ static NTSTATUS DOKAN_CALLBACK EncFSReadFile(LPCWSTR FileName, LPVOID Buffer,
 
 	if (!plain) {
 		if (encfs.isReverse()) {
-			WCHAR filePath[DOKAN_MAX_PATH];
+			WCHAR* filePath = new WCHAR[DOKAN_MAX_PATH];
 			GetFilePath(filePath, FileName, false);
 			size_t len = wcslen(filePath);
 			if (len >= 12 && wcscmp(filePath + len - 12, L"\\.encfs6.xml") == 0) {
@@ -743,6 +753,7 @@ static NTSTATUS DOKAN_CALLBACK EncFSReadFile(LPCWSTR FileName, LPVOID Buffer,
 			else {
 				readLen = encfsFile->reverseRead(FileName, (char*)Buffer, offset, BufferLength);
 			}
+			delete[] filePath;
 		}
 		else {
 			readLen = encfsFile->read(FileName, (char*)Buffer, offset, BufferLength);
@@ -906,7 +917,6 @@ static NTSTATUS DOKAN_CALLBACK EncFSWriteFile(LPCWSTR FileName, LPCVOID Buffer,
 		else {
 			writtenLen = *NumberOfBytesWritten;
 		}
-
 	}
 	*NumberOfBytesWritten = writtenLen;
 
@@ -979,7 +989,7 @@ EncFSFindFiles(LPCWSTR FileName,
 					encfs.decodeFileName(ccFileName, cPath, cPlainFileName);
 				}
 			}
-			catch (const EncFS::EncFSInvalidBlockException &ex) {
+			catch (const EncFS::EncFSInvalidBlockException&) {
 				continue;
 			}
 			wstring wPlainFileName = strConv.from_bytes(cPlainFileName);
@@ -1012,10 +1022,11 @@ EncFSFindFiles(LPCWSTR FileName,
 
 static NTSTATUS DOKAN_CALLBACK
 EncFSDeleteDirectory(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInfo) {
-	WCHAR filePath[DOKAN_MAX_PATH];
 	HANDLE hFind;
 	WIN32_FIND_DATAW findData;
 	size_t fileLen;
+
+	WCHAR* filePath = new WCHAR[DOKAN_MAX_PATH];
 
 	ZeroMemory(filePath, sizeof(filePath));
 	GetFilePath(filePath, FileName, false);
@@ -1023,20 +1034,25 @@ EncFSDeleteDirectory(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInfo) {
 	DbgPrint(L"DeleteDirectory %s ; %s - %d\n", FileName, filePath,
 		DokanFileInfo->DeleteOnClose);
 
-	if (!DokanFileInfo->DeleteOnClose)
+	if (!DokanFileInfo->DeleteOnClose) {
 		//Dokan notify that the file is requested not to be deleted.
+		delete[] filePath;
 		return STATUS_SUCCESS;
+	}
 
 	fileLen = wcslen(filePath);
 	if (filePath[fileLen - 1] != L'\\') {
 		filePath[fileLen++] = L'\\';
 	}
-	if (fileLen + 1 >= DOKAN_MAX_PATH)
+	if (fileLen + 1 >= DOKAN_MAX_PATH) {
+		delete[] filePath;
 		return STATUS_BUFFER_OVERFLOW;
+	}
 	filePath[fileLen] = L'*';
 	filePath[fileLen + 1] = L'\0';
 
 	hFind = FindFirstFileW(filePath, &findData);
+	delete[] filePath;
 
 	if (hFind == INVALID_HANDLE_VALUE) {
 		DWORD error = GetLastError();
@@ -1066,15 +1082,17 @@ EncFSDeleteDirectory(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInfo) {
 }
 
 static NTSTATUS changeIVRecursive(LPCWSTR newFilePath, const string cOldPlainDirPath, const string cNewPlainDirPath) {
-	WCHAR findPath[DOKAN_MAX_PATH];
-	wcscpy_s(findPath, newFilePath);
-	wcscat_s(findPath, L"\\*.*");
-	WCHAR oldPath[DOKAN_MAX_PATH];
-	wcscpy_s(oldPath, newFilePath);
-	wcscat_s(oldPath, L"\\");
+	WCHAR* findPath = new WCHAR[DOKAN_MAX_PATH];
+	wcscpy_s(findPath, DOKAN_MAX_PATH, newFilePath);
+	wcscat_s(findPath, DOKAN_MAX_PATH, L"\\*.*");
+	findPath[DOKAN_MAX_PATH - 1] = L'\0';
+	WCHAR* oldPath = new WCHAR[DOKAN_MAX_PATH];
+	wcscpy_s(oldPath, DOKAN_MAX_PATH, newFilePath);
+	wcscat_s(oldPath, DOKAN_MAX_PATH, L"\\");
+	oldPath[DOKAN_MAX_PATH - 1] = L'\0';
 	size_t oldPathLen = wcslen(oldPath);
-	WCHAR newPath[DOKAN_MAX_PATH];
-	wcscpy_s(newPath, oldPath);
+	WCHAR* newPath = new WCHAR[DOKAN_MAX_PATH];
+	wcscpy_s(newPath, DOKAN_MAX_PATH, oldPath);
 
 	DbgPrint(L"ChangeIV: %s -> %s ; %s -> %s\n", cOldPlainDirPath, cNewPlainDirPath, newPath, oldPath);
 
@@ -1083,6 +1101,9 @@ static NTSTATUS changeIVRecursive(LPCWSTR newFilePath, const string cOldPlainDir
 	HANDLE findHandle = FindFirstFileW(findPath, &find);
 	if (findHandle == INVALID_HANDLE_VALUE) {
 		DWORD error = GetLastError();
+		delete[] findPath;
+		delete[] oldPath;
+		delete[] newPath;
 		return DokanNtStatusFromWin32(error);
 	}
 	wstring_convert<codecvt_utf8_utf16<wchar_t>> strConv;
@@ -1096,7 +1117,7 @@ static NTSTATUS changeIVRecursive(LPCWSTR newFilePath, const string cOldPlainDir
 		try {
 			encfs.decodeFileName(cOldName, cOldPlainDirPath, plainName);
 		}
-		catch (const EncFS::EncFSInvalidBlockException &ex) {
+		catch (const EncFS::EncFSInvalidBlockException&) {
 			continue;
 		}
 		string cNewName;
@@ -1109,6 +1130,9 @@ static NTSTATUS changeIVRecursive(LPCWSTR newFilePath, const string cOldPlainDir
 			if (!MoveFileW(oldPath, newPath)) {
 				FindClose(findHandle);
 				DWORD error = GetLastError();
+				delete[] findPath;
+				delete[] oldPath;
+				delete[] newPath;
 				return DokanNtStatusFromWin32(error);
 			}
 		}
@@ -1123,6 +1147,9 @@ static NTSTATUS changeIVRecursive(LPCWSTR newFilePath, const string cOldPlainDir
 			if (status != STATUS_SUCCESS) {
 				//PrintF(L"e %s %s %d\n", wPlainOldPath.c_str(), wPlainNewPath.c_str(), status);
 				FindClose(findHandle);
+				delete[] findPath;
+				delete[] oldPath;
+				delete[] newPath;
 				return status;
 			}
 		}
@@ -1134,6 +1161,9 @@ static NTSTATUS changeIVRecursive(LPCWSTR newFilePath, const string cOldPlainDir
 				if (handle2 == INVALID_HANDLE_VALUE) {
 					FindClose(findHandle);
 					DWORD error = GetLastError();
+					delete[] findPath;
+					delete[] oldPath;
+					delete[] newPath;
 					return DokanNtStatusFromWin32(error);
 				}
 
@@ -1141,12 +1171,18 @@ static NTSTATUS changeIVRecursive(LPCWSTR newFilePath, const string cOldPlainDir
 				if (!encfsFile2.changeFileIV(wPlainOldPath.c_str(), wPlainNewPath.c_str())) {
 					FindClose(findHandle);
 					DWORD error = GetLastError();
+					delete[] findPath;
+					delete[] oldPath;
+					delete[] newPath;
 					return DokanNtStatusFromWin32(error);
 				}
 			}
 		}
 	} while (FindNextFileW(findHandle, &find));
 	FindClose(findHandle);
+	delete[] findPath;
+	delete[] oldPath;
+	delete[] newPath;
 	return STATUS_SUCCESS;
 }
 
@@ -1154,14 +1190,13 @@ static NTSTATUS DOKAN_CALLBACK
 EncFSMoveFile(LPCWSTR FileName, // existing file name
 	LPCWSTR NewFileName, BOOL ReplaceIfExisting,
 	PDOKAN_FILE_INFO DokanFileInfo) {
-	WCHAR filePath[DOKAN_MAX_PATH];
-	WCHAR newFilePath[DOKAN_MAX_PATH];
 	DWORD bufferSize;
 	BOOL result;
 	size_t newFilePathLen;
-
 	PFILE_RENAME_INFO renameInfo = NULL;
 
+	WCHAR* filePath = new WCHAR[DOKAN_MAX_PATH];
+	WCHAR* newFilePath = new WCHAR[DOKAN_MAX_PATH];
 	GetFilePath(filePath, FileName, false);
 	GetFilePath(newFilePath, NewFileName, true);
 
@@ -1170,6 +1205,8 @@ EncFSMoveFile(LPCWSTR FileName, // existing file name
 
 	if (!DokanFileInfo->Context) {
 		DbgPrint(L"\tinvalid handle\n");
+		delete[] filePath;
+		delete[] newFilePath;
 		return STATUS_INVALID_HANDLE;
 	}
 	EncFS::EncFSFile* encfsFile = (EncFS::EncFSFile*)DokanFileInfo->Context;
@@ -1184,6 +1221,8 @@ EncFSMoveFile(LPCWSTR FileName, // existing file name
 			// ディレクトリ内がロックされていなければここで移動に成功する
 			if (!MoveFileW(filePath, newFilePath)) {
 				DWORD error = GetLastError();
+				delete[] filePath;
+				delete[] newFilePath;
 				return DokanNtStatusFromWin32(error);
 			}
 
@@ -1194,6 +1233,8 @@ EncFSMoveFile(LPCWSTR FileName, // existing file name
 			string cNewPlainDirPath = strConv.to_bytes(wNewPlainDirPath);
 			NTSTATUS status = changeIVRecursive(newFilePath, cOldPlainDirPath, cNewPlainDirPath);
 			//PrintF(L"MoveDirEnd\n");
+			delete[] filePath;
+			delete[] newFilePath;
 			return status;
 		}
 		else {
@@ -1201,6 +1242,8 @@ EncFSMoveFile(LPCWSTR FileName, // existing file name
 			if (encfs.isExternalIVChaining()) {
 				if (!encfsFile->changeFileIV(FileName, NewFileName)) {
 					DWORD error = GetLastError();
+					delete[] filePath;
+					delete[] newFilePath;
 					return DokanNtStatusFromWin32(error);
 				}
 			}
@@ -1218,6 +1261,8 @@ EncFSMoveFile(LPCWSTR FileName, // existing file name
 
 	renameInfo = (PFILE_RENAME_INFO)malloc(bufferSize);
 	if (!renameInfo) {
+		delete[] filePath;
+		delete[] newFilePath;
 		return STATUS_BUFFER_OVERFLOW;
 	}
 	ZeroMemory(renameInfo, bufferSize);
@@ -1239,6 +1284,8 @@ EncFSMoveFile(LPCWSTR FileName, // existing file name
 	free(renameInfo);
 
 	//PrintF(L"MoveEnd\n");
+	delete[] filePath;
+	delete[] newFilePath;
 	if (result) {
 		return STATUS_SUCCESS;
 	}
@@ -1340,8 +1387,6 @@ static BOOL AddSeSecurityNamePrivilege() {
 
 static NTSTATUS DOKAN_CALLBACK
 EncFSFlushFileBuffers(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInfo) {
-	WCHAR filePath[DOKAN_MAX_PATH];
-
 	DbgPrint(L"FlushFileBuffers: %s\n", FileName);
 
 	if (!DokanFileInfo->Context) {
@@ -1391,7 +1436,7 @@ static NTSTATUS DOKAN_CALLBACK EncFSGetFileInformation(
 	EncFS::EncFSFile* encfsFile;
 	BOOL opened = FALSE;
 	if (!DokanFileInfo->Context) {
-		WCHAR filePath[DOKAN_MAX_PATH];
+		WCHAR* filePath = new WCHAR[DOKAN_MAX_PATH];
 		GetFilePath(filePath, FileName, false);
 		DbgPrint(L"\tinvalid handle, cleanuped?\n");
 		HANDLE handle = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, NULL,
@@ -1399,8 +1444,10 @@ static NTSTATUS DOKAN_CALLBACK EncFSGetFileInformation(
 		if (handle == INVALID_HANDLE_VALUE) {
 			DWORD error = GetLastError();
 			ErrorPrint(L"\tCreateFile error : %d\n", error);
+			delete[] filePath;
 			return DokanNtStatusFromWin32(error);
 		}
+		delete[] filePath;
 		encfsFile = new EncFS::EncFSFile(handle, false);
 		opened = TRUE;
 	}
@@ -1410,7 +1457,7 @@ static NTSTATUS DOKAN_CALLBACK EncFSGetFileInformation(
 
 	if (!GetFileInformationByHandle(encfsFile->getHandle(), HandleFileInformation)) {
 		ErrorPrint(L"GetFileInfo error code = %d\n", GetLastError());
-		WCHAR filePath[DOKAN_MAX_PATH];
+		WCHAR* filePath = new WCHAR[DOKAN_MAX_PATH];
 		GetFilePath(filePath, FileName, false);
 
 		// FileName is a root directory
@@ -1418,7 +1465,6 @@ static NTSTATUS DOKAN_CALLBACK EncFSGetFileInformation(
 		if (wcslen(FileName) == 1) {
 			DbgPrint(L"  root dir\n");
 			HandleFileInformation->dwFileAttributes = GetFileAttributesW(filePath);
-
 		}
 		else {
 			WIN32_FIND_DATAW find;
@@ -1430,6 +1476,7 @@ static NTSTATUS DOKAN_CALLBACK EncFSGetFileInformation(
 				if (opened) {
 					delete encfsFile;
 				}
+				delete[] filePath;
 				return DokanNtStatusFromWin32(error);
 			}
 			HandleFileInformation->dwFileAttributes = find.dwFileAttributes;
@@ -1441,10 +1488,11 @@ static NTSTATUS DOKAN_CALLBACK EncFSGetFileInformation(
 			DbgPrint(L"\tFindFiles OK, file size = %d\n", find.nFileSizeLow);
 			FindClose(findHandle);
 		}
+		delete[] filePath;
 	}
 	else {
-		DbgPrint(L"\tGetFileInformationByHandle success, file size = %d\n",
-			HandleFileInformation->nFileSizeLow);
+		DbgPrint(L"\tGetFileInformationByHandle success, file size = H%d L%d\n",
+			HandleFileInformation->nFileSizeHigh, HandleFileInformation->nFileSizeLow);
 	}
 
 	if (!DokanFileInfo->IsDirectory) {
@@ -1454,8 +1502,8 @@ static NTSTATUS DOKAN_CALLBACK EncFSGetFileInformation(
 		HandleFileInformation->nFileSizeLow = size & MAXDWORD;
 		HandleFileInformation->nFileSizeHigh = (size >> 32) & MAXDWORD;
 	}
-	DbgPrint(L"\tLogical file size = %d\n",
-		HandleFileInformation->nFileSizeLow);
+	DbgPrint(L"\tLogical file size = H%d L%d\n",
+		HandleFileInformation->nFileSizeHigh, HandleFileInformation->nFileSizeLow);
 
 	DbgPrint(L"FILE ATTRIBUTE  = %d\n", HandleFileInformation->dwFileAttributes);
 
@@ -1463,6 +1511,7 @@ static NTSTATUS DOKAN_CALLBACK EncFSGetFileInformation(
 		delete encfsFile;
 	}
 
+	DbgPrint(L"GetFileInfoEnd err=%d\n", GetLastError());
 	return STATUS_SUCCESS;
 }
 
@@ -1606,7 +1655,7 @@ static NTSTATUS DOKAN_CALLBACK EncFSGetFileSecurity(
 	LPCWSTR FileName, PSECURITY_INFORMATION SecurityInformation,
 	PSECURITY_DESCRIPTOR SecurityDescriptor, ULONG BufferLength,
 	PULONG LengthNeeded, PDOKAN_FILE_INFO DokanFileInfo) {
-	WCHAR filePath[DOKAN_MAX_PATH];
+	WCHAR* filePath = new WCHAR[DOKAN_MAX_PATH];
 	BOOLEAN requestingSaclInfo;
 
 	UNREFERENCED_PARAMETER(DokanFileInfo);
@@ -1651,6 +1700,7 @@ static NTSTATUS DOKAN_CALLBACK EncFSGetFileSecurity(
 		FILE_FLAG_BACKUP_SEMANTICS,
 		NULL);
 
+	delete[] filePath;
 	if (!handle) {
 		DbgPrint(L"\tinvalid handle\n\n");
 		int error = GetLastError();
@@ -1821,10 +1871,6 @@ typedef struct _IO_STATUS_BLOCK {
 } IO_STATUS_BLOCK, *PIO_STATUS_BLOCK;
 #pragma warning(pop)
 
-NTSYSCALLAPI NTSTATUS NTAPI NtQueryInformationFile(
-	_In_ HANDLE FileHandle, _Out_ PIO_STATUS_BLOCK IoStatusBlock,
-	_Out_writes_bytes_(Length) PVOID FileInformation, _In_ ULONG Length,
-	_In_ FILE_INFORMATION_CLASS FileInformationClass);
 /**
 * END
 */

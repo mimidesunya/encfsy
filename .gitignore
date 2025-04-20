@@ -1,0 +1,16 @@
+.vs
+x64
+Debug
+local.bat
+codesign.pfx
+installer/*.exe
+EncFSy_console/x64
+EncFSy_gui/x64
+EncFSy_lib/x64
+EncFSy_test/x64
+EncFSy_console/Debug
+EncFSy_gui/Debug
+EncFSy_lib/Debug
+EncFSy_test/Debug
+EncFSy_gui/bin
+EncFSy_gui/obj
