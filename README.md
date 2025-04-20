@@ -13,41 +13,41 @@ encfsy は新しい「ロングパス」API を利用しているため、
 ロングパス非対応のツールとの互換性を保つには **各ファイル名を 175 文字未満**に抑えてください。
 
 ## 使い方
-Usage: encfs.exe [options] <rootDir> <mountPoint>
+		Usage: encfs.exe [options] <rootDir> <mountPoint>
+		
+		引数:
+		  rootDir      (例: C:\test)                暗号化してマウントするディレクトリ
+		  mountPoint   (例: M: または C:\mount\dokan)  ドライブ文字または空の NTFS フォルダー
+		
+		オプション:
+		  -u <mountPoint>                              指定したボリュームをアンマウント
+		  -l                                           マウント中の EncFS ボリューム一覧を表示
+		  -v                                           デバッグ出力をデバッガへ送信
+		  -s                                           デバッグ出力を stderr へ送信
+		  -i <ms>             (既定: 120000)          操作タイムアウト（ミリ秒）経過で自動アンマウント
+		  -t <数>              (既定: 5)              Dokan のワーカースレッド数
+		  --dokan-debug                                Dokan のデバッグ出力を有効化
+		  --dokan-network <UNC>                        ネットワークボリュームの UNC パス (例: \\host\myfs)
+		  --dokan-removable                            リムーバブルメディアとしてマウント
+		  --dokan-write-protect                        読み取り専用でマウント
+		  --dokan-mount-manager                        Windows Mount Manager に登録（ごみ箱などを有効化）
+		  --dokan-current-session                      現在のセッションのみにボリュームを公開
+		  --dokan-filelock-user-mode                   LockFile/UnlockFile をユーザーモードで処理
+		  --public                                     CreateFile 時に呼び出しユーザーを偽装（管理者権限要）
+		  --allocation-unit-size <bytes>               ボリュームのアロケーションユニットサイズを指定
+		  --sector-size <bytes>                        セクタサイズを指定
+		  --paranoia                                   AES‑256、リネーム IV、外部 IV チェーンを有効化
+		  --alt-stream                                 NTFS 代替データストリームを有効化
+		  --case-insensitive                           大文字小文字を区別しない名前照合
+		  --reverse                                    逆モード: <rootDir>→<mountPoint> へ暗号化
 
-引数:
-  rootDir      (例: C:\test)                暗号化してマウントするディレクトリ
-  mountPoint   (例: M: または C:\mount\dokan)  ドライブ文字または空の NTFS フォルダー
+		例:
+		  encfs.exe C:\Users M:                                   # C:\Users を M:\ としてマウント
+		  encfs.exe C:\Users C:\mount\dokan                       # C:\mount\dokan にマウント
+		  encfs.exe C:\Users M: --dokan-network \\myfs\share      # UNC \\myfs\share でネットワークドライブ
 
-オプション:
-  -u <mountPoint>                              指定したボリュームをアンマウント
-  -l                                           マウント中の EncFS ボリューム一覧を表示
-  -v                                           デバッグ出力をデバッガへ送信
-  -s                                           デバッグ出力を stderr へ送信
-  -i <ms>             (既定: 120000)          操作タイムアウト（ミリ秒）経過で自動アンマウント
-  -t <数>              (既定: 5)              Dokan のワーカースレッド数
-  --dokan-debug                                Dokan のデバッグ出力を有効化
-  --dokan-network <UNC>                        ネットワークボリュームの UNC パス (例: \\host\myfs)
-  --dokan-removable                            リムーバブルメディアとしてマウント
-  --dokan-write-protect                        読み取り専用でマウント
-  --dokan-mount-manager                        Windows Mount Manager に登録（ごみ箱などを有効化）
-  --dokan-current-session                      現在のセッションのみにボリュームを公開
-  --dokan-filelock-user-mode                   LockFile/UnlockFile をユーザーモードで処理
-  --public                                     CreateFile 時に呼び出しユーザーを偽装（管理者権限要）
-  --allocation-unit-size <bytes>               ボリュームのアロケーションユニットサイズを指定
-  --sector-size <bytes>                        セクタサイズを指定
-  --paranoia                                   AES‑256、リネーム IV、外部 IV チェーンを有効化
-  --alt-stream                                 NTFS 代替データストリームを有効化
-  --case-insensitive                           大文字小文字を区別しない名前照合
-  --reverse                                    逆モード: <rootDir>→<mountPoint> へ暗号化
-
-例:
-  encfs.exe C:\Users M:                                   # C:\Users を M:\ としてマウント
-  encfs.exe C:\Users C:\mount\dokan                       # C:\mount\dokan にマウント
-  encfs.exe C:\Users M: --dokan-network \\myfs\share      # UNC \\myfs\share でネットワークドライブ
-
-アンマウントするには Ctrl+C（このコンソール）または:
-  encfs.exe -u <mountPoint>
+		アンマウントするには Ctrl+C（このコンソール）または:
+		  encfs.exe -u <mountPoint>
 
 ## インストール
 1. **Dokany** (バージョン 2.0 以上) を [公式リリース](https://github.com/dokan-dev/dokany/releases) からインストール  
