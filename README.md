@@ -2,15 +2,14 @@ encfsy
 ======
 
 ## encfsy について
-EncFS for Windows は **Dokany** と **Crypto++** をバックエンドに採用した  
-Windows 向けの EncFS 実装です。**64 bit 環境専用**。
+EncFS for Windows は **Dokany** と **Crypto++** をバックエンドに採用した  Windows 向けの EncFS 実装です。**64 bit 環境専用**。
+
+ディレクトリ・ファイルのツリー構造はそのままに、ファイル名と内容を暗号化します。ドライブ全体を暗号化するのに比べて、Dropbox や GoogleDrive あるいは rsync でリモートのドライブと同期するのに有用です。暗号化された状態でリモートとファイルを共有するため、ドライブの管理者にファイルの中身を見られることがありません。
 
 ## ファイル名の長さ制限
-encfsy は新しい「ロングパス」API を利用しているため、  
-フルパス全体の 260 文字（MAX_PATH）制限は適用されません。  
-しかし NTFS では各パス要素（フォルダー名・ファイル名）に **255 UTF‑16 文字**の上限があります。  
-暗号化により名前はおよそ 3 割程度長くなるため、  
-ロングパス非対応のツールとの互換性を保つには **各ファイル名を 175 文字未満**に抑えてください。
+encfsy は新しい「ロングパス」API を利用しているため、  フルパス全体の 260 文字（MAX_PATH）制限は適用されません。  
+
+しかし NTFS では各パス要素（フォルダー名・ファイル名）に **255 UTF‑16 文字**の上限があります。  暗号化により名前はおよそ 3 割程度長くなるため、  ロングパス非対応のツールとの互換性を保つには **各ファイル名を 175 文字以内**に抑えてください。
 
 ## 使い方
 		Usage: encfs.exe [options] <rootDir> <mountPoint>
@@ -52,17 +51,24 @@ encfsy は新しい「ロングパス」API を利用しているため、
 ## インストール
 1. **Dokany** (バージョン 2.0 以上) を [公式リリース](https://github.com/dokan-dev/dokany/releases) からインストール  
 2. [Releases ページ](https://github.com/mimidesunya/encfsy/releases) から最新版の **encfsy インストーラ** をダウンロードし、ウィザードに従ってセットアップ
+3. 
+## About encfsy
+encfsy is a Windows implementation of EncFS powered by **Dokany** and **Crypto++**.  
+It runs **exclusively on 64‑bit systems**.
 
-## Abount
-EncFS for Windows, backed by **Dokany** and **Crypto++**.  
-Designed **exclusively for 64-bit environments**.
+The program encrypts file names and contents while leaving the directory tree intact.  
+This makes it ideal for syncing encrypted data with Dropbox, Google Drive, rsync, or other
+remote storage: the files stay encrypted end‑to‑end, so storage administrators cannot see
+their contents.
 
 ## Filename Length Limit
-encfsy uses the modern “long-path” API, so the 260-character MAX_PATH limit on full
-paths no longer applies. NTFS still caps each *individual* name at 255 UTF-16
-characters, and encryption expands names by roughly one-third, so keep every
-filename under **175 characters** to stay safely below that per-component limit and
-retain compatibility with tools that are not long-path–aware.
+encfsy uses the modern *long‑path* API, so the traditional 260‑character **MAX_PATH**
+limit on full paths does **not** apply.
+
+NTFS still caps each path component (folder or file name) at **255 UTF‑16 characters**.  
+Because encryption inflates names by roughly 30 %, keep **each filename under
+175 characters** to stay within that per‑component limit and remain compatible with
+tools that are not long‑path aware.
 
 ## Usage
 		Usage: encfs.exe [options] <rootDir> <mountPoint>
