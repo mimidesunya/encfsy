@@ -39,6 +39,21 @@
     <ClInclude Include="EncFSy.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="EncFSy_globals.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="EncFSy_logging.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="EncFSy_path.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="EncFSy_handlers.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="EncFSy_mount.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="EncFSy.cpp">
@@ -48,6 +63,12 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="EncFSVolume.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="EncFSy_logging.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="EncFSy_path.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

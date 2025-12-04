@@ -159,6 +159,11 @@
     <ClInclude Include="EncFSUtils.hpp" />
     <ClInclude Include="EncFSVolume.h" />
     <ClInclude Include="EncFSy.h" />
+    <ClInclude Include="EncFSy_globals.h" />
+    <ClInclude Include="EncFSy_handlers.h" />
+    <ClInclude Include="EncFSy_logging.h" />
+    <ClInclude Include="EncFSy_mount.h" />
+    <ClInclude Include="EncFSy_path.h" />
     <ClInclude Include="rapidxml.hpp" />
     <ClInclude Include="rapidxml_iterators.hpp" />
     <ClInclude Include="rapidxml_print.hpp" />
@@ -168,6 +173,8 @@
     <ClCompile Include="EncFSFile.cpp" />
     <ClCompile Include="EncFSVolume.cpp" />
     <ClCompile Include="EncFSy.cpp" />
+    <ClCompile Include="EncFSy_logging.cpp" />
+    <ClCompile Include="EncFSy_path.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="..\EncFSy_gui\EncFSy_gui.csproj" />

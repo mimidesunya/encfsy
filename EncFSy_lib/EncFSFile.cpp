@@ -1,37 +1,194 @@
 ﻿#include "EncFSFile.h"
 #include <winioctl.h> 
+#include <osrng.h> // For AutoSeededX917RNG
 
 using namespace std;
+using namespace CryptoPP;
 
-// 静的な RNG は競合リスクがあるため、
-// マルチスレッド環境では排他制御かインスタンス分離を検討してください。
-static thread_local AutoSeededX917RNG<CryptoPP::AES> random;
+// Thread-local random number generator for cryptographic operations
+static thread_local AutoSeededX917RNG<AES> random;
 
 namespace EncFS {
-    int64_t EncFSFile::counter = 0;
 
+    namespace {
+        // Define constants to avoid magic numbers
+        const size_t SPARSE_FILE_THRESHOLD = 100 * 1024 * 1024; // 100MB
+        const int MAX_WRITE_RETRIES = 3;
+        const DWORD WRITE_RETRY_DELAY_MS = 10;
+        const size_t BLOCK_BUFFER_REUSE_THRESHOLD = 64 * 1024; // Keep buffer if <= 64KB
+    }
+
+    // Initialize atomic counter
+    std::atomic<int64_t> EncFSFile::counter(0);
+
+    /**
+     * @brief Constructor implementation
+     */
+    EncFSFile::EncFSFile(HANDLE handle, bool canRead) 
+        : handle(handle)
+        , canRead(canRead)
+        , fileIv(0L)
+        , fileIvAvailable(false)
+        , lastBlockNum(-1)
+        , fileNameCached(false)  // Initialize file name cache flag
+    {
+        if (!handle || handle == INVALID_HANDLE_VALUE) {
+            throw EncFSIllegalStateException();
+        }
+        
+        // Buffers are now lazily allocated on first use
+        // This saves memory for files that are only opened but not accessed
+        
+        // Increment counter (atomic operation)
+        counter.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    /**
+     * @brief Destructor implementation
+     */
+    EncFSFile::~EncFSFile() {
+        // Close handle if valid
+        if (this->handle && this->handle != INVALID_HANDLE_VALUE) {
+            CloseHandle(this->handle);
+        }
+        
+        // Decrement counter (atomic operation)
+        counter.fetch_sub(1, std::memory_order_relaxed);
+    }
+
+    /**
+     * @brief Gets cached UTF-8 file name or converts and caches it
+     */
+    const string& EncFSFile::getCachedUtf8FileName(const LPCWSTR wstr) {
+        if (!this->fileNameCached) {
+            WideToUtf8(wstr, this->cachedUtf8FileName);
+            this->fileNameCached = true;
+        }
+        return this->cachedUtf8FileName;
+    }
+
+    /**
+     * @brief Converts wide string to UTF-8 using Win32 API (optimized)
+     */
+    bool EncFSFile::WideToUtf8(const wchar_t* wstr, string& output) {
+        if (!wstr || *wstr == L'\0') {
+            output.clear();
+            return true;
+        }
+
+        // Get required buffer size
+        int sizeNeeded = WideCharToMultiByte(CP_UTF8, 0, wstr, -1, NULL, 0, NULL, NULL);
+        if (sizeNeeded <= 0) {
+            output.clear();
+            return false;
+        }
+
+        // Resize output buffer and convert (SSO-friendly)
+        output.resize(sizeNeeded - 1); // -1 to exclude null terminator
+        int result = WideCharToMultiByte(CP_UTF8, 0, wstr, -1, &output[0], sizeNeeded, NULL, NULL);
+        return result > 0;
+    }
+
+    /**
+     * @brief Converts UTF-8 string to wide string using Win32 API (optimized)
+     */
+    bool EncFSFile::Utf8ToWide(const string& utf8, std::wstring& output) {
+        if (utf8.empty()) {
+            output.clear();
+            return true;
+        }
+
+        // Get required buffer size
+        int sizeNeeded = MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, NULL, 0);
+        if (sizeNeeded <= 0) {
+            output.clear();
+            return false;
+        }
+
+        // Resize output buffer and convert (SSO-friendly)
+        output.resize(sizeNeeded - 1); // -1 to exclude null terminator
+        int result = MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, &output[0], sizeNeeded);
+        return result > 0;
+    }
+
+    /**
+     * @brief Helper function for partial write with retry logic
+     * @param handle File handle
+     * @param data Data to write
+     * @param size Size of data to write
+     * @return True on success, false on failure
+     */
+    static bool WriteWithRetry(HANDLE handle, const char* data, size_t size) {
+        size_t totalWritten = 0;
+        int consecutiveZeroWrites = 0;
+        
+        while (totalWritten < size) {
+            DWORD writtenLen = 0;
+            DWORD request = (DWORD)(size - totalWritten);
+            
+            if (!WriteFile(handle, data + totalWritten, request, &writtenLen, NULL)) {
+                return false;
+            }
+            
+            if (writtenLen == 0) {
+                if (++consecutiveZeroWrites > MAX_WRITE_RETRIES) {
+                    SetLastError(ERROR_WRITE_FAULT);
+                    return false;
+                }
+                Sleep(WRITE_RETRY_DELAY_MS);
+                continue;
+            }
+            
+            consecutiveZeroWrites = 0;
+            totalWritten += writtenLen;
+        }
+        return true;
+    }
+
+    /**
+     * @brief Invalidates all cached data
+     */
+    static void InvalidateCache(int64_t* lastBlockNum, string* decodeBuffer, string* encodeBuffer) {
+        *lastBlockNum = -1;
+        decodeBuffer->clear();
+        encodeBuffer->clear();
+    }
+
+    /**
+     * @brief Retrieves or creates the file initialization vector (IV)
+     * @param FileName File path used for IV computation
+     * @param fileIv Output parameter receiving the file IV
+     * @param create If true, creates a new IV if one doesn't exist
+     * @return Result code indicating success or error type
+     */
     EncFSGetFileIVResult EncFSFile::getFileIV(const LPCWSTR FileName, int64_t* fileIv, bool create) {
+        // Return cached IV if already available (no lock needed for read)
         if (this->fileIvAvailable) {
             *fileIv = this->fileIv;
             return EXISTS;
         }
+        
+        // If unique IV is not enabled, use 0 as the IV
         if (!encfs.isUniqueIV()) {
             this->fileIv = *fileIv = 0L;
             this->fileIvAvailable = true;
             return EXISTS;
         }
-        // Read file header.
+        
+        // Read file header containing the IV
         LARGE_INTEGER distanceToMove;
         distanceToMove.QuadPart = 0;
         if (!SetFilePointerEx(this->handle, distanceToMove, NULL, FILE_BEGIN)) {
             return READ_ERROR;
         }
+        
         string fileHeader;
         fileHeader.resize(EncFSVolume::HEADER_SIZE);
         DWORD ReadLength;
         if (!ReadFile(this->handle, &fileHeader[0], (DWORD)fileHeader.size(), (LPDWORD)&ReadLength, NULL)) {
             return READ_ERROR;
         }
+        
         if (ReadLength != fileHeader.size()) {
             if (!create) {
                 if (ReadLength == 0) {
@@ -40,46 +197,48 @@ namespace EncFS {
                 SetLastError(ERROR_READ_FAULT);
                 return READ_ERROR;
             }
-            // Create file header.
+            
+            // Create new file header with random IV
             fileHeader.resize(EncFSVolume::HEADER_SIZE);
             random.GenerateBlock((byte*)&fileHeader[0], EncFSVolume::HEADER_SIZE);
             if (!SetFilePointerEx(this->handle, distanceToMove, NULL, FILE_BEGIN)) {
                 return READ_ERROR;
             }
-            // --- 部分書き込みに備えたループ化（小規模なので一回で済む場合がほとんどですが...）
-            {
-                size_t totalWritten = 0;
-                size_t toWrite = fileHeader.size();
-                const char* pData = fileHeader.data();
-                while (totalWritten < toWrite) {
-                    DWORD writtenLen = 0;
-                    DWORD request = (DWORD)(toWrite - totalWritten);
-                    if (!WriteFile(this->handle, pData + totalWritten, request, &writtenLen, NULL)) {
-                        return READ_ERROR;
-                    }
-                    if (writtenLen == 0) {
-                        SetLastError(ERROR_WRITE_FAULT);
-                        return READ_ERROR;
-                    }
-                    totalWritten += writtenLen;
-                }
+            
+            // Write header with retry logic
+            if (!WriteWithRetry(this->handle, fileHeader.data(), fileHeader.size())) {
+                return READ_ERROR;
             }
         }
 
-        string cFileName = this->strConv.to_bytes(wstring(FileName));
+        // Decode the IV from the header (use cached conversion)
+        const string& cFileName = getCachedUtf8FileName(FileName);
         this->fileIv = *fileIv = encfs.decodeFileIv(cFileName, fileHeader);
         this->fileIvAvailable = true;
         return EXISTS;
     }
 
+    /**
+     * @brief Reads and decrypts data from the encrypted file
+     * @param FileName File path for IV computation
+     * @param buff Output buffer for decrypted data
+     * @param off Offset in the logical (decrypted) file
+     * @param len Number of bytes to read
+     * @return Number of bytes read, or -1 on error
+     */
     int32_t EncFSFile::read(const LPCWSTR FileName, char* buff, size_t off, DWORD len) {
         lock_guard<decltype(this->mutexLock)> lock(this->mutexLock);
+        
         if (!this->canRead) {
             SetLastError(ERROR_READ_FAULT);
             return -1;
         }
 
         try {
+            // Lazy allocate buffers if needed
+            this->ensureBuffersAllocated();
+
+            // Get file IV
             int64_t fileIv;
             EncFSGetFileIVResult ivResult = this->getFileIV(FileName, &fileIv, false);
             if (ivResult == READ_ERROR) {
@@ -89,7 +248,7 @@ namespace EncFS {
                 return 0;
             }
 
-            // Calculate block position.
+            // Calculate block positions
             const size_t blockSize = encfs.getBlockSize();
             const size_t blockHeaderSize = encfs.getHeaderSize();
             const size_t blockDataSize = blockSize - blockHeaderSize;
@@ -98,8 +257,9 @@ namespace EncFS {
             const size_t lastBlockNum = (off + len - 1) / blockDataSize;
 
             int32_t copiedLen = 0;
-            // Copy from buffer if same block is cached.
-            if (blockNum == this->lastBlockNum) {
+            
+            // Use cached block if available (with bounds check)
+            if (blockNum == this->lastBlockNum && this->decodeBuffer.size() > shift) {
                 uint32_t blockLen = (uint32_t)(this->decodeBuffer.size() - shift);
                 if (blockLen > len) {
                     blockLen = len;
@@ -114,7 +274,7 @@ namespace EncFS {
                 }
             }
 
-            // Compute how many blocks to read
+            // Calculate how many encrypted blocks to read
             size_t blocksOffset = blockNum * blockSize;
             const size_t blocksLength = (lastBlockNum + 1) * blockSize - blocksOffset;
             if (encfs.isUniqueIV()) {
@@ -122,17 +282,17 @@ namespace EncFS {
             }
 
             if (blocksLength) {
-                // Seek for read.
+                // Seek to read position
                 LARGE_INTEGER distanceToMove;
                 distanceToMove.QuadPart = blocksOffset;
                 if (!SetFilePointerEx(this->handle, distanceToMove, NULL, FILE_BEGIN)) {
                     return -1;
                 }
 
-                // --- 修正箇所: 読み込み前に resize する
+                // Prepare buffer for encrypted data
                 this->blockBuffer.resize(blocksLength);
 
-                // Read encrypted data (partial read loop)
+                // Read encrypted data with partial read handling
                 DWORD totalRead = 0;
                 while (totalRead < blocksLength) {
                     DWORD readLen = 0;
@@ -141,38 +301,49 @@ namespace EncFS {
                         return -1;
                     }
                     if (readLen == 0) {
-                        // EOF
                         break;
                     }
                     totalRead += readLen;
                 }
 
-                // 復号処理
-                // もし totalRead が非常に小さくてブロックの一部しか読めなかった場合は
-                // ブロックとして成立しない可能性もありますが、ある程度は復号を試みる。
-                // 下記では単純に "一度で読み切れた分" を復号しています。
+                // Decrypt the read blocks
                 size_t readPos = 0;
                 while (readPos < totalRead && len > 0) {
                     size_t remain = totalRead - readPos;
                     size_t blockLen = (remain > blockSize) ? blockSize : remain;
 
+                    // Decrypt current block
                     this->encodeBuffer.assign((const char*)&this->blockBuffer[readPos], blockLen);
                     this->decodeBuffer.clear();
                     encfs.decodeBlock(fileIv, this->lastBlockNum = blockNum, this->encodeBuffer, this->decodeBuffer);
 
-                    size_t decLen = this->decodeBuffer.size() - shift;
+                    // Copy decrypted data to output buffer
+                    size_t decLen = this->decodeBuffer.size();
+                    if (decLen > shift) {
+                        decLen -= shift;
+                    } else {
+                        decLen = 0;
+                    }
                     if (decLen > len) {
                         decLen = len;
                     }
-                    memcpy(buff + copiedLen, this->decodeBuffer.data() + shift, decLen);
-                    shift = 0;
-                    len -= (DWORD)decLen;
-                    copiedLen += (int32_t)decLen;
+                    if (decLen > 0) {
+                        memcpy(buff + copiedLen, this->decodeBuffer.data() + shift, decLen);
+                        shift = 0;
+                        len -= (DWORD)decLen;
+                        copiedLen += (int32_t)decLen;
+                    }
                     blockNum++;
                     readPos += blockLen;
                 }
 
-                this->clearBlockBuffer();
+                // Clear buffer only if it's large to free memory
+                if (this->blockBuffer.capacity() > BLOCK_BUFFER_REUSE_THRESHOLD) {
+                    this->blockBuffer.clear();
+                    this->blockBuffer.shrink_to_fit();
+                } else {
+                    this->blockBuffer.clear();
+                }
             }
             return copiedLen;
         }
@@ -182,24 +353,38 @@ namespace EncFS {
         }
     }
 
+    /**
+     * @brief Encrypts and writes data to the file
+     * @param FileName File path for IV computation
+     * @param fileSize Current logical file size
+     * @param buff Input buffer containing data to encrypt
+     * @param off Offset in the logical file
+     * @param len Number of bytes to write
+     * @return Number of bytes written, or -1 on error
+     */
     int32_t EncFSFile::write(const LPCWSTR FileName, size_t fileSize, const char* buff, size_t off, DWORD len) {
         lock_guard<decltype(this->mutexLock)> lock(this->mutexLock);
+        
         try {
+            // Lazy allocate buffers if needed
+            this->ensureBuffersAllocated();
+
+            // Get or create file IV
             int64_t fileIv;
             if (this->getFileIV(FileName, &fileIv, true) == READ_ERROR) {
                 SetLastError(ERROR_FILE_CORRUPT);
                 return -1;
             }
 
+            // Expand file if writing beyond current size
             if (off > fileSize) {
-                // Expand file.
                 if (!this->_setLength(FileName, fileSize, off)) {
                     SetLastError(ERROR_FILE_CORRUPT);
                     return -1;
                 }
             }
 
-            // Calculate position.
+            // Calculate block positions
             const size_t blockSize = encfs.getBlockSize();
             const size_t blockHeaderSize = encfs.getHeaderSize();
             const size_t blockDataSize = blockSize - blockHeaderSize;
@@ -211,23 +396,23 @@ namespace EncFS {
                 blocksOffset += EncFS::EncFSVolume::HEADER_SIZE;
             }
 
-            // Seek for write
+            // Seek to write position
             LARGE_INTEGER distanceToMove;
             distanceToMove.QuadPart = blocksOffset;
             if (!SetFilePointerEx(this->handle, distanceToMove, NULL, FILE_BEGIN)) {
                 return -1;
             }
 
-            // 部分ブロックへの書き込み
+            // Handle partial block write at the beginning
             if (shift != 0) {
                 if (blockNum != this->lastBlockNum) {
-                    // まずは既存ブロックを読み込んで復号する
+                    // Read and decrypt existing block
                     this->encodeBuffer.resize(encfs.getBlockSize());
                     DWORD readLen;
                     if (!ReadFile(this->handle, &this->encodeBuffer[0], (DWORD)this->encodeBuffer.size(), &readLen, NULL)) {
                         return -1;
                     }
-                    // ポインタ巻き戻し
+                    // Rewind file pointer
                     if (!SetFilePointerEx(this->handle, distanceToMove, NULL, FILE_BEGIN)) {
                         return -1;
                     }
@@ -235,35 +420,39 @@ namespace EncFS {
                     this->decodeBuffer.clear();
                     encfs.decodeBlock(fileIv, blockNum, this->encodeBuffer, this->decodeBuffer);
                 }
+                // Pad with zeros if necessary
                 if (this->decodeBuffer.size() < shift) {
                     this->decodeBuffer.append(shift - this->decodeBuffer.size(), (char)0);
                 }
             }
 
             size_t blockDataLen = 0;
-            size_t writtenTotal = 0; // 返り値用に合計書き込みバイト数を持つ
+            size_t writtenTotal = 0;
+            
+            // Write data block by block
             for (size_t i = 0; i < len; i += blockDataLen) {
                 blockDataLen = (len - i) > blockDataSize - shift ? (blockDataSize - shift) : (len - i);
 
-                // decodeBuffer に書き込みデータを反映
+                // Prepare decrypted block data
                 if (shift != 0) {
+                    // Partial block write
                     if (this->decodeBuffer.size() < shift + blockDataLen) {
                         this->decodeBuffer.resize(shift + blockDataLen);
                     }
                     memcpy(&this->decodeBuffer[shift], buff + i, blockDataLen);
                 }
                 else if (blockDataLen == blockDataSize || off + i + blockDataLen >= fileSize) {
-                    // ブロックぴったり or EOF 近くで全書き込み
+                    // Full block or EOF block
                     this->decodeBuffer.assign(buff + i, blockDataLen);
                 }
                 else {
-                    // 途中ブロックなので既存データを読み込んで復号しておく
+                    // Read-modify-write for middle blocks
                     this->encodeBuffer.resize(encfs.getBlockSize());
                     DWORD readLen;
                     if (!ReadFile(this->handle, &this->encodeBuffer[0], (DWORD)this->encodeBuffer.size(), &readLen, NULL)) {
                         return -1;
                     }
-                    // カーソルを元に戻す
+                    // Rewind file pointer
                     LARGE_INTEGER backMove;
                     backMove.QuadPart = -(LONGLONG)readLen;
                     if (!SetFilePointerEx(this->handle, backMove, NULL, FILE_CURRENT)) {
@@ -279,27 +468,13 @@ namespace EncFS {
                     memcpy(&this->decodeBuffer[0], buff + i, blockDataLen);
                 }
 
-                // エンコードしてファイルに書き戻す
+                // Encrypt and write the block
                 this->encodeBuffer.clear();
                 encfs.encodeBlock(fileIv, this->lastBlockNum = blockNum, this->decodeBuffer, this->encodeBuffer);
 
-                // --- 修正箇所: partial write への対応
-                {
-                    size_t totalWritten = 0;
-                    size_t toWrite = this->encodeBuffer.size();
-                    const char* pData = this->encodeBuffer.data();
-                    while (totalWritten < toWrite) {
-                        DWORD writtenLen = 0;
-                        DWORD request = (DWORD)(toWrite - totalWritten);
-                        if (!WriteFile(this->handle, pData + totalWritten, request, &writtenLen, NULL)) {
-                            return -1;
-                        }
-                        if (writtenLen == 0) {
-                            SetLastError(ERROR_WRITE_FAULT);
-                            return -1;
-                        }
-                        totalWritten += writtenLen;
-                    }
+                // Write with retry logic
+                if (!WriteWithRetry(this->handle, this->encodeBuffer.data(), this->encodeBuffer.size())) {
+                    return -1;
                 }
 
                 blockNum++;
@@ -315,6 +490,14 @@ namespace EncFS {
         }
     }
 
+    /**
+     * @brief Reads plain data and encrypts it (reverse mode operation)
+     * @param FileName File path for IV computation
+     * @param buff Output buffer for encrypted data
+     * @param off Offset in the physical file
+     * @param len Number of bytes to read
+     * @return Number of bytes read, or -1 on error
+     */
     int32_t EncFSFile::reverseRead(const LPCWSTR FileName, char* buff, size_t off, DWORD len) {
         lock_guard<decltype(this->mutexLock)> lock(this->mutexLock);
         if (!this->canRead) {
@@ -322,9 +505,9 @@ namespace EncFS {
             return -1;
         }
 
-        int64_t fileIv = 0; // Cannot use fileIv in reverse mode.
+        int64_t fileIv = 0; // File IV is not used in reverse mode
 
-        // Calculate position.
+        // Calculate block positions
         int32_t blockSize = encfs.getBlockSize();
         int32_t shift = off % blockSize;
         int64_t blockNum = off / blockSize;
@@ -336,8 +519,8 @@ namespace EncFS {
         int32_t i = 0;
         int32_t blockDataLen;
 
-        if (blockNum == this->lastBlockNum) {
-            // Copy from buffer
+        // Use cached block if available (with bounds check)
+        if (blockNum == this->lastBlockNum && this->encodeBuffer.size() > (size_t)shift) {
             blockDataLen = (int32_t)std::min<size_t>(len, this->encodeBuffer.size() - shift);
             memcpy(buff, &this->encodeBuffer[shift], blockDataLen);
             blocksOffset = blockNum++ * blockSize;
@@ -348,17 +531,17 @@ namespace EncFS {
             }
         }
 
-        // Seek for read.
+        // Seek to read position
         LARGE_INTEGER distanceToMove;
         distanceToMove.QuadPart = blocksOffset;
         if (!SetFilePointerEx(this->handle, distanceToMove, NULL, FILE_BEGIN)) {
             return -1;
         }
 
-        // --- 修正箇所: 読み込み前に resize
+        // Prepare buffer
         this->blockBuffer.resize(blocksLength);
 
-        // Partial read
+        // Read with partial read handling
         DWORD totalRead = 0;
         while ((int64_t)totalRead < blocksLength) {
             DWORD readLen = 0;
@@ -371,45 +554,97 @@ namespace EncFS {
             }
             totalRead += readLen;
         }
-        // 実際に読めた分を len として扱う
-        if ((DWORD)len > totalRead) {
-            len = totalRead;
+        
+        // Adjust len if we read less than expected (accounting for shift)
+        DWORD maxAvailable = totalRead + i;
+        if (shift > 0 && totalRead > 0) {
+            // First block might have shift offset
+            maxAvailable = i + totalRead - shift;
+        }
+        if ((DWORD)len > maxAvailable) {
+            len = maxAvailable;
         }
         if (i >= (int32_t)len) {
-            this->clearBlockBuffer();
+            // Clear buffer only if it's large
+            if (this->blockBuffer.capacity() > BLOCK_BUFFER_REUSE_THRESHOLD) {
+                this->blockBuffer.clear();
+                this->blockBuffer.shrink_to_fit();
+            } else {
+                this->blockBuffer.clear();
+            }
             return i;
         }
 
-        // Encode the read data
+        // Encrypt the read data block by block
         int64_t bufferPos = 0;
         for (; i < (int32_t)len; i += blockDataLen) {
+            size_t remainInBuffer = totalRead - (bufferPos * blockSize);
+            if (remainInBuffer == 0) {
+                break;
+            }
+            
             blockDataLen = (int32_t)std::min<size_t>(len - i, blockSize - shift);
+            blockDataLen = (int32_t)std::min<size_t>(blockDataLen, remainInBuffer - shift);
 
-            // Prepare decodeBuffer
-            this->decodeBuffer.resize(blockDataLen + shift);
-            memcpy(&this->decodeBuffer[0], &this->blockBuffer[bufferPos * blockSize], this->decodeBuffer.size());
+            // Prepare plain data
+            size_t copySize = blockDataLen + shift;
+            if (copySize > remainInBuffer) {
+                copySize = remainInBuffer;
+            }
+            this->decodeBuffer.resize(copySize);
+            memcpy(&this->decodeBuffer[0], &this->blockBuffer[bufferPos * blockSize], copySize);
 
-            // Encode
+            // Encrypt the block
             this->encodeBuffer.clear();
             encfs.encodeBlock(fileIv, this->lastBlockNum = blockNum, this->decodeBuffer, this->encodeBuffer);
 
-            memcpy(buff + i, &this->encodeBuffer[shift], blockDataLen);
+            // Copy encrypted data to output buffer (with bounds check)
+            size_t availableInEncode = this->encodeBuffer.size();
+            if (availableInEncode > (size_t)shift) {
+                availableInEncode -= shift;
+            } else {
+                availableInEncode = 0;
+            }
+            if ((size_t)blockDataLen > availableInEncode) {
+                blockDataLen = (int32_t)availableInEncode;
+            }
+            if (blockDataLen > 0) {
+                memcpy(buff + i, &this->encodeBuffer[shift], blockDataLen);
+            }
 
             blockNum++;
             bufferPos++;
             shift = 0;
         }
-        this->clearBlockBuffer();
+        
+        // Clear buffer only if it's large
+        if (this->blockBuffer.capacity() > BLOCK_BUFFER_REUSE_THRESHOLD) {
+            this->blockBuffer.clear();
+            this->blockBuffer.shrink_to_fit();
+        } else {
+            this->blockBuffer.clear();
+        }
         return i;
     }
 
+    /**
+     * @brief Flushes file buffers to disk
+     * @return True on success, false on failure
+     */
     bool EncFSFile::flush() {
         return FlushFileBuffers(this->handle);
     }
 
+    /**
+     * @brief Sets the logical file length
+     * @param FileName File path for IV computation
+     * @param length New logical file size
+     * @return True on success, false on failure
+     */
     bool EncFSFile::setLength(const LPCWSTR FileName, const size_t length) {
         lock_guard<decltype(this->mutexLock)> lock(this->mutexLock);
 
+        // Get current file size
         LARGE_INTEGER encodedFileSize;
         if (!GetFileSizeEx(this->handle, &encodedFileSize)) {
             return false;
@@ -422,15 +657,22 @@ namespace EncFS {
         return this->_setLength(FileName, fileSize, length);
     }
 
+    /**
+     * @brief Internal implementation for setting file length
+     * @param FileName File path for IV computation
+     * @param fileSize Current logical file size
+     * @param length New logical file size
+     * @return True on success, false on failure
+     */
     bool EncFSFile::_setLength(const LPCWSTR FileName, const size_t fileSize, const size_t length) {
-        if (length >= 100 * 1024 * 1024) {
-			// 100MB 以上のファイルはスパースファイルにする
+        // Enable sparse file for large files
+        if (length >= SPARSE_FILE_THRESHOLD) {
             DWORD temp;
-		    DeviceIoControl(handle, FSCTL_SET_SPARSE, NULL, 0, NULL, 0, &temp, NULL);
-		}
+            DeviceIoControl(handle, FSCTL_SET_SPARSE, NULL, 0, NULL, 0, &temp, NULL);
+        }
 
+        // Handle truncation to zero
         if (length == 0) {
-            // ファイルサイズをゼロにする場合
             LARGE_INTEGER offset;
             offset.QuadPart = 0;
             if (!SetFilePointerEx(this->handle, offset, NULL, FILE_BEGIN)) {
@@ -440,29 +682,35 @@ namespace EncFS {
                 return false;
             }
             this->fileIvAvailable = false;
+            InvalidateCache(&this->lastBlockNum, &this->decodeBuffer, &this->encodeBuffer);
             return true;
         }
 
-        // 境界部分をデコード
+        // Calculate block boundary positions
         size_t blockHeaderSize = encfs.getHeaderSize();
         size_t blockDataSize = encfs.getBlockSize() - blockHeaderSize;
         size_t shift;
         size_t blockNum;
         size_t blocksOffset;
+        
         if (length < fileSize) {
-            // 縮小
+            // Shrinking file
             shift = length % blockDataSize;
             blockNum = length / blockDataSize;
         }
         else {
-            // 拡大
+            // Expanding file
             shift = fileSize % blockDataSize;
             blockNum = fileSize / blockDataSize;
         }
+        
+        // Get file IV
         int64_t fileIv;
         if (this->getFileIV(FileName, &fileIv, true) == READ_ERROR) {
             return false;
         }
+        
+        // Handle partial block at boundary
         if (shift != 0) {
             blocksOffset = blockNum * encfs.getBlockSize();
             if (encfs.isUniqueIV()) {
@@ -473,6 +721,8 @@ namespace EncFS {
             if (!SetFilePointerEx(this->handle, distanceToMove, NULL, FILE_BEGIN)) {
                 return false;
             }
+            
+            // Read and decrypt boundary block
             this->encodeBuffer.resize(encfs.getBlockSize());
             DWORD readLen;
             if (!ReadFile(this->handle, &this->encodeBuffer[0], (DWORD)this->encodeBuffer.size(), &readLen, NULL)) {
@@ -483,6 +733,7 @@ namespace EncFS {
             encfs.decodeBlock(fileIv, blockNum, this->encodeBuffer, this->decodeBuffer);
         }
 
+        // Set the new encrypted file size
         size_t encodedLength = encfs.toEncodedLength(length);
         {
             LARGE_INTEGER offset;
@@ -494,51 +745,41 @@ namespace EncFS {
                 return false;
             }
         }
-        this->lastBlockNum = -1;
+        InvalidateCache(&this->lastBlockNum, &this->decodeBuffer, &this->encodeBuffer);
 
+        // Re-encrypt and write boundary block if needed
         if (shift != 0) {
-            // 再エンコードして書き込み
             size_t blockDataLen = length - blockNum * blockDataSize;
             if (blockDataLen > blockDataSize) {
                 blockDataLen = blockDataSize;
             }
+            
+            // Adjust decoded buffer size
             if (this->decodeBuffer.size() < blockDataLen) {
                 this->decodeBuffer.append(blockDataLen - this->decodeBuffer.size(), (char)0);
             }
             else {
                 this->decodeBuffer.resize(blockDataLen);
             }
+            
+            // Encrypt the block
             this->encodeBuffer.clear();
             encfs.encodeBlock(fileIv, this->lastBlockNum = blockNum, this->decodeBuffer, this->encodeBuffer);
 
-            // 書き込み位置を戻す
+            // Seek back to block position
             LARGE_INTEGER distanceToMove;
             distanceToMove.QuadPart = (LONGLONG)blocksOffset;
             if (!SetFilePointerEx(this->handle, distanceToMove, NULL, FILE_BEGIN)) {
                 return false;
             }
 
-            // --- 部分書き込みに対応
-            {
-                size_t totalWritten = 0;
-                size_t toWrite = this->encodeBuffer.size();
-                const char* pData = this->encodeBuffer.data();
-                while (totalWritten < toWrite) {
-                    DWORD writtenLen = 0;
-                    DWORD request = (DWORD)(toWrite - totalWritten);
-                    if (!WriteFile(this->handle, pData + totalWritten, request, &writtenLen, NULL)) {
-                        return false;
-                    }
-                    if (writtenLen == 0) {
-                        SetLastError(ERROR_WRITE_FAULT);
-                        return false;
-                    }
-                    totalWritten += writtenLen;
-                }
+            // Write with retry logic
+            if (!WriteWithRetry(this->handle, this->encodeBuffer.data(), this->encodeBuffer.size())) {
+                return false;
             }
         }
 
-        // 拡大した末尾をエンコード
+        // Handle expansion - encode trailing block if needed
         if (length > fileSize) {
             size_t s = length % blockDataSize;
             if (s != 0 && (fileSize == 0 || blockNum != length / blockDataSize)) {
@@ -546,43 +787,37 @@ namespace EncFS {
                 this->decodeBuffer.assign(s, (char)0);
                 this->encodeBuffer.clear();
                 encfs.encodeBlock(fileIv, this->lastBlockNum = blockNum, this->decodeBuffer, this->encodeBuffer);
-                // ファイル末尾へ移動
+                
+                // Seek to end of file
                 LARGE_INTEGER moveEnd;
                 moveEnd.QuadPart = 0;
                 if (!SetFilePointerEx(this->handle, moveEnd, NULL, FILE_END)) {
                     return false;
                 }
 
-                // 書き込み位置をさらに調整
+                // Adjust position backward
                 moveEnd.QuadPart = -(int64_t)s - (int64_t)blockHeaderSize;
                 if (!SetFilePointerEx(this->handle, moveEnd, NULL, FILE_CURRENT)) {
                     return false;
                 }
 
-                // --- 部分書き込みに対応
-                {
-                    size_t totalWritten = 0;
-                    size_t toWrite = this->encodeBuffer.size();
-                    const char* pData = this->encodeBuffer.data();
-                    while (totalWritten < toWrite) {
-                        DWORD writtenLen = 0;
-                        DWORD request = (DWORD)(toWrite - totalWritten);
-                        if (!WriteFile(this->handle, pData + totalWritten, request, &writtenLen, NULL)) {
-                            return false;
-                        }
-                        if (writtenLen == 0) {
-                            SetLastError(ERROR_WRITE_FAULT);
-                            return false;
-                        }
-                        totalWritten += writtenLen;
-                    }
+                // Write with retry logic
+                if (!WriteWithRetry(this->handle, this->encodeBuffer.data(), this->encodeBuffer.size())) {
+                    return false;
                 }
             }
         }
         return true;
     }
 
+    /**
+     * @brief Updates file IV when file is renamed (for chained IV mode)
+     * @param FileName Original file path
+     * @param NewFileName New file path
+     * @return True on success, false on failure
+     */
     bool EncFSFile::changeFileIV(const LPCWSTR FileName, const LPCWSTR NewFileName) {
+        // Get current file IV
         int64_t fileIv;
         EncFSGetFileIVResult ivResult = this->getFileIV(FileName, &fileIv, false);
         if (ivResult == EMPTY) {
@@ -591,37 +826,32 @@ namespace EncFS {
         if (ivResult == READ_ERROR) {
             return false;
         }
-        string cNewFileName = strConv.to_bytes(wstring(NewFileName));
+        
+        // Encode new IV based on new filename (use optimized conversion)
+        string cNewFileName;
+        WideToUtf8(NewFileName, cNewFileName);
         string encodedFileHeader;
         encfs.encodeFileIv(cNewFileName, fileIv, encodedFileHeader);
+        
+        // Seek to file beginning
         LARGE_INTEGER distanceToMove;
         distanceToMove.QuadPart = 0;
         if (!SetFilePointerEx(this->handle, distanceToMove, NULL, FILE_BEGIN)) {
             return false;
         }
-        // --- こちらも部分書き込みを考慮
-        {
-            size_t totalWritten = 0;
-            size_t toWrite = encodedFileHeader.size();
-            const char* pData = encodedFileHeader.data();
-            while (totalWritten < toWrite) {
-                DWORD writtenLen = 0;
-                DWORD request = (DWORD)(toWrite - totalWritten);
-                if (!WriteFile(this->handle, pData + totalWritten, request, &writtenLen, NULL)) {
-                    return false;
-                }
-                if (writtenLen == 0) {
-                    SetLastError(ERROR_WRITE_FAULT);
-                    return false;
-                }
-                totalWritten += writtenLen;
-            }
+        
+        // Write new IV with retry logic
+        if (!WriteWithRetry(this->handle, encodedFileHeader.data(), encodedFileHeader.size())) {
+            return false;
         }
         return true;
     }
 
+    /**
+     * @brief Clears block buffer while retaining capacity for reuse
+     */
     void EncFSFile::clearBlockBuffer() {
-        // サイズのみクリア。capacity はそのまま保持して再利用。
+        // Clear size only, capacity is retained for efficient reuse
         this->blockBuffer.clear();
     }
 
