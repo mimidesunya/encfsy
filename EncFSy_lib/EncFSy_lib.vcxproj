@@ -159,8 +159,8 @@
     <ClInclude Include="EncFSUtils.hpp" />
     <ClInclude Include="EncFSVolume.h" />
     <ClInclude Include="EncFSy.h" />
+    <ClInclude Include="EncFSy_dokan.h" />
     <ClInclude Include="EncFSy_globals.h" />
-    <ClInclude Include="EncFSy_handlers.h" />
     <ClInclude Include="EncFSy_logging.h" />
     <ClInclude Include="EncFSy_mount.h" />
     <ClInclude Include="EncFSy_path.h" />
@@ -173,6 +173,9 @@
     <ClCompile Include="EncFSFile.cpp" />
     <ClCompile Include="EncFSVolume.cpp" />
     <ClCompile Include="EncFSy.cpp" />
+    <ClCompile Include="EncFSy_dokan.cpp" />
+    <ClCompile Include="EncFSy_dokan_fs.cpp" />
+    <ClCompile Include="EncFSy_dokan_io.cpp" />
     <ClCompile Include="EncFSy_logging.cpp" />
     <ClCompile Include="EncFSy_path.cpp" />
   </ItemGroup>
