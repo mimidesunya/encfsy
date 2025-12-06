@@ -3,6 +3,7 @@
 #include "EncFSy_logging.h"
 #include <dokan.h>
 #include "EncFSUtils.hpp"
+#include <memory>
 
 /**
  * @brief Internal implementation: Converts UTF-8 encoded filename to Windows path with NT prefix
@@ -16,11 +17,10 @@
 static void ToWFilePathImpl(std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>>& strConv,
 	std::string& cEncodedFileName, PWCHAR encodedFilePath) {
 	std::wstring wFilePath = strConv.from_bytes(cEncodedFileName);
-
+	
 	auto filePath = std::make_unique<WCHAR[]>(DOKAN_MAX_PATH);
 	wcscpy_s(filePath.get(), DOKAN_MAX_PATH, wFilePath.c_str());
 
-	// Use NT path prefix "\\?\\" to support long paths (>260 characters)
 	std::wstring resultPath = L"\\\\?\\";
 	resultPath += g_efo.RootDirectory;
 	
@@ -56,6 +56,109 @@ bool FileExists(PWCHAR path) {
 }
 
 /**
+ * @brief Case-insensitive string comparison using Unicode normalization
+ * @param str1 First string
+ * @param str2 Second string
+ * @return true if strings are equal (case-insensitive), false otherwise
+ * 
+ * Uses CompareStringOrdinal for consistent, locale-independent comparison.
+ * This is more reliable than lstrcmpiW which can behave differently based on locale.
+ */
+static bool CaseInsensitiveEqual(const std::wstring& str1, const std::wstring& str2) {
+	if (str1.length() != str2.length()) {
+		return false;
+	}
+	// CompareStringOrdinal is locale-independent and more predictable
+	int result = CompareStringOrdinal(
+		str1.c_str(), static_cast<int>(str1.length()),
+		str2.c_str(), static_cast<int>(str2.length()),
+		TRUE  // bIgnoreCase
+	);
+	return (result == CSTR_EQUAL);
+}
+
+/**
+ * @brief RAII wrapper for FindFirstFile handle
+ */
+class FindHandle {
+private:
+	HANDLE handle_;
+public:
+	explicit FindHandle(HANDLE h) : handle_(h) {}
+	~FindHandle() {
+		if (handle_ != INVALID_HANDLE_VALUE) {
+			FindClose(handle_);
+		}
+	}
+	FindHandle(const FindHandle&) = delete;
+	FindHandle& operator=(const FindHandle&) = delete;
+	
+	HANDLE get() const { return handle_; }
+	bool isValid() const { return handle_ != INVALID_HANDLE_VALUE; }
+};
+
+/**
+ * @brief Check if a plaintext path exists on disk (case-insensitive)
+ * @param plainFilePath Virtual plaintext file path (e.g., "\\dir\\Name.txt")
+ * @return true if a file/dir with same plaintext name exists ignoring case
+ */
+bool PlainPathExistsCaseInsensitive(LPCWSTR plainFilePath) {
+	std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> strConv;
+	std::wstring wPlain(plainFilePath);
+	std::string cPlain = strConv.to_bytes(wPlain);
+
+	// Split into parent and leaf
+	std::string::size_type pos = cPlain.find_last_of(EncFS::g_pathSeparator);
+	if (pos == std::string::npos || pos == 0) {
+		return false; // root-only, treat as not existing
+	}
+	std::string parentPlain = cPlain.substr(0, pos);
+	std::string leafPlain = cPlain.substr(pos + 1);
+	if (leafPlain.empty()) return false;
+
+	// Encode parent to physical and enumerate children
+	std::string parentEnc;
+	encfs.encodeFilePath(parentPlain, parentEnc);
+	// Trim trailing separator to avoid "\\*" becoming "\\\\*"
+	if (!parentEnc.empty()) {
+		char last = parentEnc.back();
+		if (last == '\\' || last == '/') {
+			parentEnc.pop_back();
+		}
+	}
+	std::string search = parentEnc + EncFS::g_pathSeparator + "*";
+	WCHAR searchPath[DOKAN_MAX_PATH];
+	ToWFilePathImpl(strConv, search, searchPath);
+
+	WIN32_FIND_DATAW find;
+	ZeroMemory(&find, sizeof(find));
+	HANDLE hFind = FindFirstFileW(searchPath, &find);
+	FindHandle guard(hFind);
+	if (!guard.isValid()) {
+		return false;
+	}
+
+	std::wstring wLeaf = strConv.from_bytes(leafPlain);
+	do {
+		if (wcscmp(find.cFileName, L".") == 0 || wcscmp(find.cFileName, L"..") == 0) continue;
+		std::wstring wEncName(find.cFileName);
+		std::string cEncName = strConv.to_bytes(wEncName);
+		std::string cPlainChild;
+		try {
+			encfs.decodeFileName(cEncName, parentEnc, cPlainChild);
+		}
+		catch (const EncFS::EncFSInvalidBlockException&) {
+			continue;
+		}
+		std::wstring wPlainChild = strConv.from_bytes(cPlainChild);
+		if (CaseInsensitiveEqual(wLeaf, wPlainChild)) {
+			return true;
+		}
+	} while (FindNextFileW(hFind, &find) != 0);
+	return false;
+}
+
+/**
  * @brief Converts virtual (plaintext) path to physical (encrypted) path
  * @param encodedFilePath Output buffer for physical path
  * @param plainFilePath Virtual plaintext file path
@@ -67,7 +170,20 @@ bool FileExists(PWCHAR path) {
 void GetFilePath(PWCHAR encodedFilePath, LPCWSTR plainFilePath, bool createNew) {
 	std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> strConv;
 	std::wstring wFilePath(plainFilePath);
-	std::string cFilePath = strConv.to_bytes(wFilePath);
+	std::string cFilePath;
+	
+	// Convert with error checking
+	try {
+		cFilePath = strConv.to_bytes(wFilePath);
+		// Check for conversion failure (returns empty on some errors)
+		if (wFilePath.length() > 0 && cFilePath.empty()) {
+			throw std::runtime_error("UTF-16 to UTF-8 conversion failed");
+		}
+	}
+	catch (const std::exception& ex) {
+		ErrorPrint(L"GetFilePath: UTF-16->UTF-8 conversion failed for '%s': %S\n", plainFilePath, ex.what());
+		throw;
+	}
 
 	std::string cEncodedFileName;
 	if (encfs.isReverse()) {
@@ -85,8 +201,8 @@ void GetFilePath(PWCHAR encodedFilePath, LPCWSTR plainFilePath, bool createNew) 
 		encfs.encodeFilePath(cFilePath, cEncodedFileName);
 		ToWFilePathImpl(strConv, cEncodedFileName, encodedFilePath);
 
-		// Perform case-insensitive lookup if enabled and file doesn't exist
-		if (g_efo.CaseInsensitive && !FileExists(encodedFilePath)) {
+		// Perform case-insensitive lookup if enabled
+		if (g_efo.CaseInsensitive) {
 			WCHAR filePath[DOKAN_MAX_PATH];
 			bool pathChanged = false;
 			std::string::size_type pos1 = 1;  // Skip leading separator
@@ -108,73 +224,111 @@ void GetFilePath(PWCHAR encodedFilePath, LPCWSTR plainFilePath, bool createNew) 
 					component.assign(cFilePath, pos1, pos2 - pos1);
 				}
 
+				// Skip empty components
+				if (component.empty()) {
+					if (pos2 == std::string::npos) {
+						break;
+					}
+					pos1 = pos2 + 1;
+					continue;
+				}
+
 				// Construct the path up to the current component
 				currentPlainPath.assign(cFilePath, 0, (pos2 == std::string::npos) ? cFilePath.length() : pos2);
 
+				// Don't lookup if creating a new file at the leaf level
 				if (pos2 == std::string::npos && createNew) {
-					break; // Don't lookup if creating a new file, just use the constructed path
+					break;
 				}
 				
 				currentEncPath.clear();
 				encfs.encodeFilePath(currentPlainPath, currentEncPath);
 				ToWFilePathImpl(strConv, currentEncPath, filePath);
 				
-				if (!FileExists(filePath)) {
-					// Component not found: search parent directory for case-insensitive match
-					bool found = false;
-					
-					// Get parent path
-					std::string::size_type parentPos = currentEncPath.find_last_of(EncFS::g_pathSeparator);
-					if (parentPos == std::string::npos) {
-						break; // No parent, cannot search
-					}
-					std::string parentEncPath = currentEncPath.substr(0, parentPos);
-					std::string searchPath = parentEncPath + EncFS::g_pathSeparator + "*.*";
-					
-					ToWFilePathImpl(strConv, searchPath, filePath);
-					
-					ZeroMemory(&find, sizeof(WIN32_FIND_DATAW));
-					HANDLE hFind = FindFirstFileW(filePath, &find);
-					if (hFind == INVALID_HANDLE_VALUE) {
+				// Always search for case-insensitive match when CaseInsensitive is enabled
+				bool found = false;
+				
+				// Get parent path
+				std::string::size_type parentPos = currentEncPath.find_last_of(EncFS::g_pathSeparator);
+				if (parentPos == std::string::npos) {
+					// Root-level component
+					if (pos2 == std::string::npos) {
 						break;
 					}
-					
-					wsComponent = strConv.from_bytes(component);
-
-					// Search for matching filename (case-insensitive)
-					do {
-						if (wcscmp(find.cFileName, L"..") == 0 ||
-							wcscmp(find.cFileName, L".") == 0) {
-							continue;
-						}
-						std::wstring wcFileName(find.cFileName);
-						std::string ccFileName = strConv.to_bytes(wcFileName);
-						std::string cPlainFileName;
-						try {
-							encfs.decodeFileName(ccFileName, parentEncPath, cPlainFileName);
-						}
-						catch (const EncFS::EncFSInvalidBlockException&) {
-							continue;  // Skip files with invalid encryption
-						}
-						std::wstring wFileName = strConv.from_bytes(cPlainFileName);
-						
-						// Case-insensitive comparison
-						if (lstrcmpiW(wsComponent.c_str(), wFileName.c_str()) == 0) {
-							// Found match: update path with correct case
-							cFilePath.replace(pos1, component.length(), cPlainFileName);
-							pathChanged = true;
-							found = true;
-							break;
-						}
-					} while (FindNextFileW(hFind, &find) != 0);
-					FindClose(hFind);
-					
-					if (!found) {
-						pathChanged = false;
-						break;
-					}
+					pos1 = pos2 + 1;
+					continue;
 				}
 				
+				std::string parentEncPath = currentEncPath.substr(0, parentPos);
+				std::string searchPath = parentEncPath + EncFS::g_pathSeparator + "*";
+				
+				ToWFilePathImpl(strConv, searchPath, filePath);
+				
+				ZeroMemory(&find, sizeof(WIN32_FIND_DATAW));
+				HANDLE hFind = FindFirstFileW(filePath, &find);
+				
+				// Use RAII to ensure FindClose is always called
+				FindHandle findGuard(hFind);
+				
+				if (!findGuard.isValid()) {
+					// Parent directory doesn't exist or access denied
+					pathChanged = false;
+					break;
+				}
+				
+				try {
+					wsComponent = strConv.from_bytes(component);
+					// Check for conversion failure
+					if (component.length() > 0 && wsComponent.empty()) {
+						throw std::runtime_error("UTF-8 to UTF-16 conversion failed for component");
+					}
+				}
+				catch (const std::exception& ex) {
+					ErrorPrint(L"GetFilePath: Component conversion failed: %S\n", ex.what());
+					throw;
+				}
+
+				// Search for matching filename (case-insensitive)
+				do {
+					// Skip . and ..
+					if (wcscmp(find.cFileName, L"..") == 0 ||
+						wcscmp(find.cFileName, L".") == 0) {
+						continue;
+					}
+					
+					std::wstring wcFileName(find.cFileName);
+					std::string ccFileName = strConv.to_bytes(wcFileName);
+					std::string cPlainFileName;
+					
+					try {
+						encfs.decodeFileName(ccFileName, parentEncPath, cPlainFileName);
+					}
+					catch (const EncFS::EncFSInvalidBlockException&) {
+						// Skip files with invalid encryption/encoding
+						continue;
+					}
+					
+					std::wstring wFileName = strConv.from_bytes(cPlainFileName);
+					
+					// Case-insensitive comparison using CompareStringOrdinal
+					if (CaseInsensitiveEqual(wsComponent, wFileName)) {
+						// Found match: update path with correct case from disk
+						cFilePath.replace(pos1, component.length(), cPlainFileName);
+						pathChanged = true;
+						found = true;
+						break;
+					}
+				} while (FindNextFileW(hFind, &find) != 0);
+				
+				// findGuard destructor will call FindClose automatically
+				
+				if (!found) {
+					// No case-insensitive match found
+					// Keep any prior corrections
+					break;
+				}
+				
+				// Move to next path component
 				if (pos2 == std::string::npos) {
 					break;  // Processed all components
 				}
@@ -186,7 +340,15 @@ void GetFilePath(PWCHAR encodedFilePath, LPCWSTR plainFilePath, bool createNew) 
 				cEncodedFileName.clear();
 				encfs.encodeFilePath(cFilePath, cEncodedFileName);
 				ToWFilePathImpl(strConv, cEncodedFileName, encodedFilePath);
+				DbgPrint(L"GetFilePath: Case-corrected path for '%s'\n", plainFilePath);
 			}
 		}
+	}
+	
+	// Final validation: ensure we have a valid path
+	size_t finalLen = wcslen(encodedFilePath);
+	if (finalLen < 7) {
+		ErrorPrint(L"GetFilePath: Generated invalid path for '%s'\n", plainFilePath);
+		throw std::runtime_error("Generated path is invalid");
 	}
 }

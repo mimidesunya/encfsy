@@ -134,6 +134,15 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="test_advanced.cpp" />
+    <ClCompile Include="test_basic_io.cpp" />
+    <ClCompile Include="test_edge_cases.cpp" />
+    <ClCompile Include="test_file_size.cpp" />
+    <ClCompile Include="test_vs_build.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="test_common.h" />
+    <ClInclude Include="test_declarations.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

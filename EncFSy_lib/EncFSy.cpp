@@ -1,5 +1,5 @@
 /**
- * @file EncFSy.cpp
+ * @file EncFS.cpp
  * @brief Main implementation file containing Dokan callbacks and global state.
  * @details This file defines global state and contains all Dokan filesystem operation
  * callbacks. It has been optimized for safety and performance by using
@@ -18,7 +18,7 @@
 #include <vector>
 #include <memory>
 #include <mutex>
-#include <codecvt> // Note: deprecated in C++17, keeping for compatibility
+#include <codecvt>
 
 #include "EncFSFile.h"
 #include "EncFSUtils.hpp"
@@ -29,31 +29,18 @@
 #include "EncFSy_handlers.h"
 #include "EncFSy_mount.h"
 
- // Suppress warnings for wstring_convert if compiling with C++17 or later
 #define _SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING
 
 using namespace std;
 
-// Define globals once here (declared extern in EncFSy_globals.h)
 EncFS::EncFSVolume encfs;
 EncFSOptions g_efo;
 std::mutex dirMoveLock;
 
-/**
- * @brief Safely converts a ULONG64 context from Dokan to an EncFSFile pointer.
- * @param context The ULONG64 value from PDOKAN_FILE_INFO->Context.
- * @return A pointer to an EncFS::EncFSFile object.
- */
 static inline EncFS::EncFSFile* ToEncFSFile(ULONG64 context) {
     return reinterpret_cast<EncFS::EncFSFile*>(context);
 }
 
-/**
- * @brief Helper function for debug printing user account information.
- * @param DokanFileInfo Dokan file context structure.
- * @details Only outputs when debug mode is enabled. Prints the account name and domain
- * of the user making the filesystem request.
- */
 static void PrintUserName(PDOKAN_FILE_INFO DokanFileInfo) {
     if (!g_efo.g_DebugMode)
         return;
@@ -63,14 +50,13 @@ static void PrintUserName(PDOKAN_FILE_INFO DokanFileInfo) {
         DbgPrint(L"  DokanOpenRequestorToken failed\n");
         return;
     }
-    // RAII for handle
     auto close_handle = [](HANDLE h) { CloseHandle(h); };
     std::unique_ptr<void, decltype(close_handle)> handle_guard(handle, close_handle);
 
     UCHAR buffer[1024];
     DWORD returnLength;
     if (!GetTokenInformation(handle, TokenUser, buffer, sizeof(buffer), &returnLength)) {
-        ErrorPrint(L"  GetTokenInformation failed: %d\n", GetLastError());
+        DbgPrint(L"  GetTokenInformation failed: %d\n", GetLastError());
         return;
     }
 
@@ -83,38 +69,31 @@ static void PrintUserName(PDOKAN_FILE_INFO DokanFileInfo) {
 
     if (!LookupAccountSid(NULL, tokenUser->User.Sid, accountName, &accountLength,
         domainName, &domainLength, &snu)) {
-        ErrorPrint(L"  LookupAccountSid failed: %d\n", GetLastError());
+        DbgPrint(L"  LookupAccountSid failed: %d\n", GetLastError());
         return;
     }
 
     DbgPrint(L"  AccountName: %s, DomainName: %s\n", accountName, domainName);
 }
 
-/**
- * @brief Macro for debug printing individual flag values in bitmasks.
- */
-#define EncFSCheckFlag(val, flag)                                             \
-  if (val & flag) {                                                            \
-    DbgPrint(L"\t" L#flag L"\n");                                              \
-  }
+#define EncFSCheckFlag(val, flag)
 
- // ============================================================================
- // Dokan Callback Implementations
- // ============================================================================
-
- /**
-  * @brief Dokan callback for creating or opening a file or directory.
-  * @details This is one of the most complex callbacks. It handles file/directory
-  * creation, opening, access checks, and impersonation. It maps Windows
-  * CreateFile flags to underlying file system operations.
-  */
 static NTSTATUS DOKAN_CALLBACK
 EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
     ACCESS_MASK DesiredAccess, ULONG FileAttributes,
     ULONG ShareAccess, ULONG CreateDisposition,
     ULONG CreateOptions, PDOKAN_FILE_INFO DokanFileInfo) {
 
-    // Use stack allocation for path to avoid heap allocation overhead and leaks.
+    if (!FileName) {
+        ErrorPrint(L"CreateFile: FileName is NULL\n");
+        return STATUS_INVALID_PARAMETER;
+    }
+    size_t nameLen = wcsnlen_s(FileName, 32768);
+    if (nameLen == 0 || nameLen >= 32768) {
+        ErrorPrint(L"CreateFile: FileName length invalid: %zu\n", nameLen);
+        return STATUS_INVALID_PARAMETER;
+    }
+
     WCHAR filePath[DOKAN_MAX_PATH];
     HANDLE handle = INVALID_HANDLE_VALUE;
     DWORD fileAttr;
@@ -130,183 +109,201 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
     securityAttrib.lpSecurityDescriptor = SecurityContext->AccessState.SecurityDescriptor;
     securityAttrib.bInheritHandle = FALSE;
 
-    // Map kernel-mode flags to user-mode flags for CreateFileW.
     DokanMapKernelToUserCreateFileFlags(
         DesiredAccess, FileAttributes, CreateOptions, CreateDisposition,
         &genericDesiredAccess, &fileAttributesAndFlags, &creationDisposition);
 
-    // Get the full path in the underlying filesystem.
-    GetFilePath(filePath, FileName,
-        creationDisposition == CREATE_NEW || creationDisposition == CREATE_ALWAYS);
+    // EncFS cannot support FILE_FLAG_NO_BUFFERING because encryption blocks
+    // don't align with sector size requirements. Remove this flag and handle
+    // I/O normally through the encryption layer.
+    fileAttributesAndFlags &= ~FILE_FLAG_NO_BUFFERING;
 
-    DbgPrint(L"CreateFile : '%s' ; '%s'\n", FileName, filePath);
+    if (g_efo.CaseInsensitive && (creationDisposition == CREATE_NEW || creationDisposition == CREATE_ALWAYS)) {
+        if (PlainPathExistsCaseInsensitive(FileName)) {
+            if (creationDisposition == CREATE_NEW) {
+                DbgPrint(L"CreateFile: collision (case-insensitive) '%s'\n", FileName);
+                return STATUS_OBJECT_NAME_COLLISION;
+            }
+        }
+    }
+
+    try {
+        GetFilePath(filePath, FileName,
+            creationDisposition == CREATE_NEW || creationDisposition == CREATE_ALWAYS);
+        if (wcslen(filePath) < 8) {
+            ErrorPrint(L"CreateFile: invalid path for '%s'\n", FileName);
+            return STATUS_OBJECT_NAME_INVALID;
+        }
+    }
+    catch (const std::exception& ex) {
+        ErrorPrint(L"CreateFile: path conversion failed for '%s': %S\n", FileName, ex.what());
+        return STATUS_OBJECT_NAME_INVALID;
+    }
+
+    DbgPrint(L"CreateFile: '%s' -> '%s' (DA=0x%x, SA=0x%x, Disp=%u)\n",
+        FileName, filePath, DesiredAccess, ShareAccess, creationDisposition);
     PrintUserName(DokanFileInfo);
-
-    // Debug prints for access flags.
-    DbgPrint(L"\tShareMode = 0x%x\n", ShareAccess);
-    EncFSCheckFlag(ShareAccess, FILE_SHARE_READ);
-    EncFSCheckFlag(ShareAccess, FILE_SHARE_WRITE);
-    EncFSCheckFlag(ShareAccess, FILE_SHARE_DELETE);
-    DbgPrint(L"\tDesiredAccess = 0x%x\n", DesiredAccess);
-    // ... (Access flags checking retained for brevity, same as original) ...
 
     fileAttr = GetFileAttributesW(filePath);
 
-    // Check if the path already exists and if it's a directory.
     if (fileAttr != INVALID_FILE_ATTRIBUTES) {
         if (fileAttr & FILE_ATTRIBUTE_DIRECTORY) {
             if (!(CreateOptions & FILE_NON_DIRECTORY_FILE)) {
                 DokanFileInfo->IsDirectory = TRUE;
-                ShareAccess |= FILE_SHARE_READ; // Allow reading directory contents.
-            }
-            else {
-                DbgPrint(L"\tCannot open a dir as a file\n");
+                ShareAccess |= FILE_SHARE_READ;
+            } else {
                 return STATUS_FILE_IS_A_DIRECTORY;
             }
         }
     }
 
-    // Add POSIX semantics for case-sensitive filesystems if configured.
     if (!g_efo.CaseInsensitive) {
         fileAttributesAndFlags |= FILE_FLAG_POSIX_SEMANTICS;
     }
 
-    // Impersonate the caller if the option is enabled.
     if (g_efo.g_ImpersonateCallerUser) {
         userTokenHandle = DokanOpenRequestorToken(DokanFileInfo);
-        if (userTokenHandle == INVALID_HANDLE_VALUE) {
-            DbgPrint(L"  DokanOpenRequestorToken failed\n");
-        }
     }
-
-    // RAII helper to automatically revert impersonation and close the token handle.
-    struct AutoRevert {
-        HANDLE token;
-        bool active;
-        AutoRevert(HANDLE t) : token(t), active(t != INVALID_HANDLE_VALUE) {}
-        ~AutoRevert() {
-            if (active) {
-                RevertToSelf();
-                CloseHandle(token);
-            }
-        }
-    } reverter(userTokenHandle);
+    struct AutoRevert { HANDLE token; bool active; AutoRevert(HANDLE t):token(t),active(t!=INVALID_HANDLE_VALUE){} ~AutoRevert(){ if(active){ RevertToSelf(); CloseHandle(token);} } } reverter(userTokenHandle);
 
     if (DokanFileInfo->IsDirectory) {
-        // Handle directory creation/opening.
         if (creationDisposition == CREATE_NEW || creationDisposition == OPEN_ALWAYS) {
             if (reverter.active) ImpersonateLoggedOnUser(reverter.token);
-
             if (!CreateDirectory(filePath, &securityAttrib)) {
                 error = GetLastError();
                 if (error != ERROR_ALREADY_EXISTS || creationDisposition == CREATE_NEW) {
-                    ErrorPrint(L"CreateDirectory error code = %d\n\n", error);
+                    ErrorPrint(L"CreateDirectory failed '%s': %d\n", FileName, error);
                     if (reverter.active) RevertToSelf();
                     return DokanNtStatusFromWin32(error);
                 }
             }
-            if (reverter.active) RevertToSelf(); // Revert before next operation.
+            if (reverter.active) RevertToSelf();
         }
 
         if (status == STATUS_SUCCESS) {
-            // Trying to open a file as a directory.
             if (fileAttr != INVALID_FILE_ATTRIBUTES &&
                 !(fileAttr & FILE_ATTRIBUTE_DIRECTORY) &&
                 (CreateOptions & FILE_DIRECTORY_FILE)) {
                 return STATUS_NOT_A_DIRECTORY;
             }
-
             if (reverter.active) ImpersonateLoggedOnUser(reverter.token);
-
-            // Open a handle to the directory.
             handle = CreateFileW(filePath, genericDesiredAccess, ShareAccess,
                 &securityAttrib, OPEN_EXISTING,
                 fileAttributesAndFlags | FILE_FLAG_BACKUP_SEMANTICS, NULL);
-
             if (reverter.active) RevertToSelf();
-
             if (handle == INVALID_HANDLE_VALUE) {
                 error = GetLastError();
-                ErrorPrint(L"CreateFile error code = %d\n\n", error);
+                ErrorPrint(L"Open dir failed '%s': %d\n", FileName, error);
                 status = DokanNtStatusFromWin32(error);
-            }
-            else {
-                // Store the handle in Dokan's context for future operations.
+            } else {
                 DokanFileInfo->Context = (ULONG64)new EncFS::EncFSFile(handle, false);
                 if (creationDisposition == OPEN_ALWAYS && fileAttr != INVALID_FILE_ATTRIBUTES) {
                     status = STATUS_OBJECT_NAME_COLLISION;
                 }
             }
         }
-    }
-    else {
-        // Handle file creation/opening.
-        if (fileAttr != INVALID_FILE_ATTRIBUTES &&
-            ((!(fileAttributesAndFlags & FILE_ATTRIBUTE_HIDDEN) && (fileAttr & FILE_ATTRIBUTE_HIDDEN)) ||
-                (!(fileAttributesAndFlags & FILE_ATTRIBUTE_SYSTEM) && (fileAttr & FILE_ATTRIBUTE_SYSTEM))) &&
-            (creationDisposition == TRUNCATE_EXISTING || creationDisposition == CREATE_ALWAYS)) {
-            return STATUS_ACCESS_DENIED;
-        }
-
+    } else {
+        // Check for read-only + delete-on-close conflict
         if ((fileAttr != INVALID_FILE_ATTRIBUTES && (fileAttr & FILE_ATTRIBUTE_READONLY) ||
             (fileAttributesAndFlags & FILE_ATTRIBUTE_READONLY)) &&
             (fileAttributesAndFlags & FILE_FLAG_DELETE_ON_CLOSE)) {
             return STATUS_CANNOT_DELETE;
         }
-
-        if (creationDisposition == TRUNCATE_EXISTING)
+        
+        // For TRUNCATE_EXISTING, we need GENERIC_WRITE
+        if (creationDisposition == TRUNCATE_EXISTING) {
             genericDesiredAccess |= GENERIC_WRITE;
-
+        }
+        
         if (reverter.active) ImpersonateLoggedOnUser(reverter.token);
-
-        // Encryption requires both read and write access to the underlying file.
-        if (genericDesiredAccess & GENERIC_WRITE || genericDesiredAccess & FILE_WRITE_DATA || genericDesiredAccess & FILE_APPEND_DATA) {
+        
+        // Check if file exists
+        bool fileExists = (fileAttr != INVALID_FILE_ATTRIBUTES);
+        
+        // Determine if this is a "create new file" operation
+        bool isCreatingNewFile = (!fileExists && 
+            (creationDisposition == CREATE_NEW || 
+             creationDisposition == CREATE_ALWAYS || 
+             creationDisposition == OPEN_ALWAYS));
+        
+        // Determine if this is a truncate operation
+        bool isTruncating = (fileExists && 
+            (creationDisposition == CREATE_ALWAYS || 
+             creationDisposition == TRUNCATE_EXISTING));
+        
+        // For EncFS, we need read access when writing to existing files for encryption/decryption
+        // When file exists and we need write access, add read access
+        if (fileExists && (genericDesiredAccess & (GENERIC_WRITE | FILE_WRITE_DATA | FILE_APPEND_DATA))) {
             genericDesiredAccess |= FILE_READ_DATA | FILE_WRITE_DATA;
             if (ShareAccess & FILE_SHARE_WRITE) ShareAccess |= FILE_SHARE_READ;
         }
-        if (genericDesiredAccess & DELETE) {
+        if (fileExists && (genericDesiredAccess & DELETE)) {
             genericDesiredAccess |= FILE_READ_DATA | FILE_WRITE_DATA;
             if (ShareAccess & FILE_SHARE_DELETE) ShareAccess |= FILE_SHARE_WRITE | FILE_SHARE_READ;
         }
-
-        // Normalize file attributes.
-        if (fileAttributesAndFlags & FILE_ATTRIBUTE_NORMAL) {
-            fileAttributesAndFlags = FILE_ATTRIBUTE_NORMAL;
+        
+        // For new files or truncated files, we also need read access for IV operations
+        if (isCreatingNewFile || isTruncating) {
+            genericDesiredAccess |= FILE_READ_DATA | FILE_WRITE_DATA;
         }
-        // Encrypted files cannot be unbuffered as their size doesn't align with sector boundaries.
-        if (fileAttributesAndFlags & FILE_FLAG_NO_BUFFERING) {
-            fileAttributesAndFlags ^= FILE_FLAG_NO_BUFFERING;
+        
+        // Prepare file attributes
+        // Separate attributes (low word) from flags (high word)
+        DWORD attrPart = fileAttributesAndFlags & 0x0000FFFF;
+        DWORD flagPart = fileAttributesAndFlags & 0xFFFF0000;
+        
+        // For CREATE_ALWAYS and TRUNCATE_EXISTING on existing files with HIDDEN/SYSTEM attributes,
+        // Windows requires the caller to specify those attributes or it returns ACCESS_DENIED.
+        // Merge existing file's HIDDEN and SYSTEM attributes with the requested attributes.
+        if (fileExists && (creationDisposition == CREATE_ALWAYS || creationDisposition == TRUNCATE_EXISTING)) {
+            // Preserve HIDDEN and SYSTEM attributes from existing file
+            attrPart |= (fileAttr & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM));
         }
-
+        
+        // If no attributes specified, use NORMAL
+        if (attrPart == 0) {
+            attrPart = FILE_ATTRIBUTE_NORMAL;
+        }
+        // FILE_ATTRIBUTE_NORMAL is only valid when used alone (without other attributes except flags)
+        // If other attributes are set, remove NORMAL
+        if ((attrPart & ~FILE_ATTRIBUTE_NORMAL) != 0) {
+            attrPart &= ~FILE_ATTRIBUTE_NORMAL;
+        }
+        
+        DWORD finalAttributes = attrPart | flagPart;
+        
         handle = CreateFileW(filePath, genericDesiredAccess, ShareAccess,
-            &securityAttrib, creationDisposition, fileAttributesAndFlags, NULL);
-
+            &securityAttrib, creationDisposition, finalAttributes, NULL);
+        
         if (reverter.active) RevertToSelf();
-
+        
         if (handle == INVALID_HANDLE_VALUE) {
             error = GetLastError();
-            ErrorPrint(L"CreateFile2 error code = %d\n", error);
+            DbgPrint(L"Open file failed '%s': %d (DA=0x%x, Disp=%u, Attr=0x%x)\n", 
+                FileName, error, genericDesiredAccess, creationDisposition, finalAttributes);
             status = DokanNtStatusFromWin32(error);
-        }
-        else {
-            if (fileAttr != INVALID_FILE_ATTRIBUTES && creationDisposition == TRUNCATE_EXISTING) {
-                SetFileAttributesW(filePath, fileAttributesAndFlags | fileAttr);
-            }
-
-            // Store the handle and encryption state in Dokan's context.
-            DokanFileInfo->Context = (ULONG64)new EncFS::EncFSFile(handle, true);
-
+        } else {
+            // For EncFS, determine if we can read from this handle
+            // We can read if:
+            // 1. Read access was explicitly requested, or
+            // 2. We're creating a new file (will have full access), or
+            // 3. We added read access for encryption purposes, or
+            // 4. We're truncating the file (need to write new IV)
+            bool canRead = (genericDesiredAccess & (GENERIC_READ | FILE_READ_DATA)) != 0 ||
+                           isCreatingNewFile || isTruncating;
+            
+            DokanFileInfo->Context = (ULONG64)new EncFS::EncFSFile(handle, canRead);
+            
             if (creationDisposition == OPEN_ALWAYS || creationDisposition == CREATE_ALWAYS) {
                 error = GetLastError();
                 if (error == ERROR_ALREADY_EXISTS) {
-                    DbgPrint(L"\tOpen an already existing file\n");
                     status = STATUS_OBJECT_NAME_COLLISION;
                 }
             }
         }
     }
 
-    DbgPrint(L"CreateFileEnd %d err=%d\n", status, GetLastError());
+    DbgPrint(L"CreateFile: done '%s' status=0x%08X\n", FileName, status);
     return status;
 }
 
@@ -316,22 +313,22 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
  * resource cleanup should happen in Cleanup.
  */
 static void DOKAN_CALLBACK EncFSCloseFile(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInfo) {
-    lock_guard<decltype(dirMoveLock)> dlock(dirMoveLock);
+    DbgPrint(L"Close: %s\n", FileName);
 
+    // Per Dokan guidelines, Context should be cleaned in Cleanup.
+    // CloseFile is just a notification that all handles are closed.
+    // Context should already be 0 from Cleanup.
     if (DokanFileInfo->Context) {
         DbgPrint(L"CloseFile: %s\n", FileName);
         DbgPrint(L"\terror : not cleanuped file\n\n");
-        EncFS::EncFSFile* encfsFile = ToEncFSFile(DokanFileInfo->Context);
-
-        // Per Dokan guidelines, Context should be cleaned in Cleanup.
-        // If it still exists here, it's a potential leak. We delete it to be safe.
-        if (encfsFile) {
+        // Context should have been cleared in Cleanup, but if it wasn't,
+        // we need to clean it up here to prevent leaks.
+        // Use atomic exchange to prevent double-delete in multi-threaded scenarios.
+        ULONG64 ctx = InterlockedExchange64((LONG64*)&DokanFileInfo->Context, 0);
+        if (ctx) {
+            EncFS::EncFSFile* encfsFile = reinterpret_cast<EncFS::EncFSFile*>(ctx);
             delete encfsFile;
-            DokanFileInfo->Context = 0;
         }
-    }
-    else {
-        DbgPrint(L"Close: %s\n", FileName);
     }
 }
 
@@ -342,16 +339,14 @@ static void DOKAN_CALLBACK EncFSCloseFile(LPCWSTR FileName, PDOKAN_FILE_INFO Dok
  * the file handle stored in the context. It also handles delete-on-close.
  */
 static void DOKAN_CALLBACK EncFSCleanup(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInfo) {
-    lock_guard<decltype(dirMoveLock)> dlock(dirMoveLock);
+    DbgPrint(L"Cleanup: %s\n", FileName);
 
-    // Free the context object, which in turn closes the underlying file handle.
-    if (DokanFileInfo->Context) {
-        DbgPrint(L"Cleanup: %s\n", FileName);
-        EncFS::EncFSFile* encfsFile = ToEncFSFile(DokanFileInfo->Context);
-        if (encfsFile) {
-            delete encfsFile;
-            DokanFileInfo->Context = 0;
-        }
+    // Use atomic exchange to prevent double-delete in multi-threaded scenarios.
+    // This ensures only one thread will delete the EncFSFile.
+    ULONG64 ctx = InterlockedExchange64((LONG64*)&DokanFileInfo->Context, 0);
+    if (ctx) {
+        EncFS::EncFSFile* encfsFile = reinterpret_cast<EncFS::EncFSFile*>(ctx);
+        delete encfsFile;
     }
     else {
         DbgPrint(L"Cleanup: %s\n\tinvalid handle\n", FileName);
@@ -400,7 +395,18 @@ static NTSTATUS DOKAN_CALLBACK EncFSReadFile(LPCWSTR FileName, LPVOID Buffer,
     if (!DokanFileInfo->Context) {
         // This can happen in some cases. Open a temporary handle for this operation.
         WCHAR filePath[DOKAN_MAX_PATH];
-        GetFilePath(filePath, FileName, false);
+        try {
+            GetFilePath(filePath, FileName, false);
+        }
+        catch (const std::exception& ex) {
+            ErrorPrint(L"ReadFile: Path conversion failed for '%s': %S\n", FileName, ex.what());
+            return STATUS_OBJECT_NAME_INVALID;
+        }
+        catch (...) {
+            ErrorPrint(L"ReadFile: Unknown exception during path conversion for '%s'\n", FileName);
+            return STATUS_OBJECT_NAME_INVALID;
+        }
+        
         DbgPrint(L"\tinvalid handle, cleanuped?\n");
         HANDLE handle = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, NULL,
             OPEN_EXISTING, 0, NULL);
@@ -432,14 +438,22 @@ static NTSTATUS DOKAN_CALLBACK EncFSReadFile(LPCWSTR FileName, LPVOID Buffer,
         if (encfs.isReverse()) {
             // In reverse mode, the config file is not encrypted.
             WCHAR filePath[DOKAN_MAX_PATH];
-            GetFilePath(filePath, FileName, false);
-            size_t len = wcslen(filePath);
-            if (len >= 12 && wcscmp(filePath + len - 12, L"\\.encfs6.xml") == 0) {
+            try {
+                GetFilePath(filePath, FileName, false);
+            }
+            catch (...) {
+                // If path conversion fails, treat as plain
                 plain = true;
             }
-            else {
-                // In reverse mode, "reading" means encrypting the underlying plaintext.
-                readLen = encfsFile->reverseRead(FileName, (char*)Buffer, offset, BufferLength);
+            if (!plain) {
+                size_t len = wcslen(filePath);
+                if (len >= 12 && wcscmp(filePath + len - 12, L"\\.encfs6.xml") == 0) {
+                    plain = true;
+                }
+                else {
+                    // In reverse mode, "reading" means encrypting the underlying plaintext.
+                    readLen = encfsFile->reverseRead(FileName, (char*)Buffer, offset, BufferLength);
+                }
             }
         }
         else {
@@ -603,7 +617,18 @@ EncFSFindFiles(LPCWSTR FileName,
     DWORD error;
     int count = 0;
 
-    GetFilePath(filePath, FileName, false);
+    try {
+        GetFilePath(filePath, FileName, false);
+    }
+    catch (const std::exception& ex) {
+        ErrorPrint(L"FindFiles: Path conversion failed for '%s': %S\n", FileName, ex.what());
+        return STATUS_OBJECT_NAME_INVALID;
+    }
+    catch (...) {
+        ErrorPrint(L"FindFiles: Unknown exception during path conversion for '%s'\n", FileName);
+        return STATUS_OBJECT_NAME_INVALID;
+    }
+    
     DbgPrint(L"FindFiles : %s ; %s\n", FileName, filePath);
 
     fileLen = wcslen(filePath);
@@ -629,18 +654,36 @@ EncFSFindFiles(LPCWSTR FileName,
 
     wstring wPath(FileName);
     wstring_convert<codecvt_utf8_utf16<wchar_t>> strConv;
-    string cPath = strConv.to_bytes(wPath);
+    string cPath;
+    
+    try {
+        cPath = strConv.to_bytes(wPath);
+        if (wPath.length() > 0 && cPath.empty()) {
+            throw std::runtime_error("Conversion resulted in empty string");
+        }
+    }
+    catch (const std::exception& ex) {
+        ErrorPrint(L"FindFiles: Failed to convert FileName to UTF-8: %S\n", ex.what());
+        return STATUS_INVALID_PARAMETER;
+    }
 
-    BOOLEAN rootFolder = (wcscmp(FileName, L"\\") == 0);
+    BOOLEAN rootFolder = (wcscmp(FileName, L"") == 0 || wcscmp(FileName, L"\\") == 0);
     do {
         // Skip '.' and '..' for root directory.
         if (!rootFolder || (wcscmp(findData.cFileName, L".") != 0 &&
             wcscmp(findData.cFileName, L"..") != 0)) {
 
             wstring wcFileName(findData.cFileName);
-            string ccFileName = strConv.to_bytes(wcFileName);
+            string ccFileName;
             string cPlainFileName;
+            
             try {
+                ccFileName = strConv.to_bytes(wcFileName);
+                if (wcFileName.length() > 0 && ccFileName.empty()) {
+                    ErrorPrint(L"FindFiles: Filename conversion failed for '%s', skipping\n", findData.cFileName);
+                    continue;
+                }
+                
                 if (encfs.isReverse()) {
                     // In reverse mode, encrypt filenames to show in the virtual drive.
                     if (wcscmp(findData.cFileName, L".encfs6.xml") != 0) {
@@ -657,9 +700,27 @@ EncFSFindFiles(LPCWSTR FileName,
             }
             catch (const EncFS::EncFSInvalidBlockException&) {
                 // Skip files with invalid names (e.g., not valid base64).
+                DbgPrint(L"FindFiles: Skipping file with invalid encryption: %s\n", findData.cFileName);
                 continue;
             }
-            wstring wPlainFileName = strConv.from_bytes(cPlainFileName);
+            catch (const std::exception& ex) {
+                ErrorPrint(L"FindFiles: Exception processing filename '%s': %S, skipping\n", findData.cFileName, ex.what());
+                continue;
+            }
+            
+            wstring wPlainFileName;
+            try {
+                wPlainFileName = strConv.from_bytes(cPlainFileName);
+                if (cPlainFileName.length() > 0 && wPlainFileName.empty()) {
+                    ErrorPrint(L"FindFiles: Back-conversion failed for filename, skipping\n");
+                    continue;
+                }
+            }
+            catch (const std::exception& ex) {
+                ErrorPrint(L"FindFiles: Exception converting filename back to wide: %S, skipping\n", ex.what());
+                continue;
+            }
+            
             wcscpy_s(findData.cFileName, wPlainFileName.c_str());
             findData.cAlternateFileName[0] = 0; // No 8.3 name.
 
@@ -689,7 +750,7 @@ EncFSFindFiles(LPCWSTR FileName,
 /**
  * @brief Dokan callback for deleting a directory.
  * @details Checks if the directory is empty before allowing deletion.
- * The actual deletion is handled by Cleanup if this returns STATUS_SUCCESS.
+ * The actual deletion is handled in Cleanup if this returns STATUS_SUCCESS.
  */
 static NTSTATUS DOKAN_CALLBACK
 EncFSDeleteDirectory(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInfo) {
@@ -868,6 +929,95 @@ EncFSMoveFile(LPCWSTR FileName, LPCWSTR NewFileName, BOOL ReplaceIfExisting,
         return STATUS_INVALID_HANDLE;
     }
 
+    // In CaseInsensitive mode, prevent renaming to a name that collides (ignoring case)
+    // with another existing entry in the destination directory. Allow pure case-change
+    // of the same entry, and allow replacement if ReplaceIfExisting is TRUE.
+    if (g_efo.CaseInsensitive) {
+        // Extract parent dir (plain) and leaf (plain) from NewFileName
+        std::wstring wNew(NewFileName);
+        size_t sep = wNew.find_last_of(L'\\');
+        // Proceed if there is a separator and a non-empty leaf after it (allow root-level: sep can be 0)
+        if (sep != std::wstring::npos && (sep + 1) < wNew.size()) {
+            std::wstring wParentPlain = wNew.substr(0, sep);
+            std::wstring wLeafPlain = wNew.substr(sep + 1);
+ 
+            // Prepare UTF-8 conversions
+            std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> strConv;
+            std::string cParentPlain = strConv.to_bytes(wParentPlain);
+            std::string cParentEnc;
+            encfs.encodeFilePath(cParentPlain, cParentEnc);
+            // Trim trailing separator to avoid "\\*" becoming "\\\\*" (cParentEnc is std::string)
+            if (!cParentEnc.empty()) {
+                char last = cParentEnc.back();
+                if (last == '\\' || last == '/') {
+                    cParentEnc.pop_back();
+                }
+            }
+            
+            // Build search path (physical) for enumeration
+            std::string cSearch = cParentEnc + EncFS::g_pathSeparator + "*";
+            WCHAR searchPath[DOKAN_MAX_PATH];
+            ToWFilePath(strConv, cSearch, searchPath);
+
+            // Also build the physical parent directory path without wildcard
+            WCHAR parentPhys[DOKAN_MAX_PATH];
+            ToWFilePath(strConv, cParentEnc, parentPhys);
+
+            WIN32_FIND_DATAW find;
+            ZeroMemory(&find, sizeof(find));
+            HANDLE hFind = FindFirstFileW(searchPath, &find);
+            if (hFind != INVALID_HANDLE_VALUE) {
+                auto closer = [](HANDLE h) { FindClose(h); };
+                std::unique_ptr<void, decltype(closer)> guard(hFind, closer);
+
+                // Enumerate children and compare plaintext names (ignore case)
+                do {
+                    if (wcscmp(find.cFileName, L".") == 0 || wcscmp(find.cFileName, L"..") == 0) continue;
+                    std::wstring wEncName(find.cFileName);
+                    std::string cEncName = strConv.to_bytes(wEncName);
+                    std::string cPlainChild;
+                    try {
+                        encfs.decodeFileName(cEncName, cParentEnc, cPlainChild);
+                    } catch (const EncFS::EncFSInvalidBlockException&) {
+                        continue;
+                    }
+                    std::wstring wPlainChild = strConv.from_bytes(cPlainChild);
+
+                    int cmp = CompareStringOrdinal(
+                        wPlainChild.c_str(), static_cast<int>(wPlainChild.length()),
+                        wLeafPlain.c_str(), static_cast<int>(wLeafPlain.length()),
+                        TRUE);
+                    if (cmp == CSTR_EQUAL) {
+                        // Build candidate full physical path of the found entry
+                        WCHAR candidate[DOKAN_MAX_PATH];
+                        wcsncpy_s(candidate, parentPhys, _TRUNCATE);
+                        size_t len = wcslen(candidate);
+                        if (len + 1 < DOKAN_MAX_PATH) {
+                            if (candidate[len - 1] != L'\\') {
+                                candidate[len++] = L'\\';
+                                candidate[len] = L'\0';
+                            }
+                            wcsncat_s(candidate, find.cFileName, _TRUNCATE);
+                        }
+
+                        // If the candidate path is different from the source path,
+                        // we have a collision with another entry.
+                        if (wcscmp(candidate, filePath) != 0) {
+                            if (!ReplaceIfExisting) {
+                                DbgPrint(L"\tMoveFile collision (case-insensitive) detected\n");
+                                return STATUS_OBJECT_NAME_COLLISION;
+                            }
+                            // Else allow replacement via FileRenameInfo later
+                            break;
+                        }
+                        // Same entry (pure case change) -> allowed
+                        break;
+                    }
+                } while (FindNextFileW(hFind, &find));
+            }
+        }
+    }
+
     EncFS::EncFSFile* encfsFile = ToEncFSFile(DokanFileInfo->Context);
 
     // If IVs depend on the path, moving a file/dir requires IV updates.
@@ -918,6 +1068,9 @@ EncFSMoveFile(LPCWSTR FileName, LPCWSTR NewFileName, BOOL ReplaceIfExisting,
     result = SetFileInformationByHandle(encfsFile->getHandle(), FileRenameInfo, renameInfo, bufferSize);
 
     if (result) {
+        // Invalidate file name cache after successful rename
+        // This ensures subsequent read/write operations use the new path for IV calculations
+        encfsFile->invalidateFileNameCache();
         return STATUS_SUCCESS;
     }
     else {
@@ -1044,7 +1197,7 @@ static NTSTATUS DOKAN_CALLBACK EncFSSetEndOfFile(
     DbgPrint(L"SetEndOfFile %s, %I64d\n", FileName, ByteOffset);
 
     if (!DokanFileInfo->Context) {
-        DbgPrint(L"\tinvalid handle\n\n");
+        DbgPrint(L"\tinvalid handle\n");
         return STATUS_INVALID_HANDLE;
     }
 
@@ -1500,7 +1653,7 @@ EncFSFindStreams(LPCWSTR FileName, PFillFindStreamData FillFindStreamData,
  */
 static NTSTATUS DOKAN_CALLBACK EncFSMounted(LPCWSTR MountPoint, PDOKAN_FILE_INFO DokanFileInfo) {
     UNREFERENCED_PARAMETER(DokanFileInfo);
-    DbgPrint(L"Mounted as %s\n", MountPoint);
+    InfoPrint(L"Mounted as %s\n", MountPoint);
     // Open explorer window on mount point if not in debug mode.
     if (!g_efo.g_DebugMode) {
         wchar_t buff[20];
@@ -1516,7 +1669,7 @@ static NTSTATUS DOKAN_CALLBACK EncFSMounted(LPCWSTR MountPoint, PDOKAN_FILE_INFO
  */
 static NTSTATUS DOKAN_CALLBACK EncFSUnmounted(PDOKAN_FILE_INFO DokanFileInfo) {
     UNREFERENCED_PARAMETER(DokanFileInfo);
-    DbgPrint(L"Unmounted\n");
+    InfoPrint(L"Unmounted\n");
     return STATUS_SUCCESS;
 }
 
@@ -1649,7 +1802,11 @@ int StartEncFS(EncFSOptions& efo, char* password) {
     }
     if (efo.Reverse) dokanOptions.Options |= DOKAN_OPTION_WRITE_PROTECT;
     if (efo.AltStream) dokanOptions.Options |= DOKAN_OPTION_ALT_STREAM;
-    dokanOptions.Options |= DOKAN_OPTION_CASE_SENSITIVE;
+    
+    // Only set case-sensitive flag if CaseInsensitive is not enabled
+    if (!efo.CaseInsensitive) {
+        dokanOptions.Options |= DOKAN_OPTION_CASE_SENSITIVE;
+    }
 
     // Map our functions to the Dokan operation callbacks.
     dokanOperations.ZwCreateFile = EncFSCreateFile;

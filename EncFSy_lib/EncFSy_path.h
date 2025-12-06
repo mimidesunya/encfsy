@@ -11,6 +11,13 @@
 bool FileExists(PWCHAR path);
 
 /**
+ * @brief Case-insensitive existence check for a plaintext virtual path
+ * @param plainFilePath Virtual plaintext file path (e.g., "\\dir\\Name.txt")
+ * @return True if a same-name entry exists ignoring case
+ */
+bool PlainPathExistsCaseInsensitive(LPCWSTR plainFilePath);
+
+/**
  * @brief Converts virtual (plaintext) path to physical (encrypted) path
  * @param encodedFilePath Output buffer for the physical path with NT prefix (\\?\)
  * @param plainFilePath Virtual plaintext file path

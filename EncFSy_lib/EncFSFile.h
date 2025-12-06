@@ -7,6 +7,8 @@
 #include <string>
 #include <atomic>
 #include <mutex>
+#include <unordered_map>
+#include <memory>
 
 extern EncFS::EncFSVolume encfs;
 
@@ -19,6 +21,60 @@ namespace EncFS
 		EXISTS,      // File IV exists and was retrieved successfully
 		READ_ERROR,  // Error occurred while reading file IV
 		EMPTY        // File is empty (no IV present)
+	};
+
+	/**
+	 * @brief Global file lock manager for coordinating access across multiple handles
+	 * 
+	 * When multiple processes/threads open the same file with different handles,
+	 * each gets its own EncFSFile instance. This manager provides file-level
+	 * synchronization to prevent block corruption during concurrent access.
+	 */
+	class FileLockManager {
+	public:
+		struct FileLockEntry {
+			std::mutex lock;
+			std::atomic<int> refCount{0};
+		};
+		
+	private:
+		std::mutex mapLock;
+		std::unordered_map<std::wstring, std::shared_ptr<FileLockEntry>> fileLocks;
+		
+		FileLockManager() = default;
+		
+	public:
+		static FileLockManager& getInstance() {
+			static FileLockManager instance;
+			return instance;
+		}
+		
+		// Get or create a lock for a specific file path
+		std::shared_ptr<FileLockEntry> getLock(const std::wstring& filePath);
+		
+		// Release a file lock (decrements ref count, removes if zero)
+		void releaseLock(const std::wstring& filePath);
+		
+		// Prevent copying
+		FileLockManager(const FileLockManager&) = delete;
+		FileLockManager& operator=(const FileLockManager&) = delete;
+	};
+	
+	/**
+	 * @brief RAII helper for file-level locking
+	 */
+	class FileScopedLock {
+	private:
+		std::shared_ptr<FileLockManager::FileLockEntry> lockEntry;
+		std::unique_lock<std::mutex> lock;
+		std::wstring filePath;  // Store path for releaseLock in destructor
+	public:
+		FileScopedLock(const std::wstring& filePath);
+		~FileScopedLock();
+		
+		// Prevent copying
+		FileScopedLock(const FileScopedLock&) = delete;
+		FileScopedLock& operator=(const FileScopedLock&) = delete;
 	};
 
 	/**
@@ -45,17 +101,18 @@ namespace EncFS
 		bool canRead;            // Flag indicating if file should be readable
 
 		int64_t fileIv;          // File initialization vector for encryption
-		bool fileIvAvailable;    // Flag indicating if fileIv has been loaded
+		std::atomic<bool> fileIvAvailable;  // Flag indicating if fileIv has been loaded (atomic for thread safety)
 
 		std::string blockBuffer;      // Buffer for encrypted block data (lazy allocated)
 		int64_t lastBlockNum;    // Last accessed block number (for caching)
 		std::string encodeBuffer;     // Temporary buffer for encoding operations (lazy allocated)
 		std::string decodeBuffer;     // Temporary buffer for decoding operations (lazy allocated)
 		
-		mutable std::mutex mutexLock;         // Mutex for thread-safe operations
+		mutable std::mutex mutexLock;         // Mutex for thread-safe operations within this handle
 		
 		// File name caching to avoid repeated conversions
 		mutable std::string cachedUtf8FileName;  // Cached UTF-8 file name
+		mutable std::wstring cachedWideFileName; // Cached wide file name for file-level locking
 		mutable bool fileNameCached;        // Flag indicating if file name is cached
 
 	public:
@@ -142,6 +199,14 @@ namespace EncFS
 		 */
 		bool changeFileIV(const LPCWSTR FileName, const LPCWSTR NewFileName);
 
+		/**
+		 * @brief Invalidates cached file name after rename operation
+		 * 
+		 * This should be called after a successful rename to ensure subsequent
+		 * operations use the new file path for IV calculations.
+		 */
+		void invalidateFileNameCache();
+
 	private:
 		/**
 		 * @brief Retrieves or creates the file IV
@@ -174,6 +239,13 @@ namespace EncFS
 		 * Performance: Avoids repeated std::string conversions for the same file
 		 */
 		const std::string& getCachedUtf8FileName(const LPCWSTR wstr);
+		
+		/**
+		 * @brief Gets cached wide file name for file-level locking
+		 * @param wstr Wide string file name
+		 * @return Cached wide file name
+		 */
+		const std::wstring& getCachedWideFileName(const LPCWSTR wstr);
 
 		/**
 		 * @brief Converts wide std::string to UTF-8 std::string (optimized for short strings)

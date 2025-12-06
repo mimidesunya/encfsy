@@ -1,6 +1,7 @@
 ﻿#include "EncFSFile.h"
 #include <winioctl.h> 
 #include <osrng.h> // For AutoSeededX917RNG
+#include <algorithm>
 
 using namespace std;
 using namespace CryptoPP;
@@ -21,6 +22,61 @@ namespace EncFS {
     // Initialize atomic counter
     std::atomic<int64_t> EncFSFile::counter(0);
 
+    //=========================================================================
+    // FileLockManager Implementation
+    //=========================================================================
+    
+    std::shared_ptr<FileLockManager::FileLockEntry> FileLockManager::getLock(const std::wstring& filePath) {
+        std::lock_guard<std::mutex> guard(mapLock);
+        
+        auto it = fileLocks.find(filePath);
+        if (it != fileLocks.end()) {
+            it->second->refCount.fetch_add(1, std::memory_order_relaxed);
+            return it->second;
+        }
+        
+        // Create new lock entry
+        auto entry = std::make_shared<FileLockEntry>();
+        entry->refCount.store(1, std::memory_order_relaxed);
+        fileLocks[filePath] = entry;
+        return entry;
+    }
+    
+    void FileLockManager::releaseLock(const std::wstring& filePath) {
+        std::lock_guard<std::mutex> guard(mapLock);
+        
+        auto it = fileLocks.find(filePath);
+        if (it != fileLocks.end()) {
+            int oldCount = it->second->refCount.fetch_sub(1, std::memory_order_acq_rel);
+            if (oldCount <= 1) {
+                // No more references, remove from map
+                fileLocks.erase(it);
+            }
+        }
+    }
+    
+    //=========================================================================
+    // FileScopedLock Implementation
+    //=========================================================================
+    
+    FileScopedLock::FileScopedLock(const std::wstring& path) 
+        : lockEntry(FileLockManager::getInstance().getLock(path))
+        , lock(lockEntry->lock)
+        , filePath(path)
+    {
+    }
+    
+    FileScopedLock::~FileScopedLock() {
+        // First release the lock to allow other threads to proceed
+        lock.unlock();
+        // Then release our reference to the lock entry
+        FileLockManager::getInstance().releaseLock(filePath);
+    }
+
+    //=========================================================================
+    // EncFSFile Implementation
+    //=========================================================================
+
     /**
      * @brief Constructor implementation
      */
@@ -28,9 +84,9 @@ namespace EncFS {
         : handle(handle)
         , canRead(canRead)
         , fileIv(0L)
-        , fileIvAvailable(false)
+        , fileIvAvailable(false)  // atomic<bool> initialization
         , lastBlockNum(-1)
-        , fileNameCached(false)  // Initialize file name cache flag
+        , fileNameCached(false)
     {
         if (!handle || handle == INVALID_HANDLE_VALUE) {
             throw EncFSIllegalStateException();
@@ -62,9 +118,22 @@ namespace EncFS {
     const string& EncFSFile::getCachedUtf8FileName(const LPCWSTR wstr) {
         if (!this->fileNameCached) {
             WideToUtf8(wstr, this->cachedUtf8FileName);
+            this->cachedWideFileName = wstr;
             this->fileNameCached = true;
         }
         return this->cachedUtf8FileName;
+    }
+    
+    /**
+     * @brief Gets cached wide file name for file-level locking
+     */
+    const std::wstring& EncFSFile::getCachedWideFileName(const LPCWSTR wstr) {
+        if (!this->fileNameCached) {
+            WideToUtf8(wstr, this->cachedUtf8FileName);
+            this->cachedWideFileName = wstr;
+            this->fileNameCached = true;
+        }
+        return this->cachedWideFileName;
     }
 
     /**
@@ -162,8 +231,8 @@ namespace EncFS {
      * @return Result code indicating success or error type
      */
     EncFSGetFileIVResult EncFSFile::getFileIV(const LPCWSTR FileName, int64_t* fileIv, bool create) {
-        // Return cached IV if already available (no lock needed for read)
-        if (this->fileIvAvailable) {
+        // Return cached IV if already available (atomic read for thread safety)
+        if (this->fileIvAvailable.load(std::memory_order_acquire)) {
             *fileIv = this->fileIv;
             return EXISTS;
         }
@@ -171,8 +240,27 @@ namespace EncFS {
         // If unique IV is not enabled, use 0 as the IV
         if (!encfs.isUniqueIV()) {
             this->fileIv = *fileIv = 0L;
-            this->fileIvAvailable = true;
+            this->fileIvAvailable.store(true, std::memory_order_release);
             return EXISTS;
+        }
+        
+        // Get current file size first to detect empty files or files without IV
+        LARGE_INTEGER currentFileSize;
+        if (!GetFileSizeEx(this->handle, &currentFileSize)) {
+            return READ_ERROR;
+        }
+        
+        // If file is empty and we're not creating, return EMPTY
+        if (currentFileSize.QuadPart == 0 && !create) {
+            return EMPTY;
+        }
+        
+        // If file size is less than header size and we're not creating, it's incomplete
+        // NOTE: We avoid Sleep() here to prevent blocking while holding the lock
+        // Instead, we return READ_ERROR and let the caller retry if needed
+        if (currentFileSize.QuadPart > 0 && currentFileSize.QuadPart < (LONGLONG)EncFSVolume::HEADER_SIZE && !create) {
+            SetLastError(ERROR_READ_FAULT);
+            return READ_ERROR;
         }
         
         // Read file header containing the IV
@@ -184,16 +272,18 @@ namespace EncFS {
         
         string fileHeader;
         fileHeader.resize(EncFSVolume::HEADER_SIZE);
-        DWORD ReadLength;
-        if (!ReadFile(this->handle, &fileHeader[0], (DWORD)fileHeader.size(), (LPDWORD)&ReadLength, NULL)) {
+        DWORD ReadLength = 0;
+        if (!ReadFile(this->handle, &fileHeader[0], (DWORD)fileHeader.size(), &ReadLength, NULL)) {
             return READ_ERROR;
         }
         
-        if (ReadLength != fileHeader.size()) {
+        // Check if we read a complete header
+        if (ReadLength != (DWORD)fileHeader.size()) {
             if (!create) {
-                if (ReadLength == 0) {
+                if (ReadLength == 0 && currentFileSize.QuadPart == 0) {
                     return EMPTY;
                 }
+                // Partial header read - file may be incomplete or being written concurrently
                 SetLastError(ERROR_READ_FAULT);
                 return READ_ERROR;
             }
@@ -201,6 +291,8 @@ namespace EncFS {
             // Create new file header with random IV
             fileHeader.resize(EncFSVolume::HEADER_SIZE);
             random.GenerateBlock((byte*)&fileHeader[0], EncFSVolume::HEADER_SIZE);
+            
+            // Seek back to beginning before writing
             if (!SetFilePointerEx(this->handle, distanceToMove, NULL, FILE_BEGIN)) {
                 return READ_ERROR;
             }
@@ -209,12 +301,15 @@ namespace EncFS {
             if (!WriteWithRetry(this->handle, fileHeader.data(), fileHeader.size())) {
                 return READ_ERROR;
             }
+            
+            // Flush to ensure header is persisted before any subsequent operations
+            FlushFileBuffers(this->handle);
         }
 
         // Decode the IV from the header (use cached conversion)
         const string& cFileName = getCachedUtf8FileName(FileName);
         this->fileIv = *fileIv = encfs.decodeFileIv(cFileName, fileHeader);
-        this->fileIvAvailable = true;
+        this->fileIvAvailable.store(true, std::memory_order_release);
         return EXISTS;
     }
 
@@ -227,52 +322,84 @@ namespace EncFS {
      * @return Number of bytes read, or -1 on error
      */
     int32_t EncFSFile::read(const LPCWSTR FileName, char* buff, size_t off, DWORD len) {
+        // Acquire instance lock only - each Dokan handle is independent
+        // Cross-handle synchronization is managed by Windows/Dokan
         lock_guard<decltype(this->mutexLock)> lock(this->mutexLock);
+        
+        // Validate handle before any operation
+        if (!this->handle || this->handle == INVALID_HANDLE_VALUE) {
+            SetLastError(ERROR_INVALID_HANDLE);
+            return -1;
+        }
         
         if (!this->canRead) {
             SetLastError(ERROR_READ_FAULT);
             return -1;
         }
 
+        // Handle zero-length read request
+        if (len == 0) {
+            return 0;
+        }
+
         try {
             // Lazy allocate buffers if needed
             this->ensureBuffersAllocated();
 
-            // Get file IV
+            // Get file IV with retry logic for concurrent write scenarios
             int64_t fileIv;
             EncFSGetFileIVResult ivResult = this->getFileIV(FileName, &fileIv, false);
+            
             if (ivResult == READ_ERROR) {
-                return -1;
+                // Check if this might be a timing issue with concurrent write
+                LARGE_INTEGER actualFileSize;
+                if (GetFileSizeEx(this->handle, &actualFileSize) && 
+                    actualFileSize.QuadPart >= (LONGLONG)EncFSVolume::HEADER_SIZE) {
+                    // File has enough data for header, try again
+                    this->fileIvAvailable.store(false, std::memory_order_release);
+                    ivResult = this->getFileIV(FileName, &fileIv, false);
+                }
+                if (ivResult == READ_ERROR) {
+                    return -1;
+                }
             }
+            
             if (ivResult == EMPTY) {
-                return 0;
+                // Double-check file size - file might have been written by another handle
+                LARGE_INTEGER actualFileSize;
+                if (GetFileSizeEx(this->handle, &actualFileSize) && actualFileSize.QuadPart > 0) {
+                    // File has data but we got EMPTY - try again
+                    this->fileIvAvailable.store(false, std::memory_order_release);
+                    ivResult = this->getFileIV(FileName, &fileIv, false);
+                    if (ivResult == READ_ERROR) {
+                        return -1;
+                    }
+                    if (ivResult == EMPTY) {
+                        // Still empty - something wrong
+                        SetLastError(ERROR_FILE_CORRUPT);
+                        return -1;
+                    }
+                } else {
+                    return 0;  // File is truly empty
+                }
             }
 
             // Calculate block positions
             const size_t blockSize = encfs.getBlockSize();
             const size_t blockHeaderSize = encfs.getHeaderSize();
             const size_t blockDataSize = blockSize - blockHeaderSize;
+            
+            // Safeguard against invalid block configuration
+            if (blockDataSize == 0) {
+                SetLastError(ERROR_INVALID_PARAMETER);
+                return -1;
+            }
+            
             size_t shift = off % blockDataSize;
             size_t blockNum = off / blockDataSize;
             const size_t lastBlockNum = (off + len - 1) / blockDataSize;
 
             int32_t copiedLen = 0;
-            
-            // Use cached block if available (with bounds check)
-            if (blockNum == this->lastBlockNum && this->decodeBuffer.size() > shift) {
-                uint32_t blockLen = (uint32_t)(this->decodeBuffer.size() - shift);
-                if (blockLen > len) {
-                    blockLen = len;
-                }
-                memcpy(buff, this->decodeBuffer.data() + shift, blockLen);
-                shift = 0;
-                len -= blockLen;
-                copiedLen += blockLen;
-                ++blockNum;
-                if (len <= 0) {
-                    return copiedLen;
-                }
-            }
 
             // Calculate how many encrypted blocks to read
             size_t blocksOffset = blockNum * blockSize;
@@ -286,24 +413,46 @@ namespace EncFS {
                 LARGE_INTEGER distanceToMove;
                 distanceToMove.QuadPart = blocksOffset;
                 if (!SetFilePointerEx(this->handle, distanceToMove, NULL, FILE_BEGIN)) {
+                    DWORD err = GetLastError();
+                    SetLastError(err);
                     return -1;
                 }
 
                 // Prepare buffer for encrypted data
                 this->blockBuffer.resize(blocksLength);
 
-                // Read encrypted data with partial read handling
+                // Read encrypted data
                 DWORD totalRead = 0;
                 while (totalRead < blocksLength) {
                     DWORD readLen = 0;
                     DWORD toRead = (DWORD)(blocksLength - totalRead);
                     if (!ReadFile(this->handle, &this->blockBuffer[0] + totalRead, toRead, &readLen, NULL)) {
+                        DWORD err = GetLastError();
+                        if (this->blockBuffer.capacity() > BLOCK_BUFFER_REUSE_THRESHOLD) {
+                            this->blockBuffer.clear();
+                            this->blockBuffer.shrink_to_fit();
+                        } else {
+                            this->blockBuffer.clear();
+                        }
+                        SetLastError(err);
                         return -1;
                     }
                     if (readLen == 0) {
+                        // End of file reached
                         break;
                     }
                     totalRead += readLen;
+                }
+
+                // If nothing was read, return 0 (end of file or reading beyond file)
+                if (totalRead == 0) {
+                    if (this->blockBuffer.capacity() > BLOCK_BUFFER_REUSE_THRESHOLD) {
+                        this->blockBuffer.clear();
+                        this->blockBuffer.shrink_to_fit();
+                    } else {
+                        this->blockBuffer.clear();
+                    }
+                    return 0;
                 }
 
                 // Decrypt the read blocks
@@ -363,7 +512,20 @@ namespace EncFS {
      * @return Number of bytes written, or -1 on error
      */
     int32_t EncFSFile::write(const LPCWSTR FileName, size_t fileSize, const char* buff, size_t off, DWORD len) {
+        // Acquire instance lock only - each Dokan handle is independent
+        // Cross-handle synchronization is managed by Windows/Dokan
         lock_guard<decltype(this->mutexLock)> lock(this->mutexLock);
+        
+        // Validate handle before any operation
+        if (!this->handle || this->handle == INVALID_HANDLE_VALUE) {
+            SetLastError(ERROR_INVALID_HANDLE);
+            return -1;
+        }
+        
+        // Handle zero-length write request
+        if (len == 0) {
+            return 0;
+        }
         
         try {
             // Lazy allocate buffers if needed
@@ -371,7 +533,8 @@ namespace EncFS {
 
             // Get or create file IV
             int64_t fileIv;
-            if (this->getFileIV(FileName, &fileIv, true) == READ_ERROR) {
+            EncFSGetFileIVResult ivResult = this->getFileIV(FileName, &fileIv, true);
+            if (ivResult == READ_ERROR) {
                 SetLastError(ERROR_FILE_CORRUPT);
                 return -1;
             }
@@ -382,12 +545,21 @@ namespace EncFS {
                     SetLastError(ERROR_FILE_CORRUPT);
                     return -1;
                 }
+                // Update fileSize after expansion
+                fileSize = off;
             }
 
             // Calculate block positions
             const size_t blockSize = encfs.getBlockSize();
             const size_t blockHeaderSize = encfs.getHeaderSize();
             const size_t blockDataSize = blockSize - blockHeaderSize;
+            
+            // Safeguard against invalid block configuration
+            if (blockDataSize == 0) {
+                SetLastError(ERROR_INVALID_PARAMETER);
+                return -1;
+            }
+            
             size_t shift = off % blockDataSize;
             size_t blockNum = off / blockDataSize;
             const size_t lastBlockNum = (off + len - 1) / blockDataSize;
@@ -405,8 +577,15 @@ namespace EncFS {
 
             // Handle partial block write at the beginning
             if (shift != 0) {
-                if (blockNum != this->lastBlockNum) {
-                    // Read and decrypt existing block
+                // Read existing block data if file has content at this position
+                // For files that were just truncated to 0 or new files, fileSize will be 0
+                // and we should not try to read non-existent data
+                size_t blockStartOffset = blockNum * blockDataSize;
+                // Only try to read if the block actually has data (file extends into this block)
+                bool blockHasData = (fileSize > blockStartOffset);
+                
+                if (blockHasData) {
+                    // Read existing block from disk
                     this->encodeBuffer.resize(encfs.getBlockSize());
                     DWORD readLen;
                     if (!ReadFile(this->handle, &this->encodeBuffer[0], (DWORD)this->encodeBuffer.size(), &readLen, NULL)) {
@@ -416,11 +595,19 @@ namespace EncFS {
                     if (!SetFilePointerEx(this->handle, distanceToMove, NULL, FILE_BEGIN)) {
                         return -1;
                     }
-                    this->encodeBuffer.resize(readLen);
+                    
+                    if (readLen > 0) {
+                        this->encodeBuffer.resize(readLen);
+                        this->decodeBuffer.clear();
+                        encfs.decodeBlock(fileIv, blockNum, this->encodeBuffer, this->decodeBuffer);
+                    } else {
+                        this->decodeBuffer.clear();
+                    }
+                } else {
                     this->decodeBuffer.clear();
-                    encfs.decodeBlock(fileIv, blockNum, this->encodeBuffer, this->decodeBuffer);
                 }
-                // Pad with zeros if necessary
+                
+                // Pad with zeros if necessary (for partial writes at an offset)
                 if (this->decodeBuffer.size() < shift) {
                     this->decodeBuffer.append(shift - this->decodeBuffer.size(), (char)0);
                 }
@@ -435,18 +622,22 @@ namespace EncFS {
 
                 // Prepare decrypted block data
                 if (shift != 0) {
-                    // Partial block write
+                    // Partial block write (first block with offset)
                     if (this->decodeBuffer.size() < shift + blockDataLen) {
                         this->decodeBuffer.resize(shift + blockDataLen);
                     }
                     memcpy(&this->decodeBuffer[shift], buff + i, blockDataLen);
                 }
-                else if (blockDataLen == blockDataSize || off + i + blockDataLen >= fileSize) {
-                    // Full block or EOF block
+                else if (blockDataLen == blockDataSize) {
+                    // Full block - no need to read existing data
+                    this->decodeBuffer.assign(buff + i, blockDataLen);
+                }
+                else if (off + i + blockDataLen >= fileSize) {
+                    // EOF block or writing beyond file size - no need to read beyond file
                     this->decodeBuffer.assign(buff + i, blockDataLen);
                 }
                 else {
-                    // Read-modify-write for middle blocks
+                    // Partial block in the middle of existing file - Read-modify-write
                     this->encodeBuffer.resize(encfs.getBlockSize());
                     DWORD readLen;
                     if (!ReadFile(this->handle, &this->encodeBuffer[0], (DWORD)this->encodeBuffer.size(), &readLen, NULL)) {
@@ -458,9 +649,14 @@ namespace EncFS {
                     if (!SetFilePointerEx(this->handle, backMove, NULL, FILE_CURRENT)) {
                         return -1;
                     }
-                    this->encodeBuffer.resize(readLen);
-                    this->decodeBuffer.clear();
-                    encfs.decodeBlock(fileIv, blockNum, this->encodeBuffer, this->decodeBuffer);
+                    
+                    if (readLen > 0) {
+                        this->encodeBuffer.resize(readLen);
+                        this->decodeBuffer.clear();
+                        encfs.decodeBlock(fileIv, blockNum, this->encodeBuffer, this->decodeBuffer);
+                    } else {
+                        this->decodeBuffer.clear();
+                    }
 
                     if (this->decodeBuffer.size() < blockDataLen) {
                         this->decodeBuffer.resize(blockDataLen);
@@ -482,6 +678,9 @@ namespace EncFS {
                 writtenTotal += blockDataLen;
             }
 
+            // Always flush to ensure data is visible to other handles
+            FlushFileBuffers(this->handle);
+
             return (int32_t)writtenTotal;
         }
         catch (const EncFSInvalidBlockException&) {
@@ -499,16 +698,36 @@ namespace EncFS {
      * @return Number of bytes read, or -1 on error
      */
     int32_t EncFSFile::reverseRead(const LPCWSTR FileName, char* buff, size_t off, DWORD len) {
+        // Acquire instance lock only - each Dokan handle is independent
         lock_guard<decltype(this->mutexLock)> lock(this->mutexLock);
+        
+        // Validate handle before any operation
+        if (!this->handle || this->handle == INVALID_HANDLE_VALUE) {
+            SetLastError(ERROR_INVALID_HANDLE);
+            return -1;
+        }
+        
         if (!this->canRead) {
             SetLastError(ERROR_READ_FAULT);
             return -1;
+        }
+
+        // Handle zero-length read request
+        if (len == 0) {
+            return 0;
         }
 
         int64_t fileIv = 0; // File IV is not used in reverse mode
 
         // Calculate block positions
         int32_t blockSize = encfs.getBlockSize();
+        
+        // Safeguard against invalid block configuration
+        if (blockSize <= 0) {
+            SetLastError(ERROR_INVALID_PARAMETER);
+            return -1;
+        }
+        
         int32_t shift = off % blockSize;
         int64_t blockNum = off / blockSize;
         int64_t lastBlockNum = (off + len - 1) / blockSize;
@@ -642,7 +861,14 @@ namespace EncFS {
      * @return True on success, false on failure
      */
     bool EncFSFile::setLength(const LPCWSTR FileName, const size_t length) {
+        // Acquire instance lock only - each Dokan handle is independent
         lock_guard<decltype(this->mutexLock)> lock(this->mutexLock);
+        
+        // Validate handle before any operation
+        if (!this->handle || this->handle == INVALID_HANDLE_VALUE) {
+            SetLastError(ERROR_INVALID_HANDLE);
+            return false;
+        }
 
         // Get current file size
         LARGE_INTEGER encodedFileSize;
@@ -681,7 +907,7 @@ namespace EncFS {
             if (!SetEndOfFile(this->handle)) {
                 return false;
             }
-            this->fileIvAvailable = false;
+            this->fileIvAvailable.store(false, std::memory_order_release);
             InvalidateCache(&this->lastBlockNum, &this->decodeBuffer, &this->encodeBuffer);
             return true;
         }
@@ -689,9 +915,16 @@ namespace EncFS {
         // Calculate block boundary positions
         size_t blockHeaderSize = encfs.getHeaderSize();
         size_t blockDataSize = encfs.getBlockSize() - blockHeaderSize;
+        
+        // Safeguard against invalid block configuration
+        if (blockDataSize == 0) {
+            SetLastError(ERROR_INVALID_PARAMETER);
+            return false;
+        }
+        
         size_t shift;
         size_t blockNum;
-        size_t blocksOffset;
+        size_t blocksOffset = 0;  // Initialize to prevent undefined behavior
         
         if (length < fileSize) {
             // Shrinking file
@@ -710,7 +943,10 @@ namespace EncFS {
             return false;
         }
         
-        // Handle partial block at boundary
+        // Save boundary block data before modifying file size
+        string boundaryBlockData;
+        bool haveBoundaryBlock = false;
+        
         if (shift != 0) {
             blocksOffset = blockNum * encfs.getBlockSize();
             if (encfs.isUniqueIV()) {
@@ -728,9 +964,21 @@ namespace EncFS {
             if (!ReadFile(this->handle, &this->encodeBuffer[0], (DWORD)this->encodeBuffer.size(), &readLen, NULL)) {
                 return false;
             }
-            this->encodeBuffer.resize(readLen);
-            this->decodeBuffer.clear();
-            encfs.decodeBlock(fileIv, blockNum, this->encodeBuffer, this->decodeBuffer);
+            
+            if (readLen > 0) {
+                this->encodeBuffer.resize(readLen);
+                this->decodeBuffer.clear();
+                try {
+                    encfs.decodeBlock(fileIv, blockNum, this->encodeBuffer, this->decodeBuffer);
+                    // Save the decrypted data for later use
+                    boundaryBlockData = this->decodeBuffer;
+                    haveBoundaryBlock = true;
+                }
+                catch (const EncFSInvalidBlockException&) {
+                    // If decryption fails, treat as empty block
+                    haveBoundaryBlock = false;
+                }
+            }
         }
 
         // Set the new encrypted file size
@@ -745,20 +993,24 @@ namespace EncFS {
                 return false;
             }
         }
+        
+        // Invalidate cache after file size change
         InvalidateCache(&this->lastBlockNum, &this->decodeBuffer, &this->encodeBuffer);
 
         // Re-encrypt and write boundary block if needed
-        if (shift != 0) {
+        if (shift != 0 && haveBoundaryBlock) {
             size_t blockDataLen = length - blockNum * blockDataSize;
             if (blockDataLen > blockDataSize) {
                 blockDataLen = blockDataSize;
             }
             
+            // Restore the saved boundary block data
+            this->decodeBuffer = boundaryBlockData;
+            
             // Adjust decoded buffer size
             if (this->decodeBuffer.size() < blockDataLen) {
                 this->decodeBuffer.append(blockDataLen - this->decodeBuffer.size(), (char)0);
-            }
-            else {
+            } else {
                 this->decodeBuffer.resize(blockDataLen);
             }
             
@@ -784,20 +1036,19 @@ namespace EncFS {
             size_t s = length % blockDataSize;
             if (s != 0 && (fileSize == 0 || blockNum != length / blockDataSize)) {
                 blockNum = length / blockDataSize;
+                blocksOffset = blockNum * encfs.getBlockSize();
+                if (encfs.isUniqueIV()) {
+                    blocksOffset += EncFS::EncFSVolume::HEADER_SIZE;
+                }
+                
                 this->decodeBuffer.assign(s, (char)0);
                 this->encodeBuffer.clear();
                 encfs.encodeBlock(fileIv, this->lastBlockNum = blockNum, this->decodeBuffer, this->encodeBuffer);
                 
-                // Seek to end of file
-                LARGE_INTEGER moveEnd;
-                moveEnd.QuadPart = 0;
-                if (!SetFilePointerEx(this->handle, moveEnd, NULL, FILE_END)) {
-                    return false;
-                }
-
-                // Adjust position backward
-                moveEnd.QuadPart = -(int64_t)s - (int64_t)blockHeaderSize;
-                if (!SetFilePointerEx(this->handle, moveEnd, NULL, FILE_CURRENT)) {
+                // Seek to the correct block position
+                LARGE_INTEGER distanceToMove;
+                distanceToMove.QuadPart = (LONGLONG)blocksOffset;
+                if (!SetFilePointerEx(this->handle, distanceToMove, NULL, FILE_BEGIN)) {
                     return false;
                 }
 
@@ -811,9 +1062,9 @@ namespace EncFS {
     }
 
     /**
-     * @brief Updates file IV when file is renamed (for chained IV mode)
+     * @brief Updates file IV when file is moved or renamed
      * @param FileName Original file path
-     * @param NewFileName New file path
+     * @param NewFileName New file path  
      * @return True on success, false on failure
      */
     bool EncFSFile::changeFileIV(const LPCWSTR FileName, const LPCWSTR NewFileName) {
@@ -844,6 +1095,15 @@ namespace EncFS {
         if (!WriteWithRetry(this->handle, encodedFileHeader.data(), encodedFileHeader.size())) {
             return false;
         }
+        
+        // Invalidate caches after IV change - the file will be accessed with new name after rename
+        // This ensures the next read/write operation uses the new path for IV calculation
+        this->fileNameCached = false;
+        this->cachedUtf8FileName.clear();
+        this->cachedWideFileName.clear();
+        this->fileIvAvailable.store(false, std::memory_order_release);
+        this->lastBlockNum = -1;  // Invalidate block cache too
+        
         return true;
     }
 
@@ -853,6 +1113,22 @@ namespace EncFS {
     void EncFSFile::clearBlockBuffer() {
         // Clear size only, capacity is retained for efficient reuse
         this->blockBuffer.clear();
+    }
+
+    /**
+     * @brief Invalidates cached file name after rename operation
+     */
+    void EncFSFile::invalidateFileNameCache() {
+        lock_guard<decltype(this->mutexLock)> lock(this->mutexLock);
+        this->fileNameCached = false;
+        this->cachedUtf8FileName.clear();
+        this->cachedWideFileName.clear();
+        // Also invalidate block cache since it was computed with old path
+        this->lastBlockNum = -1;
+        this->decodeBuffer.clear();
+        this->encodeBuffer.clear();
+        // Reset IV cache as well
+        this->fileIvAvailable.store(false, std::memory_order_release);
     }
 
 } // namespace EncFS

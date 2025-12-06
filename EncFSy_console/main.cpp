@@ -182,8 +182,10 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 				efo.Timeout = (ULONG)_wtol(argv[command]);
 				break;
 			case L't':
-				// Enable single-threaded mode
-				efo.SingleThread = TRUE;
+				// Set number of worker threads (skip the argument)
+				// Note: Thread count is no longer supported in Dokan 2.x
+				// The argument is consumed but ignored for backward compatibility
+				command++;
 				break;
 			case L'-':
 				// Process long options (starting with --)

@@ -7,7 +7,7 @@
  * @brief Internal formatted print function (outputs to stderr or debug console)
  * @param format Wide-character format string (printf-style)
  * @param argp Variable argument list
- * 
+ *
  * Outputs to stderr with "EncFSy " prefix if g_UseStdErr is enabled,
  * otherwise outputs to debug console via OutputDebugStringW.
  */
@@ -60,7 +60,7 @@ void MyPrint(LPCWSTR format, ...) {
  * @brief Debug print (only outputs if debug mode is enabled)
  * @param format Wide-character format string (printf-style)
  * @param ... Variable arguments
- * 
+ *
  * Checks g_DebugMode flag before outputting.
  */
 void DbgPrint(LPCWSTR format, ...) {
@@ -74,16 +74,25 @@ void DbgPrint(LPCWSTR format, ...) {
 }
 
 /**
- * @brief Error print (delegates to DbgPrint, respects debug mode)
+ * @brief Error print (always outputs regardless of debug mode)
  * @param format Wide-character format string (printf-style)
  * @param ... Variable arguments
- * 
- * Note: Despite the name, this uses DbgPrint internally,
- * so it only outputs when debug mode is enabled.
  */
 void ErrorPrint(LPCWSTR format, ...) {
 	va_list argp;
 	va_start(argp, format);
-	DbgPrint(format, argp);
+	PrintF(format, argp);
+	va_end(argp);
+}
+
+/**
+ * @brief Informational print (always outputs for important lifecycle events)
+ * @param format Wide-character format string (printf-style)
+ * @param ... Variable arguments
+ */
+void InfoPrint(LPCWSTR format, ...) {
+	va_list argp;
+	va_start(argp, format);
+	PrintF(format, argp);
 	va_end(argp);
 }

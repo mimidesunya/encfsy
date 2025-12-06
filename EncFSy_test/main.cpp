@@ -1,344 +1,196 @@
-// EncFSy_test.cpp : This file contains the 'main' function. Program execution begins and ends there.
+// EncFSy_test.cpp - Main test entry point
 //
 
-#include <windows.h>
-#include <stdio.h>
-#include <memory.h>
-#include <string.h>
+#include "test_common.h"
+#include "test_declarations.h"
 
-int main()
+int main(int argc, char* argv[])
 {
-    //const WCHAR* drive = L"G:\\";
-    //const WCHAR* file = L"G:\\Dokan\\TEST_FILE.txt";
-    //const WCHAR* filei = L"G:\\Dokan\\Test_File.txt";
+    // Parse command line arguments
+    TestConfig config;
+    if (!ParseCommandLine(argc, argv, config)) {
+        PrintUsage(argv[0]);
+        return -1;
+    }
+    
+    if (config.showHelp) {
+        PrintUsage(argv[0]);
+        return 0;
+    }
+    
+    const WCHAR* drive = config.testDir.c_str();
+    const WCHAR* rootDir = config.testDir.c_str();
+    const WCHAR* file = config.testFile.c_str();
+    const WCHAR* fileLowerNested = config.nestedLower.c_str();
+    const WCHAR* fileCaseVariant = config.nestedUpper.c_str();
 
-    const WCHAR* drive = L"O:\\";
-    const WCHAR* file = L"O:\\TEST_FILE.txt";
-    const WCHAR* filei = L"O:\\PATH\\CASE\\TEST_FILE.txt";
-    //const WCHAR* filei = L"O:\\Test_File.txt";
-
-    // file information
-    {
-        DWORD dwDesiredAccess = GENERIC_READ | GENERIC_WRITE;
-        DWORD dwShareMode = FILE_SHARE_READ | FILE_SHARE_WRITE;
-        DWORD dwCreationDisposition = CREATE_ALWAYS;
-        DWORD dwFlagsAndAttribute = FILE_ATTRIBUTE_NORMAL;
-        HANDLE h = CreateFileW(file, dwDesiredAccess, dwShareMode, NULL,
-            dwCreationDisposition, dwFlagsAndAttribute, NULL);
-        if (h == INVALID_HANDLE_VALUE) {
-            DWORD lastError = GetLastError();
-            printf("CreateFileW ERROR: %d\n", lastError);
-            return -1;
-        }
-        TCHAR name[255];
-        if (!GetFinalPathNameByHandle(h, name, 255, FILE_NAME_NORMALIZED)) {
-            DWORD lastError = GetLastError();
-            printf("GetFinalPathNameByHandle ERROR: %d\n", lastError);
-            return -1;
-        }
-        wprintf(L"%s\n", name);
-        CloseHandle(h);
+    printf("================================================================================\n");
+    printf("                        EncFSy File System Test Suite\n");
+    printf("================================================================================\n");
+    wprintf(L"Test Directory: %s\n", drive);
+    wprintf(L"Test File: %s\n", file);
+    printf("Mode: %s\n", config.isRawFilesystem ? "RAW FILESYSTEM (baseline verification)" : "EncFS");
+    printf("================================================================================\n");
+    
+    if (config.isRawFilesystem) {
+        printf("\n");
+        printf("*** RUNNING ON RAW FILESYSTEM FOR BASELINE VERIFICATION ***\n");
+        printf("*** All tests should pass on raw filesystem. If they fail here,\n");
+        printf("*** the test itself has a bug, not the EncFS implementation.\n");
+        printf("\n");
     }
 
-    // ignore case
-    {
-        DWORD dwDesiredAccess = GENERIC_READ | GENERIC_WRITE;
-        DWORD dwShareMode = FILE_SHARE_READ | FILE_SHARE_WRITE;
-        DWORD dwCreationDisposition = OPEN_EXISTING;
-        DWORD dwFlagsAndAttribute = FILE_ATTRIBUTE_NORMAL;
-        HANDLE h = CreateFileW(filei, dwDesiredAccess, dwShareMode, NULL,
-            dwCreationDisposition, dwFlagsAndAttribute, NULL);
-        if (h == INVALID_HANDLE_VALUE) {
-            DWORD lastError = GetLastError();
-            printf("CreateFileW ERROR: %d\n", lastError);
-            return -1;
-        }
-        TCHAR name[255];
-        if (!GetFinalPathNameByHandle(h, name, 255, FILE_NAME_NORMALIZED)) {
-            DWORD lastError = GetLastError();
-            printf("GetFinalPathNameByHandle ERROR: %d\n", lastError);
-            return -1;
-        }
-        wprintf(L"%s\n", name);
-        CloseHandle(h);
+    // Verify test directory exists
+    if (!PathExists(rootDir)) {
+        wprintf(L"ERROR: Test directory does not exist: %s\n", rootDir);
+        printf("Please create the directory or specify a different one with -d option.\n");
+        return -1;
     }
 
-    // buffer mode
-    {
-        DWORD dwDesiredAccess = GENERIC_READ | GENERIC_WRITE;
-        DWORD dwShareMode = FILE_SHARE_READ | FILE_SHARE_WRITE;
-        DWORD dwCreationDisposition = CREATE_ALWAYS;
-        DWORD dwFlagsAndAttribute = FILE_ATTRIBUTE_NORMAL;
-        HANDLE h = CreateFileW(file, dwDesiredAccess, dwShareMode, NULL,
-            dwCreationDisposition, dwFlagsAndAttribute, NULL);
-        if (h == INVALID_HANDLE_VALUE) {
-            DWORD lastError = GetLastError();
-            printf("CreateFileW ERROR: %d\n", lastError);
-            return -1;
-        }
-        LARGE_INTEGER distanceToMove;
-        const char* writeData = "ABCDEFG";
-        const DWORD size = sizeof(writeData);
-        char buff[size];
-        DWORD readLen;
+    TestRunner runner(drive, rootDir, file, config.isRawFilesystem);
 
-        distanceToMove.QuadPart = 0;
-        if (!SetFilePointerEx(h, distanceToMove, NULL, FILE_BEGIN)) {
-            DWORD lastError = GetLastError();
-            printf("SetFilePointerEx ERROR: %d\n", lastError);
-            return -1;
-        }
+    //=========================================================================
+    // Edge Case Tests (for previously fixed bugs)
+    //=========================================================================
+    printf("\n--- EDGE CASE TESTS (Bug Regression) ---\n");
+    
+    runner.runTest("Zero-length read request", Test_ZeroLengthRead, file);
+    runner.runTest("Zero-length write request", Test_ZeroLengthWrite, file);
+    runner.runTest("SetEndOfFile boundary block", Test_SetEndOfFileBoundaryBlock, file);
+    runner.runTest("File expansion partial block", Test_FileExpansionPartialBlock, file);
+    runner.runTest("Rapid truncate and write", Test_RapidTruncateWrite, file);
+    runner.runTest("Read at block boundaries", Test_ReadAtBlockBoundaries, file);
+    runner.runTest("Write at block boundaries", Test_WriteAtBlockBoundaries, file);
+    runner.runTest("Truncate zero immediate rewrite (ZIP pattern)", Test_TruncateZeroImmediateRewrite, file);
+    runner.runTest("Write/read with separate handles", Test_WriteReadSeparateHandles, file);
+    runner.runTest("Concurrent read while writing", Test_ConcurrentReadWhileWrite, file);
+    runner.runTest("Read beyond EOF", Test_ReadBeyondEOF, file);
+    runner.runTest("Empty file operations", Test_EmptyFileOperations, file);
 
-        if (!ReadFile(h, buff, size, &readLen, NULL)) {
-            DWORD lastError = GetLastError();
-            printf("ReadFile ERROR: %d\n", lastError);
-            return -1;
-        }
-        printf("ReadLen: %d\n", readLen);
+    //=========================================================================
+    // Thread Safety and Race Condition Tests
+    //=========================================================================
+    printf("\n--- THREAD SAFETY TESTS ---\n");
+    
+    runner.runTest("High concurrency file access", Test_HighConcurrencyAccess, file);
+    runner.runTest("File IV persistence across reopens", Test_FileIVPersistence, file);
+    runner.runTest("Rapid file operation cycle", Test_RapidFileOperationCycle, file);
+    runner.runTest("Write then immediate read at offset 0", Test_WriteImmediateReadOffset0, file);
 
-        distanceToMove.QuadPart = 100;
-        if (!SetFilePointerEx(h, distanceToMove, NULL, FILE_BEGIN)) {
-            DWORD lastError = GetLastError();
-            printf("SetFilePointerEx ERROR: %d\n", lastError);
-            return -1;
-        }
+    //=========================================================================
+    // Multi-Handle Concurrent Access Tests (aapt2 block corruption regression)
+    //=========================================================================
+    printf("\n--- MULTI-HANDLE CONCURRENT ACCESS TESTS (aapt2 regression) ---\n");
+    
+    runner.runTest("Multi-handle concurrent write", Test_MultiHandleConcurrentWrite, file);
+    runner.runTest("Multi-handle write then read", Test_MultiHandleWriteThenRead, file);
+    runner.runTest("aapt2-like multi-file access", Test_Aapt2LikeMultiFileAccess, file);
+    runner.runTest("Concurrent multi-offset write", Test_ConcurrentMultiOffsetWrite, file);
+    runner.runTest("Stress multi-handle read/write", Test_StressMultiHandleReadWrite, file);
 
-        if (!ReadFile(h, buff, size, &readLen, NULL)) {
-            DWORD lastError = GetLastError();
-            printf("ReadFile ERROR: %d\n", lastError);
-            return -1;
-        }
-        printf("ReadLen: %d\n", readLen);
+    //=========================================================================
+    // Basic I/O Tests
+    //=========================================================================
+    printf("\n--- BASIC I/O TESTS ---\n");
+    
+    runner.runTest("Directory operations", Test_DirectoryOps, rootDir);
+    runner.runTest("Create and print final path", Test_CreateAndPrintPath, file);
+    runner.runTest("Case-insensitive open", Test_CaseInsensitiveOpen, fileLowerNested, fileCaseVariant);
+    runner.runTest("Buffered IO (seek, read, write)", Test_BufferedIO, file);
+    runner.runTest("Append-only write", Test_AppendWrite, file);
+    runner.runTest("No-buffering IO (sector aligned)", Test_NoBufferingIO, file, drive);
+    runner.runTest("Alternate Data Streams", Test_AlternateDataStreams, file);
+    runner.runTest("File attributes and times", Test_FileAttributesAndTimes, file);
+    runner.runTest("Sharing and byte-range locks", Test_SharingAndLocks, file);
+    runner.runTest("Sparse file", Test_SparseFile, file);
+    runner.runTest("Block boundary IO (512)", Test_BlockBoundaryIO, file, (DWORD)512);
+    runner.runTest("Block boundary IO (4096)", Test_BlockBoundaryIO, file, (DWORD)4096);
 
-        if (!WriteFile(h, writeData, size, &readLen, NULL)) {
-            DWORD lastError = GetLastError();
-            printf("WriteFile ERROR: %d\n", lastError);
-            return -1;
-        }
+    //=========================================================================
+    // File Size Tests
+    //=========================================================================
+    printf("\n--- FILE SIZE TESTS ---\n");
+    
+    runner.runTest("Expand and shrink file size", Test_ExpandShrink, file);
+    runner.runTest("SetEndOfFile then write (cache test)", Test_SetEndOfFileThenWrite, file);
+    runner.runTest("Truncate then partial write", Test_TruncateThenPartialWrite, file);
+    runner.runTest("Expand then write beyond", Test_ExpandThenWriteBeyond, file);
+    runner.runTest("Multiple SetEndOfFile operations", Test_MultipleSetEndOfFile, file);
+    runner.runTest("Truncate at block boundary", Test_TruncateAtBlockBoundary, file);
+    runner.runTest("Truncate to zero then rewrite", Test_TruncateToZeroThenRewrite, file);
+    runner.runTest("Write immediately after SetEndOfFile", Test_WriteImmediatelyAfterSetEndOfFile, file);
 
-        distanceToMove.QuadPart = 0;
-        if (!SetFilePointerEx(h, distanceToMove, NULL, FILE_BEGIN)) {
-            DWORD lastError = GetLastError();
-            printf("SetFilePointerEx ERROR: %d\n", lastError);
-            return -1;
-        }
+    //=========================================================================
+    // VS Project-like Tests (from debug log analysis)
+    //=========================================================================
+    printf("\n--- VS PROJECT-LIKE TESTS ---\n");
+    
+    runner.runTest("SetEndOfFile(0) + SetAllocationSize(0) + Write", Test_TruncateZeroAllocWrite, file);
+    runner.runTest("Large write after truncate to zero", Test_LargeWriteAfterTruncateZero, file);
+    runner.runTest("Rapid open-close-reopen cycle", Test_RapidOpenCloseReopen, file);
+    runner.runTest("Multiple concurrent file handles", Test_MultipleConcurrentHandles, file);
 
-        if (!ReadFile(h, buff, size, &readLen, NULL)) {
-            DWORD lastError = GetLastError();
-            printf("ReadFile ERROR: %d\n", lastError);
-            return -1;
-        }
-        buff[size - 1] = 0;
-        printf("data: %d, %s\n", readLen, buff);
+    //=========================================================================
+    // VS Build Pattern Tests (based on actual failure analysis)
+    //=========================================================================
+    printf("\n--- VS BUILD PATTERN TESTS ---\n");
+    
+    runner.runTest("CREATE_ALWAYS then write (json pattern)", Test_CreateAlwaysThenWrite, file);
+    runner.runTest("TRUNCATE_EXISTING then write", Test_TruncateExistingThenWrite, file);
+    runner.runTest("Empty file partial block write", Test_EmptyFilePartialBlockWrite, file);
+    runner.runTest("Write/read from different handles", Test_WriteReadDifferentHandles, file);
+    runner.runTest("JSON file truncate/rewrite cycles", Test_JsonFileTruncateRewrite, file);
+    runner.runTest("Cache file pattern", Test_CacheFilePattern, file);
+    runner.runTest("Parallel write and read", Test_ParallelWriteRead, file);
+    runner.runTest("Create-write-close-reopen-read cycle", Test_CreateWriteCloseReopenRead, file);
 
-        CloseHandle(h);
+    //=========================================================================
+    // ZIP/Archive Pattern Tests (based on ziparchive failure)
+    //=========================================================================
+    printf("\n--- ZIP/ARCHIVE PATTERN TESTS ---\n");
+    
+    runner.runTest("ZIP-like read pattern (seek end, start)", Test_ZipLikeReadPattern, file);
+    runner.runTest("Simultaneous multi-offset read", Test_SimultaneousMultiOffsetRead, file);
+    runner.runTest("GetFileSize then read at offset 0", Test_GetFileSizeThenReadOffset0, file);
+    runner.runTest("Read after truncate and write", Test_ReadAfterTruncateAndWrite, file);
+    runner.runTest("Rapid seek-read cycles (overlay parsing)", Test_RapidSeekReadCycles, file);
+
+    //=========================================================================
+    // Android aapt2 Pattern Tests (large reads from middle of file)
+    //=========================================================================
+    printf("\n--- ANDROID AAPT2 PATTERN TESTS ---\n");
+    
+    runner.runTest("Large read from middle of file", Test_LargeReadFromMiddle, file);
+    runner.runTest("Multi-block spanning read", Test_MultiBlockSpanningRead, file);
+
+    //=========================================================================
+    // Advanced Tests
+    //=========================================================================
+    printf("\n--- ADVANCED TESTS ---\n");
+    
+    runner.runTest("Word-like save pattern", Test_WordLikeSavePattern, rootDir);
+    runner.runTest("Interleaved read-write with resize", Test_InterleavedReadWriteWithResize, file);
+    runner.runTest("Overwrite then truncate", Test_OverwriteThenTruncate, file);
+
+    //=========================================================================
+    // Summary
+    //=========================================================================
+    runner.printSummary();
+    
+    if (config.isRawFilesystem) {
+        if (runner.allPassed()) {
+            printf("================================================================================\n");
+            printf("Raw filesystem baseline verification PASSED.\n");
+            printf("You can now run without -r to test the EncFS implementation.\n");
+            printf("================================================================================\n");
+        } else {
+            printf("================================================================================\n");
+            printf("WARNING: Some tests failed on raw filesystem!\n");
+            printf("This indicates bugs in the tests themselves, not EncFS.\n");
+            printf("Please fix the failing tests before testing EncFS.\n");
+            printf("================================================================================\n");
+        }
     }
 
-    // file append
-    {
-        DWORD dwDesiredAccess = FILE_APPEND_DATA;
-        DWORD dwShareMode = FILE_SHARE_WRITE;
-        DWORD dwCreationDisposition = CREATE_ALWAYS;
-        DWORD dwFlagsAndAttribute = FILE_ATTRIBUTE_NORMAL;
-        HANDLE h = CreateFileW(file, dwDesiredAccess, dwShareMode, NULL,
-            dwCreationDisposition, dwFlagsAndAttribute, NULL);
-        if (h == INVALID_HANDLE_VALUE) {
-            DWORD lastError = GetLastError();
-            printf("CreateFileW ERROR: %d\n", lastError);
-            return -1;
-        }
-
-        LARGE_INTEGER distanceToMove;
-        distanceToMove.QuadPart = 0;
-        if (!SetFilePointerEx(h, distanceToMove, NULL, FILE_BEGIN)) {
-            DWORD lastError = GetLastError();
-            printf("SetFilePointerEx ERROR: %d\n", lastError);
-            return -1;
-        }
-
-        const char* writeData = "ABCDEFG";
-        const DWORD size = sizeof(writeData);
-        DWORD readLen;
-        if (!WriteFile(h, writeData, size, &readLen, NULL)) {
-            DWORD lastError = GetLastError();
-            printf("WriteFile ERROR: %d\n", lastError);
-            return -1;
-        }
-
-        CloseHandle(h);
-    }
-
-    // no buffering mode
-    {
-        DWORD dwDesiredAccess = GENERIC_READ | GENERIC_WRITE;
-        DWORD dwShareMode = FILE_SHARE_READ | FILE_SHARE_WRITE;
-        DWORD dwCreationDisposition = CREATE_ALWAYS;
-        DWORD dwFlagsAndAttribute = FILE_FLAG_NO_BUFFERING;
-        HANDLE h = CreateFileW(file, dwDesiredAccess, dwShareMode, NULL,
-            dwCreationDisposition, dwFlagsAndAttribute, NULL);
-        if (h == INVALID_HANDLE_VALUE) {
-            DWORD lastError = GetLastError();
-            printf("CreateFileW ERROR: %d\n", lastError);
-            return -1;
-        }
-
-        DWORD SecBytes;
-        if (!GetDiskFreeSpaceW(drive, NULL, &SecBytes, NULL, NULL)) {
-            DWORD lastError = GetLastError();
-            printf("GetDiskFreeSpaceW ERROR: %d\n", lastError);
-            return -1;
-        }
-        printf("secter size: %d\n", SecBytes);
-
-        char* buff = (char*)malloc(SecBytes);
-        memset(buff, 'A', SecBytes);
-        DWORD readLen;
-        if (!WriteFile(h, buff, SecBytes, &readLen, NULL)) {
-            DWORD lastError = GetLastError();
-            printf("WriteFile ERROR: %d\n", lastError);
-            return -1;
-        }
-
-        LARGE_INTEGER distanceToMove;
-        distanceToMove.QuadPart = 0;
-        if (!SetFilePointerEx(h, distanceToMove, NULL, FILE_BEGIN)) {
-            DWORD lastError = GetLastError();
-            printf("SetFilePointerEx ERROR: %d\n", lastError);
-            return -1;
-        }
-
-        if (!ReadFile(h, buff, SecBytes, &readLen, NULL)) {
-            DWORD lastError = GetLastError();
-            printf("ReadFile ERROR: %d\n", lastError);
-            return -1;
-        }
-        buff[SecBytes - 1] = 0;
-        printf("data: %d, %s\n", readLen, buff);
-
-        if (!SetFilePointerEx(h, distanceToMove, NULL, FILE_BEGIN)) {
-            DWORD lastError = GetLastError();
-            printf("SetFilePointerEx ERROR: %d\n", lastError);
-            return -1;
-        }
-
-        if (!ReadFile(h, buff, SecBytes - 1, &readLen, NULL)) {
-            DWORD lastError = GetLastError();
-            printf("ReadFile error (normal): %d\n", lastError);
-        }
-        free(buff);
-
-        CloseHandle(h);
-    }
-
-    // expand shrink
-    {
-        DWORD dwDesiredAccess = GENERIC_READ | GENERIC_WRITE;
-        DWORD dwShareMode = FILE_SHARE_READ | FILE_SHARE_WRITE;
-        DWORD dwCreationDisposition = CREATE_ALWAYS;
-        DWORD dwFlagsAndAttribute = FILE_ATTRIBUTE_NORMAL;
-        HANDLE h = CreateFileW(file, dwDesiredAccess, dwShareMode, NULL,
-            dwCreationDisposition, dwFlagsAndAttribute, NULL);
-        if (h == INVALID_HANDLE_VALUE) {
-            DWORD lastError = GetLastError();
-            printf("CreateFileW ERROR: %d\n", lastError);
-            return -1;
-        }
-
-        LARGE_INTEGER distanceToMove;
-
-        // expand
-        distanceToMove.QuadPart = 3686L;
-        if (!SetFilePointerEx(h, distanceToMove, NULL, FILE_BEGIN)) {
-            DWORD lastError = GetLastError();
-            printf("SetFilePointerEx ERROR: %d\n", lastError);
-            return -1;
-        }
-        if (!SetEndOfFile(h)) {
-            DWORD lastError = GetLastError();
-            printf("SetEndOfFile ERROR: %d\n", lastError);
-            return -1;
-        }
-
-        // expand
-        distanceToMove.QuadPart = 5529L;
-        if (!SetFilePointerEx(h, distanceToMove, NULL, FILE_BEGIN)) {
-            DWORD lastError = GetLastError();
-            printf("SetFilePointerEx ERROR: %d\n", lastError);
-            return -1;
-        }
-        if (!SetEndOfFile(h)) {
-            DWORD lastError = GetLastError();
-            printf("SetEndOfFile ERROR: %d\n", lastError);
-            return -1;
-        }
-
-        // write
-        distanceToMove.QuadPart = 3686L;
-        if (!SetFilePointerEx(h, distanceToMove, NULL, FILE_BEGIN)) {
-            DWORD lastError = GetLastError();
-            printf("SetFilePointerEx ERROR: %d\n", lastError);
-            return -1;
-        }
-        {
-            DWORD size = 4;
-            char* buff = (char*)malloc(size);
-            memset(buff, 'A', size);
-            DWORD readLen;
-            if (!WriteFile(h, buff, size, &readLen, NULL)) {
-                DWORD lastError = GetLastError();
-                printf("WriteFile ERROR: %d\n", lastError);
-                return -1;
-            }
-            free(buff);
-        }
-
-        // same size
-        distanceToMove.QuadPart = 5529L;
-        if (!SetFilePointerEx(h, distanceToMove, NULL, FILE_BEGIN)) {
-            DWORD lastError = GetLastError();
-            printf("SetFilePointerEx ERROR: %d\n", lastError);
-            return -1;
-        }
-        if (!SetEndOfFile(h)) {
-            DWORD lastError = GetLastError();
-            printf("SetEndOfFile ERROR: %d\n", lastError);
-            return -1;
-        }
-
-        // shrink
-        distanceToMove.QuadPart = 4505L;
-        if (!SetFilePointerEx(h, distanceToMove, NULL, FILE_BEGIN)) {
-            DWORD lastError = GetLastError();
-            printf("SetFilePointerEx ERROR: %d\n", lastError);
-            return -1;
-        }
-        if (!SetEndOfFile(h)) {
-            DWORD lastError = GetLastError();
-            printf("SetEndOfFile ERROR: %d\n", lastError);
-            return -1;
-        }
-
-        // write
-        distanceToMove.QuadPart = 3686L;
-        if (!SetFilePointerEx(h, distanceToMove, NULL, FILE_BEGIN)) {
-            DWORD lastError = GetLastError();
-            printf("SetFilePointerEx ERROR: %d\n", lastError);
-            return -1;
-        }
-        {
-            DWORD size = 108;
-            char* buff = (char*)malloc(size);
-            memset(buff, 'A', size);
-            DWORD readLen;
-            if (!WriteFile(h, buff, size, &readLen, NULL)) {
-                DWORD lastError = GetLastError();
-                printf("WriteFile ERROR: %d\n", lastError);
-                return -1;
-            }
-            free(buff);
-        }
-
-
-        CloseHandle(h);
-    }
+    return runner.allPassed() ? 0 : -1;
 }
