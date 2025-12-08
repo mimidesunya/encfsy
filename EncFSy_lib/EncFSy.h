@@ -15,7 +15,6 @@ struct EncFSOptions {
 	BOOLEAN g_HasSeSecurityPrivilege;
 	BOOLEAN g_ImpersonateCallerUser;
 
-	BOOLEAN SingleThread;
 	ULONG Timeout;
 	ULONG AllocationUnitSize;
 	ULONG DokanOptions;
@@ -25,6 +24,9 @@ struct EncFSOptions {
 
 	WCHAR MountPoint[DOKAN_MAX_PATH];
 	WCHAR UNCName[DOKAN_MAX_PATH];
+
+	WCHAR VolumeName[32];         // Custom volume name (max 31 chars + null)
+	DWORD VolumeSerial;           // Custom volume serial number (0 = auto)
 
 	BOOLEAN AltStream;
 	BOOLEAN CaseInsensitive;

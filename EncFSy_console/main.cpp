@@ -19,40 +19,47 @@ void ShowUsage() {
 		"\n"
 		"Arguments:\n"
 		"  rootDir      (e.g., C:\\test)                Directory to be encrypted and mounted.\n"
-		"  mountPoint   (e.g., M: or C:\\mount\\dokan)   Mount location — either a drive letter\n"
+		"  mountPoint   (e.g., M: or C:\\mount\\dokan)   Mount location - either a drive letter\n"
 		"                                               such as M:\\ or an empty NTFS folder.\n"
 		"\n"
 		"Options:\n"
 		"  -u <mountPoint>                              Unmount the specified volume.\n"
-		"  -l                                           List currently mounted EncFS volumes.\n"
+		"  -l                                           List currently mounted Dokan volumes.\n"
 		"  -v                                           Send debug output to an attached debugger.\n"
 		"  -s                                           Send debug output to stderr.\n"
 		"  -i <ms>              (default: 120000)       Timeout (in milliseconds) before a running\n"
 		"                                               operation is aborted and the volume unmounted.\n"
-		"  -t <count>           (default: 5)            Number of worker threads for the Dokan library.\n"
 		"  --dokan-debug                                Enable Dokan debug output.\n"
 		"  --dokan-network <UNC>                        UNC path for a network volume (e.g., \\\\host\\myfs).\n"
 		"  --dokan-removable                            Present the volume as removable media.\n"
-		"  --dokan-write-protect                        Mount the filesystem read‑only.\n"
+		"  --dokan-write-protect                        Mount the filesystem read-only.\n"
 		"  --dokan-mount-manager                        Register the volume with the Windows Mount Manager\n"
 		"                                               (enables Recycle Bin support, etc.).\n"
 		"  --dokan-current-session                      Make the volume visible only in the current session.\n"
 		"  --dokan-filelock-user-mode                   Handle LockFile/UnlockFile in user mode; otherwise\n"
 		"                                               Dokan manages them automatically.\n"
+		"  --dokan-enable-unmount-network-drive         Allow unmounting network drive via Explorer.\n"
+		"  --dokan-dispatch-driver-logs                 Forward kernel driver logs to userland (slow).\n"
+		"  --dokan-allow-ipc-batching                   Enable IPC batching for slow filesystems\n"
+		"                                               (e.g., remote storage).\n"
 		"  --public                                     Impersonate the calling user when opening handles\n"
 		"                                               in CreateFile. Requires administrator privileges.\n"
-		"  --allocation-unit-size <bytes>               Allocation‑unit size reported by the volume.\n"
+		"  --allocation-unit-size <bytes>               Allocation-unit size reported by the volume.\n"
 		"  --sector-size <bytes>                        Sector size reported by the volume.\n"
-		"  --paranoia                                   Enable AES‑256 encryption, renamed IVs, and external\n"
+		"  --volume-name <name>                         Volume name shown in Explorer (default: EncFS).\n"
+		"  --volume-serial <hex>                        Volume serial number in hex (default: from underlying).\n"
+		"  --paranoia                                   Enable AES-256 encryption, renamed IVs, and external\n"
 		"                                               IV chaining.\n"
 		"  --alt-stream                                 Enable NTFS alternate data streams.\n"
-		"  --case-insensitive                           Perform case‑insensitive filename matching.\n"
-		"  --reverse                                    Reverse mode: encrypt from <rootDir> to <mountPoint>.\n"
+		"  --case-insensitive                           Perform case-insensitive filename matching.\n"
+		"  --reverse                                    Reverse mode: show plaintext rootDir as encrypted\n"
+		"                                               at mountPoint.\n"
 		"\n"
 		"Examples:\n"
 		"  encfs.exe C:\\Users M:                                    # Mount C:\\Users as drive M:\\\n"
 		"  encfs.exe C:\\Users C:\\mount\\dokan                       # Mount C:\\Users at NTFS folder C:\\mount\\dokan\n"
-		"  encfs.exe C:\\Users M: --dokan-network \\\\myfs\\share        # Mount C:\\Users as network drive M:\\ with UNC \\\\myfs\\share\n"
+		"  encfs.exe C:\\Users M: --dokan-network \\\\myfs\\share       # Mount as network drive with UNC \\\\myfs\\share\n"
+		"  encfs.exe C:\\Data M: --volume-name \"My Secure Drive\"     # Mount with custom volume name\n"
 		"\n"
 		"To unmount, press Ctrl+C in this console or run:\n"
 		"  encfs.exe -u <mountPoint>\n"
@@ -151,7 +158,6 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 	efo.CaseInsensitive = FALSE;
 	efo.Reverse = FALSE;
 	efo.Timeout = 120000;        // 2 minutes default timeout
-	efo.SingleThread = FALSE;
 
 	// Parse command-line arguments
 	for (command = 1; command < argc; command++) {
@@ -180,12 +186,6 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 				// Set timeout in milliseconds
 				command++;
 				efo.Timeout = (ULONG)_wtol(argv[command]);
-				break;
-			case L't':
-				// Set number of worker threads (skip the argument)
-				// Note: Thread count is no longer supported in Dokan 2.x
-				// The argument is consumed but ignored for backward compatibility
-				command++;
 				break;
 			case L'-':
 				// Process long options (starting with --)
@@ -219,6 +219,18 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 					// Handle file locks in user mode
 					efo.DokanOptions |= DOKAN_OPTION_FILELOCK_USER_MODE;
 				}
+				else if (wcscmp(argv[command], L"--dokan-enable-unmount-network-drive") == 0) {
+					// Allow unmounting network drive via Explorer
+					efo.DokanOptions |= DOKAN_OPTION_ENABLE_UNMOUNT_NETWORK_DRIVE;
+				}
+				else if (wcscmp(argv[command], L"--dokan-dispatch-driver-logs") == 0) {
+					// Forward kernel driver logs to userland (slow)
+					efo.DokanOptions |= DOKAN_OPTION_DISPATCH_DRIVER_LOGS;
+				}
+				else if (wcscmp(argv[command], L"--dokan-allow-ipc-batching") == 0) {
+					// Enable IPC batching for slow filesystems
+					efo.DokanOptions |= DOKAN_OPTION_ALLOW_IPC_BATCHING;
+				}
 				else if (wcscmp(argv[command], L"--public") == 0) {
 					// Impersonate calling user (requires admin)
 					efo.g_ImpersonateCallerUser = TRUE;
@@ -232,6 +244,16 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 					// Set sector size
 					command++;
 					efo.SectorSize = (ULONG)_wtol(argv[command]);
+				}
+				else if (wcscmp(argv[command], L"--volume-name") == 0) {
+					// Set custom volume name
+					command++;
+					wcscpy_s(efo.VolumeName, sizeof(efo.VolumeName) / sizeof(WCHAR), argv[command]);
+				}
+				else if (wcscmp(argv[command], L"--volume-serial") == 0) {
+					// Set custom volume serial number
+					command++;
+					efo.VolumeSerial = _tcstoul(argv[command], NULL, 16);
 				}
 				else if (wcscmp(argv[command], L"--paranoia") == 0) {
 					// Enable paranoia mode (AES-256, full IV chaining)

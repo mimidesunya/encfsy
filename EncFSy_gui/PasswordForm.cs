@@ -12,24 +12,37 @@ namespace EncFSy_gui
 {
     public partial class PasswordForm : Form
     {
-        public string password;
+        public string Password { get; private set; }
 
         public PasswordForm()
         {
             InitializeComponent();
             this.AcceptButton = this.okButton;
+            this.CancelButton = this.cancelButton;
         }
 
         private void okButton_Click(object sender, EventArgs e)
         {
-            this.password = this.passwordText.Text;
+            this.Password = this.passwordText.Text;
+            this.DialogResult = DialogResult.OK;
+            this.Close();
+        }
+
+        private void cancelButton_Click(object sender, EventArgs e)
+        {
+            this.Password = null;
+            this.DialogResult = DialogResult.Cancel;
             this.Close();
         }
 
         private void showPassword_CheckedChanged(object sender, EventArgs e)
         {
-            // Toggle password visibility
-            this.passwordText.PasswordChar = this.showPassword.Checked ? '\0' : '*';
+            this.passwordText.PasswordChar = this.showPassword.Checked ? '\0' : '●';
+        }
+
+        private void PasswordForm_Shown(object sender, EventArgs e)
+        {
+            this.passwordText.Focus();
         }
     }
 }

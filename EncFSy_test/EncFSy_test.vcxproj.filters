@@ -33,6 +33,9 @@
     <ClCompile Include="test_edge_cases.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="test_multithread.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="test_common.h">

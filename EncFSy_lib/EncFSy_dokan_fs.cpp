@@ -485,7 +485,12 @@ NTSTATUS DOKAN_CALLBACK EncFSGetVolumeInformation(
     WCHAR volumeRoot[4];
     DWORD fsFlags = 0;
 
-    wcscpy_s(VolumeNameBuffer, VolumeNameSize, L"EncFS");
+    // Use custom volume name if set, otherwise default to "EncFS"
+    if (g_efo.VolumeName[0] != L'\0') {
+        wcscpy_s(VolumeNameBuffer, VolumeNameSize, g_efo.VolumeName);
+    } else {
+        wcscpy_s(VolumeNameBuffer, VolumeNameSize, L"EncFS");
+    }
 
     if (MaximumComponentLength) *MaximumComponentLength = 255;
     if (FileSystemFlags) {
@@ -502,7 +507,8 @@ NTSTATUS DOKAN_CALLBACK EncFSGetVolumeInformation(
     volumeRoot[3] = '\0';
 
     // Query underlying volume for consistent behavior
-    if (GetVolumeInformationW(volumeRoot, NULL, 0, VolumeSerialNumber, MaximumComponentLength,
+    DWORD underlyingSerial = 0;
+    if (GetVolumeInformationW(volumeRoot, NULL, 0, &underlyingSerial, MaximumComponentLength,
         &fsFlags, FileSystemNameBuffer, FileSystemNameSize)) {
 
         if (FileSystemFlags) {
@@ -519,7 +525,19 @@ NTSTATUS DOKAN_CALLBACK EncFSGetVolumeInformation(
         wcscpy_s(FileSystemNameBuffer, FileSystemNameSize, L"NTFS");
     }
 
-    DbgPrint(L"GetVolumeInformation: OK (name='%s', fs='%s')\n", VolumeNameBuffer, FileSystemNameBuffer);
+    // Set volume serial number
+    if (VolumeSerialNumber) {
+        if (g_efo.VolumeSerial != 0) {
+            // Use custom serial number
+            *VolumeSerialNumber = g_efo.VolumeSerial;
+        } else {
+            // Use underlying volume's serial number
+            *VolumeSerialNumber = underlyingSerial;
+        }
+    }
+
+    DbgPrint(L"GetVolumeInformation: OK (name='%s', fs='%s', serial=0x%08X)\n", 
+             VolumeNameBuffer, FileSystemNameBuffer, VolumeSerialNumber ? *VolumeSerialNumber : 0);
     return STATUS_SUCCESS;
 }
 

@@ -11,236 +11,402 @@ using System.Threading;
 using System.Diagnostics;
 using System.IO;
 
-// This is the code for your desktop app.
-// Press Ctrl+F5 (or go to Debug > Start Without Debugging) to run your app.
-
 namespace EncFSy_gui
 {
     public partial class MainForm : Form
     {
-        string historyFile = Application.LocalUserAppDataPath + "\\history.txt";
-        string encfsExecutable = System.IO.Path.GetDirectoryName(Application.ExecutablePath) + "\\encfs.exe";
+        private string historyFile = Application.LocalUserAppDataPath + "\\history.txt";
+        private string encfsExecutable = Path.GetDirectoryName(Application.ExecutablePath) + "\\encfs.exe";
+        private bool isAdvancedMode = false;
 
         public MainForm()
         {
-             InitializeComponent();
+            InitializeComponent();
+            UpdateAdvancedModeVisibility();
         }
 
-        private void selectDirectory_Click(object sender, EventArgs e)
-        {
-            FolderBrowserDialog dialog = new FolderBrowserDialog();
-            if (dialog.ShowDialog() == DialogResult.OK)
-            {
-                this.rootPathCombo.Text = dialog.SelectedPath;
-                this.updateButtons();
-            }
-        }
-
-        private Process startEncFS(String args)
-        {
-            Process process = new Process();
-            ProcessStartInfo startInfo = new ProcessStartInfo();
-            startInfo.FileName = encfsExecutable;
-            startInfo.Arguments = args;
-            startInfo.CreateNoWindow = true;
-            startInfo.RedirectStandardInput = true;
-            startInfo.RedirectStandardOutput = true;
-            startInfo.UseShellExecute = false;
-            process.StartInfo = startInfo;
-            process.Start();
-            return process;
-
-        }
-
-        private void mount_Click(object sender, EventArgs e)
-        {
-            string rootPath = this.rootPathCombo.Text;
-            using (StreamWriter writer = new StreamWriter(this.historyFile, false, Encoding.UTF8))
-            {
-                writer.WriteLine(this.rootPathCombo.Text);
-                foreach (string item in this.rootPathCombo.Items)
-                {
-                    if (item.Equals(this.rootPathCombo.Text))
-                    {
-                        continue;
-                    }
-                    writer.WriteLine(item);
-                }
-            }
-
-            string drive = this.driveListView.SelectedItems[0].Text.Substring(0, 1);
-
-            PasswordForm passwordForm = new PasswordForm();
-            passwordForm.StartPosition = FormStartPosition.CenterParent;
-            passwordForm.ShowDialog(this);
-            passwordForm.Dispose();
-            string password = passwordForm.password;
-            if (password == null || password.Equals(""))
-            {
-                return;
-            }
-
-            String args = "\"" + rootPath + "\"" + " " + drive;
-            if (this.altStreamCheckBox.Checked)
-            {
-                args += " --alt-stream";
-            }
-            if (this.mountManagerCheckBox.Checked)
-            {
-                args += " --dokan-mount-manager";
-            }
-            if (this.caseInsensitiveCheckBox.Checked)
-            {
-                args += " --case-insensitive";
-            }
-            if (this.readOnlyCheckBox.Checked)
-            {
-                args += " --dokan-write-protect";
-            }
-            if (this.reverseCheckBox.Checked)
-            {
-                args += " --reverse";
-            }
-            Process process = this.startEncFS(args);
-
-            Thread t1 = new Thread(new ThreadStart(delegate ()
-            {
-                process.StandardInput.WriteLine(password);
-            }));
-            t1.Start();
-
-            Thread t2 = new Thread(new ThreadStart(delegate ()
-            {
-                process.StandardOutput.ReadLine();
-                string encfsOut = process.StandardOutput.ReadLine();
-                if (encfsOut != null && encfsOut.Equals("Enter new password: "))
-                {
-                    process.StandardInput.WriteLine(password);
-                    encfsOut = process.StandardOutput.ReadLine();
-                    encfsOut = process.StandardOutput.ReadLine();
-                }
-                if (encfsOut != null && !encfsOut.Equals("Success"))
-                {
-                    MessageBox.Show("'"+encfsOut+ "'");
-                }
-            }));
-            t2.IsBackground = true;
-            t2.Start();
-
-            Thread.Sleep(3000);
-            this.updateDrives();
-        }
-
-        private void unmount_Click(object sender, EventArgs e)
-        {
-            string drive = this.driveListView.SelectedItems[0].Text.Substring(0, 1);
-
-            Process process = this.startEncFS("-u " + drive);
-            process.WaitForExit();
-            process.Close();
-            this.updateDrives();
-        }
-
-        private void quit_Click(object sender, EventArgs e)
-        {
-            this.Close();
-            this.Dispose();
-        }
+        #region Event Handlers
 
         private void MainForm_Load(object sender, EventArgs e)
         {
-            this.updateDrives();
+            UpdateDrives();
+            UpdateCommandPreview();
         }
 
-        private void updateDrives()
+        private void selectDirectoryButton_Click(object sender, EventArgs e)
         {
-            this.rootPathCombo.Items.Clear();
-            if (File.Exists(this.historyFile))
+            using (FolderBrowserDialog dialog = new FolderBrowserDialog())
             {
-                using (StreamReader reader = new StreamReader(this.historyFile, Encoding.UTF8))
+                dialog.Description = "Select the encrypted directory (rootDir)";
+                if (dialog.ShowDialog() == DialogResult.OK)
                 {
-                    string line;
-                    while ((line = reader.ReadLine()) != null)
-                    {
-                        this.rootPathCombo.Items.Add(line);
-                    }
-                    if (this.rootPathCombo.Items.Count > 0)
-                    {
-                        this.rootPathCombo.SelectedIndex = 0;
-                    }
+                    rootPathCombo.Text = dialog.SelectedPath;
+                    UpdateButtons();
+                    UpdateCommandPreview();
                 }
             }
-
-            {
-                List<string> drives = new List<string>();
-                Process process = this.startEncFS("-l");
-                string line;
-                while ((line = process.StandardOutput.ReadLine()) != null)
-                {
-                    drives.Add(line.Substring(line.Length - 2));
-                }
-
-                this.driveListView.Items.Clear();
-                this.driveListView.View = View.Details;
-                for (char i = 'A'; i <= 'Z'; ++i)
-                {
-                    string drive = i + ":";
-                    if (Directory.Exists(drive))
-                    {
-                        if (drives.Contains(drive))
-                        {
-                            string[] item = { drive, "EncFS" };
-                            this.driveListView.Items.Add(new ListViewItem(item));
-                        }
-                        continue;
-                    }
-                    else
-                    {
-                        string[] item = { drive, "" };
-                        this.driveListView.Items.Add(new ListViewItem(item));
-                    }
-                }
-            }
-            this.updateButtons();
         }
 
-        private void updateButtons()
+        private void mountButton_Click(object sender, EventArgs e)
         {
-            if (this.driveListView.SelectedItems.Count == 0)
+            if (driveListView.SelectedItems.Count == 0)
             {
-                this.mountButton.Enabled = false;
-                this.unmountButton.Enabled = false;
+                MessageBox.Show("Please select a drive letter.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
             }
-            else if (this.driveListView.SelectedItems[0].SubItems[1].Text.Equals(""))
+
+            string rootPath = rootPathCombo.Text;
+            SaveHistory();
+
+            string drive = driveListView.SelectedItems[0].Text.Substring(0, 1);
+
+            using (PasswordForm passwordForm = new PasswordForm())
             {
-                this.mountButton.Enabled = Directory.Exists(this.rootPathCombo.Text);
-                this.unmountButton.Enabled = false;
+                passwordForm.StartPosition = FormStartPosition.CenterParent;
+                if (passwordForm.ShowDialog(this) != DialogResult.OK)
+                {
+                    return;
+                }
+
+                string password = passwordForm.Password;
+                if (string.IsNullOrEmpty(password))
+                {
+                    MessageBox.Show("Password cannot be empty.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                string args = BuildCommandArguments(rootPath, drive);
+                ExecuteMount(args, password);
             }
-            else
+
+            Thread.Sleep(3000);
+            UpdateDrives();
+        }
+
+        private void unmountButton_Click(object sender, EventArgs e)
+        {
+            if (driveListView.SelectedItems.Count == 0) return;
+
+            string drive = driveListView.SelectedItems[0].Text.Substring(0, 1);
+
+            using (Process process = StartEncFS("-u " + drive))
             {
-                this.mountButton.Enabled = false;
-                this.unmountButton.Enabled = true;
+                process.WaitForExit();
             }
+            UpdateDrives();
+        }
+
+        private void refreshButton_Click(object sender, EventArgs e)
+        {
+            UpdateDrives();
+        }
+
+        private void advancedModeCheckBox_CheckedChanged(object sender, EventArgs e)
+        {
+            isAdvancedMode = advancedModeCheckBox.Checked;
+            UpdateAdvancedModeVisibility();
+            UpdateCommandPreview();
         }
 
         private void driveListView_SelectedIndexChanged(object sender, EventArgs e)
         {
-            this.updateButtons();
+            UpdateButtons();
+            UpdateCommandPreview();
         }
 
-        private void checkBox1_CheckedChanged(object sender, EventArgs e)
+        private void rootPathCombo_TextChanged(object sender, EventArgs e)
         {
-
+            UpdateButtons();
+            UpdateCommandPreview();
         }
 
-        private void checkBox1_CheckedChanged_1(object sender, EventArgs e)
+        private void anyOption_Changed(object sender, EventArgs e)
         {
-
+            UpdateCommandPreview();
         }
 
-        private void checkBox1_CheckedChanged_2(object sender, EventArgs e)
+        private void copyCommandButton_Click(object sender, EventArgs e)
         {
-
+            if (!string.IsNullOrEmpty(commandPreviewTextBox.Text))
+            {
+                Clipboard.SetText(commandPreviewTextBox.Text);
+                toolTip.Show("Copied!", copyCommandButton, 0, -20, 1500);
+            }
         }
+
+        #endregion
+
+        #region Helper Methods
+
+        private void UpdateAdvancedModeVisibility()
+        {
+            // Update checkbox text to indicate expand/collapse state
+            advancedModeCheckBox.Text = isAdvancedMode 
+                ? "Hide Advanced Options £" 
+                : "Show Advanced Options ¥";
+            
+            // Show/hide advanced controls - form will auto-resize
+            advancedOptionsGroup.Visible = isAdvancedMode;
+            advancedSettingsGroup.Visible = isAdvancedMode;
+            commandPreviewGroup.Visible = isAdvancedMode;
+        }
+
+        private Process StartEncFS(string args)
+        {
+            Process process = new Process();
+            ProcessStartInfo startInfo = new ProcessStartInfo
+            {
+                FileName = encfsExecutable,
+                Arguments = args,
+                CreateNoWindow = true,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            };
+            process.StartInfo = startInfo;
+            process.Start();
+            return process;
+        }
+
+        private string BuildCommandArguments(string rootPath, string drive)
+        {
+            StringBuilder args = new StringBuilder();
+            args.Append($"\"{rootPath}\" {drive}");
+
+            // Basic options
+            if (altStreamCheckBox.Checked)
+                args.Append(" --alt-stream");
+            if (mountManagerCheckBox.Checked)
+                args.Append(" --dokan-mount-manager");
+            if (caseInsensitiveCheckBox.Checked)
+                args.Append(" --case-insensitive");
+            if (readOnlyCheckBox.Checked)
+                args.Append(" --dokan-write-protect");
+            if (reverseCheckBox.Checked)
+                args.Append(" --reverse");
+
+            // Advanced options (only if advanced mode is enabled)
+            if (isAdvancedMode)
+            {
+                if (paranoiaCheckBox.Checked)
+                    args.Append(" --paranoia");
+                if (removableCheckBox.Checked)
+                    args.Append(" --dokan-removable");
+                if (currentSessionCheckBox.Checked)
+                    args.Append(" --dokan-current-session");
+                if (fileLockUserModeCheckBox.Checked)
+                    args.Append(" --dokan-filelock-user-mode");
+                if (enableUnmountNetworkCheckBox.Checked)
+                    args.Append(" --dokan-enable-unmount-network-drive");
+                if (allowIpcBatchingCheckBox.Checked)
+                    args.Append(" --dokan-allow-ipc-batching");
+                if (debugModeCheckBox.Checked)
+                    args.Append(" -v");
+                if (stderrCheckBox.Checked)
+                    args.Append(" -s");
+
+                // Timeout
+                if (timeoutNumeric.Value != 120000)
+                    args.Append($" -i {(int)timeoutNumeric.Value}");
+
+                // Volume name
+                if (!string.IsNullOrWhiteSpace(volumeNameTextBox.Text))
+                    args.Append($" --volume-name \"{volumeNameTextBox.Text}\"");
+
+                // Volume serial
+                if (!string.IsNullOrWhiteSpace(volumeSerialTextBox.Text))
+                    args.Append($" --volume-serial {volumeSerialTextBox.Text}");
+
+                // Network UNC
+                if (!string.IsNullOrWhiteSpace(networkUncTextBox.Text))
+                    args.Append($" --dokan-network \"{networkUncTextBox.Text}\"");
+
+                // Allocation unit size
+                if (allocationUnitNumeric.Value > 0)
+                    args.Append($" --allocation-unit-size {(int)allocationUnitNumeric.Value}");
+
+                // Sector size
+                if (sectorSizeNumeric.Value > 0)
+                    args.Append($" --sector-size {(int)sectorSizeNumeric.Value}");
+            }
+
+            return args.ToString();
+        }
+
+        private void UpdateCommandPreview()
+        {
+            if (!isAdvancedMode)
+            {
+                commandPreviewTextBox.Text = string.Empty;
+                return;
+            }
+
+            string drive = driveListView.SelectedItems.Count > 0
+                ? driveListView.SelectedItems[0].Text.Substring(0, 1)
+                : "M";
+
+            string rootPath = string.IsNullOrEmpty(rootPathCombo.Text)
+                ? "C:\\path\\to\\encrypted"
+                : rootPathCombo.Text;
+
+            string args = BuildCommandArguments(rootPath, drive);
+            commandPreviewTextBox.Text = $"encfs.exe {args}";
+        }
+
+        private void ExecuteMount(string args, string password)
+        {
+            Process process = StartEncFS(args);
+
+            Thread inputThread = new Thread(() =>
+            {
+                process.StandardInput.WriteLine(password);
+            });
+            inputThread.Start();
+
+            Thread outputThread = new Thread(() =>
+            {
+                try
+                {
+                    string encfsOut = process.StandardOutput.ReadLine();
+                    encfsOut = process.StandardOutput.ReadLine();
+
+                    if (encfsOut != null && encfsOut.Equals("Enter new password: "))
+                    {
+                        process.StandardInput.WriteLine(password);
+                        encfsOut = process.StandardOutput.ReadLine();
+                        encfsOut = process.StandardOutput.ReadLine();
+                    }
+
+                    if (encfsOut != null && !encfsOut.Equals("Success"))
+                    {
+                        this.Invoke((MethodInvoker)delegate
+                        {
+                            MessageBox.Show(this, $"Mount result: '{encfsOut}'", "EncFS", 
+                                MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        });
+                    }
+                }
+                catch (Exception ex)
+                {
+                    this.Invoke((MethodInvoker)delegate
+                    {
+                        MessageBox.Show(this, $"Error: {ex.Message}", "EncFS Error", 
+                            MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    });
+                }
+            });
+            outputThread.IsBackground = true;
+            outputThread.Start();
+        }
+
+        private void SaveHistory()
+        {
+            try
+            {
+                using (StreamWriter writer = new StreamWriter(historyFile, false, Encoding.UTF8))
+                {
+                    writer.WriteLine(rootPathCombo.Text);
+                    foreach (string item in rootPathCombo.Items)
+                    {
+                        if (!item.Equals(rootPathCombo.Text))
+                        {
+                            writer.WriteLine(item);
+                        }
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // Ignore history save errors
+            }
+        }
+
+        private void UpdateDrives()
+        {
+            // Load history
+            rootPathCombo.Items.Clear();
+            if (File.Exists(historyFile))
+            {
+                try
+                {
+                    using (StreamReader reader = new StreamReader(historyFile, Encoding.UTF8))
+                    {
+                        string line;
+                        while ((line = reader.ReadLine()) != null)
+                        {
+                            rootPathCombo.Items.Add(line);
+                        }
+                        if (rootPathCombo.Items.Count > 0)
+                        {
+                            rootPathCombo.SelectedIndex = 0;
+                        }
+                    }
+                }
+                catch (Exception)
+                {
+                    // Ignore history load errors
+                }
+            }
+
+            // Get mounted EncFS drives
+            List<string> encfsDrives = new List<string>();
+            try
+            {
+                using (Process process = StartEncFS("-l"))
+                {
+                    string line;
+                    while ((line = process.StandardOutput.ReadLine()) != null)
+                    {
+                        if (line.Length >= 2)
+                        {
+                            encfsDrives.Add(line.Substring(line.Length - 2));
+                        }
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // Ignore errors when listing mounts
+            }
+
+            // Update drive list
+            driveListView.Items.Clear();
+            driveListView.View = View.Details;
+
+            for (char i = 'A'; i <= 'Z'; ++i)
+            {
+                string drive = i + ":";
+                if (Directory.Exists(drive + "\\"))
+                {
+                    if (encfsDrives.Contains(drive))
+                    {
+                        ListViewItem item = new ListViewItem(new[] { drive, "EncFS (Mounted)" });
+                        item.BackColor = Color.LightGreen;
+                        driveListView.Items.Add(item);
+                    }
+                    // Skip other existing drives
+                }
+                else
+                {
+                    ListViewItem item = new ListViewItem(new[] { drive, "(Available)" });
+                    driveListView.Items.Add(item);
+                }
+            }
+
+            UpdateButtons();
+        }
+
+        private void UpdateButtons()
+        {
+            bool hasSelection = driveListView.SelectedItems.Count > 0;
+            bool isEncFSMount = hasSelection && driveListView.SelectedItems[0].SubItems[1].Text.Contains("Mounted");
+            bool hasValidPath = Directory.Exists(rootPathCombo.Text);
+
+            mountButton.Enabled = hasSelection && !isEncFSMount && hasValidPath;
+            unmountButton.Enabled = hasSelection && isEncFSMount;
+        }
+
+        #endregion
     }
 }

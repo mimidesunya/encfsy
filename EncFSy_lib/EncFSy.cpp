@@ -203,7 +203,6 @@ int StartEncFS(EncFSOptions& efo, char* password) {
     dokanOptions.Version = DOKAN_VERSION;
     dokanOptions.Timeout = efo.Timeout;
     dokanOptions.MountPoint = efo.MountPoint;
-    dokanOptions.SingleThread = efo.SingleThread;
     dokanOptions.Options = efo.DokanOptions;
     dokanOptions.AllocationUnitSize = efo.AllocationUnitSize;
     dokanOptions.SectorSize = efo.SectorSize;
