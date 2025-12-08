@@ -335,8 +335,8 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
 /**
  * @brief Called when all handles to a file are closed.
  *
- * This is a notification callback. The actual cleanup should have been
- * done in EncFSCleanup. If Context is still set, it indicates an error.
+ * This is where we delete the EncFSFile object. By this point, all I/O
+ * operations have completed.
  *
  * @param FileName Virtual path of the file.
  * @param DokanFileInfo Dokan file context.
@@ -345,22 +345,21 @@ void DOKAN_CALLBACK EncFSCloseFile(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileI
     DbgPrint(L"CloseFile: '%s'\n", FileName);
 
     if (DokanFileInfo->Context) {
-        // Context should have been cleared in Cleanup
-        ErrorPrint(L"CloseFile: '%s' - Context not cleaned up in Cleanup!\n", FileName);
-        // Use atomic exchange to prevent double-delete in concurrent scenarios
-        ULONG64 ctx = InterlockedExchange64((LONG64*)&DokanFileInfo->Context, 0);
-        if (ctx) {
-            EncFS::EncFSFile* encfsFile = reinterpret_cast<EncFS::EncFSFile*>(ctx);
-            delete encfsFile;
-        }
+        DbgPrint(L"CloseFile: '%s' - Deleting EncFSFile object\n", FileName);
+        EncFS::EncFSFile* encfsFile = ToEncFSFile(DokanFileInfo->Context);
+        delete encfsFile;
+        DokanFileInfo->Context = 0;
     }
 }
 
 /**
  * @brief Cleans up file resources before the file is closed.
  *
- * This is where actual resource cleanup occurs. If DeletePending is set,
- * the file/directory is deleted after the handle is closed.
+ * This is where we close the file handle. The EncFSFile object is kept alive
+ * until CloseFile because pending I/O operations may still access it.
+ * Those operations will get INVALID_HANDLE errors but won't crash.
+ *
+ * If DeletePending is set, the file/directory is deleted after closing the handle.
  *
  * @param FileName Virtual path of the file.
  * @param DokanFileInfo Dokan file context.
@@ -368,11 +367,14 @@ void DOKAN_CALLBACK EncFSCloseFile(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileI
 void DOKAN_CALLBACK EncFSCleanup(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInfo) {
     DbgPrint(L"Cleanup: '%s' (deletePending=%d)\n", FileName, DokanFileInfo->DeletePending);
 
-    // Atomically clear and delete context to prevent double-delete
-    ULONG64 ctx = InterlockedExchange64((LONG64*)&DokanFileInfo->Context, 0);
-    if (ctx) {
-        EncFS::EncFSFile* encfsFile = reinterpret_cast<EncFS::EncFSFile*>(ctx);
-        delete encfsFile;
+    if (DokanFileInfo->Context) {
+        EncFS::EncFSFile* encfsFile = ToEncFSFile(DokanFileInfo->Context);
+        
+        // Flush and close the handle, but keep the EncFSFile object alive
+        // Pending I/O operations will get INVALID_HANDLE errors but won't crash
+        encfsFile->flush();
+        encfsFile->closeHandle();
+        DbgPrint(L"Cleanup: '%s' - Handle closed\n", FileName);
     }
     else {
         DbgPrint(L"  [WARN] Context already NULL for '%s'\n", FileName);
