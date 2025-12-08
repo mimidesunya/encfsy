@@ -19,8 +19,9 @@ struct TestConfig {
     std::wstring nestedUpper;  // Nested path for case test (uppercase)
     bool showHelp;
     bool isRawFilesystem;      // True if testing on raw filesystem (not EncFS)
+    bool stopOnFailure;        // True to stop immediately when a test fails
     
-    TestConfig() : showHelp(false), isRawFilesystem(false) {}
+    TestConfig() : showHelp(false), isRawFilesystem(false), stopOnFailure(false) {}
 };
 
 inline void PrintUsage(const char* programName) {
@@ -29,12 +30,14 @@ inline void PrintUsage(const char* programName) {
     printf("Options:\n");
     printf("  -d, --dir <path>     Test directory (default: O:\\)\n");
     printf("  -r, --raw            Test on raw filesystem (F:\\work\\encfs_raw\\)\n");
+    printf("  -s, --stop-on-failure  Stop immediately when a test fails\n");
     printf("  -h, --help           Show this help message\n");
     printf("\n");
     printf("Examples:\n");
     printf("  %s                   # Test on EncFS mount at O:\\\n", programName);
     printf("  %s -r                # Test on raw filesystem at F:\\work\\encfs_raw\\\n", programName);
     printf("  %s -d C:\\temp\\test # Test in custom directory\n", programName);
+    printf("  %s -s                # Stop on first failure\n", programName);
     printf("\n");
     printf("Note: Run with -r first to verify tests work correctly on a raw filesystem,\n");
     printf("      then run without -r to test the EncFS implementation.\n");
@@ -45,6 +48,7 @@ inline bool ParseCommandLine(int argc, char* argv[], TestConfig& config) {
     config.testDir = L"O:\\";
     config.showHelp = false;
     config.isRawFilesystem = false;
+    config.stopOnFailure = false;
     
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
@@ -56,6 +60,9 @@ inline bool ParseCommandLine(int argc, char* argv[], TestConfig& config) {
         else if (arg == "-r" || arg == "--raw") {
             config.testDir = L"F:\\work\\encfs_raw\\";
             config.isRawFilesystem = true;
+        }
+        else if (arg == "-s" || arg == "--stop-on-failure") {
+            config.stopOnFailure = true;
         }
         else if ((arg == "-d" || arg == "--dir") && i + 1 < argc) {
             i++;
@@ -100,25 +107,32 @@ private:
     std::wstring rootDir;
     std::wstring testFile;
     bool isRawFilesystem;
+    bool stopOnFailure;
+    bool shouldStop;
 
 public:
-    TestRunner(const WCHAR* drv, const WCHAR* root, const WCHAR* file, bool isRaw = false)
-        : currentTestNumber(0), drive(drv), rootDir(root), testFile(file), isRawFilesystem(isRaw) {}
+    TestRunner(const WCHAR* drv, const WCHAR* root, const WCHAR* file, bool isRaw = false, bool stopOnFail = false)
+        : currentTestNumber(0), drive(drv), rootDir(root), testFile(file), 
+          isRawFilesystem(isRaw), stopOnFailure(stopOnFail), shouldStop(false) {}
 
     const WCHAR* getDrive() const { return drive.c_str(); }
     const WCHAR* getRootDir() const { return rootDir.c_str(); }
     const WCHAR* getTestFile() const { return testFile.c_str(); }
     bool isRaw() const { return isRawFilesystem; }
+    bool stopped() const { return shouldStop; }
 
     void runTest(const char* name, bool (*fn)(const WCHAR*), const WCHAR* arg) {
+        if (shouldStop) return;
         runTestImpl(name, fn(arg));
     }
 
     void runTest(const char* name, bool (*fn)(const WCHAR*, const WCHAR*), const WCHAR* a1, const WCHAR* a2) {
+        if (shouldStop) return;
         runTestImpl(name, fn(a1, a2));
     }
 
     void runTest(const char* name, bool (*fn)(const WCHAR*, DWORD), const WCHAR* a1, DWORD a2) {
+        if (shouldStop) return;
         runTestImpl(name, fn(a1, a2));
     }
 
@@ -181,6 +195,11 @@ private:
             printf("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
             printf("!!!  [%02d] FAILED: %s\n", currentTestNumber, name);
             printf("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
+            
+            if (stopOnFailure) {
+                printf("\n*** STOPPING: --stop-on-failure is enabled ***\n");
+                shouldStop = true;
+            }
         }
     }
 };

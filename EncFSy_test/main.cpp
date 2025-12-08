@@ -1,5 +1,6 @@
 // EncFSy_test.cpp - Main test entry point
 //
+// ./encfs.exe F:\work\encfs O: --dokan-mount-manager --alt-stream --case-insensitive
 
 #include "test_common.h"
 #include "test_declarations.h"
@@ -30,6 +31,7 @@ int main(int argc, char* argv[])
     wprintf(L"Test Directory: %s\n", drive);
     wprintf(L"Test File: %s\n", file);
     printf("Mode: %s\n", config.isRawFilesystem ? "RAW FILESYSTEM (baseline verification)" : "EncFS");
+    printf("Stop on failure: %s\n", config.stopOnFailure ? "YES" : "NO");
     printf("================================================================================\n");
     
     if (config.isRawFilesystem) {
@@ -47,7 +49,7 @@ int main(int argc, char* argv[])
         return -1;
     }
 
-    TestRunner runner(drive, rootDir, file, config.isRawFilesystem);
+    TestRunner runner(drive, rootDir, file, config.isRawFilesystem, config.stopOnFailure);
 
     //=========================================================================
     // Edge Case Tests (for previously fixed bugs)
