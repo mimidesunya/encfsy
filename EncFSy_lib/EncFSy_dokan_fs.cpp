@@ -55,10 +55,10 @@ NTSTATUS DOKAN_CALLBACK EncFSLockFile(LPCWSTR FileName,
     LARGE_INTEGER offset;
     LARGE_INTEGER length;
 
-    DbgPrint(L"LockFile: '%s' offset=%I64d len=%I64d\n", FileName, ByteOffset, Length);
+    DbgPrintV(L"LockFile: '%s' offset=%I64d len=%I64d\n", FileName, ByteOffset, Length);
 
     if (!DokanFileInfo->Context) {
-        DbgPrint(L"  [WARN] Context is NULL, handle already closed\n");
+        DbgPrintV(L"  [WARN] Context is NULL, handle already closed\n");
         return STATUS_INVALID_HANDLE;
     }
     EncFS::EncFSFile* encfsFile = ToEncFSFile(DokanFileInfo->Context);
@@ -72,7 +72,7 @@ NTSTATUS DOKAN_CALLBACK EncFSLockFile(LPCWSTR FileName,
         return DokanNtStatusFromWin32(error);
     }
 
-    DbgPrint(L"LockFile: '%s' OK\n", FileName);
+    DbgPrintV(L"LockFile: '%s' OK\n", FileName);
     return STATUS_SUCCESS;
 }
 
@@ -84,16 +84,16 @@ NTSTATUS DOKAN_CALLBACK EncFSLockFile(LPCWSTR FileName,
  */
 NTSTATUS DOKAN_CALLBACK
 EncFSFlushFileBuffers(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInfo) {
-    DbgPrint(L"FlushFileBuffers: '%s'\n", FileName);
+    DbgPrintV(L"FlushFileBuffers: '%s'\n", FileName);
 
     if (!DokanFileInfo->Context) {
-        DbgPrint(L"  [WARN] Context is NULL, returning success\n");
+        DbgPrintV(L"  [WARN] Context is NULL, returning success\n");
         return STATUS_SUCCESS;
     }
 
     EncFS::EncFSFile* encfsFile = ToEncFSFile(DokanFileInfo->Context);
     if (encfsFile->flush()) {
-        DbgPrint(L"FlushFileBuffers: '%s' OK\n", FileName);
+        DbgPrintV(L"FlushFileBuffers: '%s' OK\n", FileName);
         return STATUS_SUCCESS;
     }
     else {
@@ -113,10 +113,10 @@ EncFSFlushFileBuffers(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInfo) {
 NTSTATUS DOKAN_CALLBACK EncFSSetEndOfFile(
     LPCWSTR FileName, LONGLONG ByteOffset, PDOKAN_FILE_INFO DokanFileInfo) {
 
-    DbgPrint(L"SetEndOfFile: '%s' newSize=%I64d\n", FileName, ByteOffset);
+    DbgPrintV(L"SetEndOfFile: '%s' newSize=%I64d\n", FileName, ByteOffset);
 
     if (!DokanFileInfo->Context) {
-        DbgPrint(L"  [WARN] Context is NULL\n");
+        DbgPrintV(L"  [WARN] Context is NULL\n");
         return STATUS_INVALID_HANDLE;
     }
 
@@ -131,7 +131,7 @@ NTSTATUS DOKAN_CALLBACK EncFSSetEndOfFile(
         return DokanNtStatusFromWin32(error);
     }
 
-    DbgPrint(L"SetEndOfFile: '%s' OK\n", FileName);
+    DbgPrintV(L"SetEndOfFile: '%s' OK\n", FileName);
     return STATUS_SUCCESS;
 }
 
@@ -146,7 +146,7 @@ NTSTATUS DOKAN_CALLBACK EncFSGetFileInformation(
     LPCWSTR FileName, LPBY_HANDLE_FILE_INFORMATION HandleFileInformation,
     PDOKAN_FILE_INFO DokanFileInfo) {
 
-    DbgPrint(L"GetFileInfo: '%s' isDir=%d\n", FileName, DokanFileInfo->IsDirectory);
+    DbgPrintV(L"GetFileInfo: '%s' isDir=%d\n", FileName, DokanFileInfo->IsDirectory);
 
     EncFS::EncFSFile* encfsFile;
     std::unique_ptr<EncFS::EncFSFile> tempEncFSFile;
@@ -155,7 +155,7 @@ NTSTATUS DOKAN_CALLBACK EncFSGetFileInformation(
     if (!DokanFileInfo->Context) {
         WCHAR filePath[DOKAN_MAX_PATH];
         GetFilePath(filePath, FileName, false);
-        DbgPrint(L"  [INFO] Context is NULL (cleanup occurred?), opening temp handle\n");
+        DbgPrintV(L"  [INFO] Context is NULL (cleanup occurred?), opening temp handle\n");
         HANDLE handle = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, NULL,
             OPEN_EXISTING, 0, NULL);
         if (handle == INVALID_HANDLE_VALUE) {
@@ -172,13 +172,13 @@ NTSTATUS DOKAN_CALLBACK EncFSGetFileInformation(
 
     if (!GetFileInformationByHandle(encfsFile->getHandle(), HandleFileInformation)) {
         DWORD error = GetLastError();
-        DbgPrint(L"  [WARN] GetFileInformationByHandle failed (error=%lu), using fallback\n", error);
+        DbgPrintV(L"  [WARN] GetFileInformationByHandle failed (error=%lu), using fallback\n", error);
         WCHAR filePath[DOKAN_MAX_PATH];
         GetFilePath(filePath, FileName, false);
 
         // Fallback: use GetFileAttributes for root, FindFirstFile for others
         if (wcslen(FileName) == 1) {
-            DbgPrint(L"  [INFO] Root directory fallback\n");
+            DbgPrintV(L"  [INFO] Root directory fallback\n");
             HandleFileInformation->dwFileAttributes = GetFileAttributesW(filePath);
         }
         else {
@@ -205,10 +205,10 @@ NTSTATUS DOKAN_CALLBACK EncFSGetFileInformation(
         int64_t logicalSize = encfs.isReverse() ? encfs.toEncodedLength(physicalSize) : encfs.toDecodedLength(physicalSize);
         HandleFileInformation->nFileSizeLow = logicalSize & MAXDWORD;
         HandleFileInformation->nFileSizeHigh = (logicalSize >> 32) & MAXDWORD;
-        DbgPrint(L"  [INFO] Size: physical=%I64d -> logical=%I64d\n", physicalSize, logicalSize);
+        DbgPrintV(L"  [INFO] Size: physical=%I64d -> logical=%I64d\n", physicalSize, logicalSize);
     }
 
-    DbgPrint(L"GetFileInfo: '%s' OK (attr=0x%08X)\n", FileName, HandleFileInformation->dwFileAttributes);
+    DbgPrintV(L"GetFileInfo: '%s' OK (attr=0x%08X)\n", FileName, HandleFileInformation->dwFileAttributes);
     return STATUS_SUCCESS;
 }
 
@@ -222,10 +222,10 @@ NTSTATUS DOKAN_CALLBACK EncFSGetFileInformation(
 NTSTATUS DOKAN_CALLBACK EncFSSetAllocationSize(
     LPCWSTR FileName, LONGLONG AllocSize, PDOKAN_FILE_INFO DokanFileInfo) {
 
-    DbgPrint(L"SetAllocationSize: '%s' allocSize=%I64d\n", FileName, AllocSize);
+    DbgPrintV(L"SetAllocationSize: '%s' allocSize=%I64d\n", FileName, AllocSize);
 
     if (!DokanFileInfo->Context) {
-        DbgPrint(L"  [WARN] Context is NULL\n");
+        DbgPrintV(L"  [WARN] Context is NULL\n");
         return STATUS_INVALID_HANDLE;
     }
 
@@ -239,7 +239,7 @@ NTSTATUS DOKAN_CALLBACK EncFSSetAllocationSize(
         size_t decodedFileSize = encfs.toDecodedLength(encodedFileSize.QuadPart);
         // Truncate only if new allocation is smaller than current logical size
         if (AllocSize < (int64_t)decodedFileSize) {
-            DbgPrint(L"  [INFO] Truncating: %I64d -> %I64d\n", (int64_t)decodedFileSize, AllocSize);
+            DbgPrintV(L"  [INFO] Truncating: %I64d -> %I64d\n", (int64_t)decodedFileSize, AllocSize);
             if (!encfsFile->setLength(FileName, AllocSize)) {
                 DWORD error = GetLastError();
                 ErrorPrint(L"SetAllocationSize: '%s' setLength FAILED (error=%lu)\n", FileName, error);
@@ -247,7 +247,7 @@ NTSTATUS DOKAN_CALLBACK EncFSSetAllocationSize(
             }
         }
         else {
-            DbgPrint(L"  [INFO] No truncation needed (current=%I64d >= alloc=%I64d)\n", (int64_t)decodedFileSize, AllocSize);
+            DbgPrintV(L"  [INFO] No truncation needed (current=%I64d >= alloc=%I64d)\n", (int64_t)decodedFileSize, AllocSize);
         }
     }
     else {
@@ -256,7 +256,7 @@ NTSTATUS DOKAN_CALLBACK EncFSSetAllocationSize(
         return DokanNtStatusFromWin32(error);
     }
 
-    DbgPrint(L"SetAllocationSize: '%s' OK\n", FileName);
+    DbgPrintV(L"SetAllocationSize: '%s' OK\n", FileName);
     return STATUS_SUCCESS;
 }
 
@@ -271,7 +271,7 @@ NTSTATUS DOKAN_CALLBACK EncFSSetFileAttributes(
     LPCWSTR FileName, DWORD FileAttributes, PDOKAN_FILE_INFO DokanFileInfo) {
     UNREFERENCED_PARAMETER(DokanFileInfo);
 
-    DbgPrint(L"SetFileAttributes: '%s' attr=0x%08X\n", FileName, FileAttributes);
+    DbgPrintV(L"SetFileAttributes: '%s' attr=0x%08X\n", FileName, FileAttributes);
 
     // A value of 0 means no change requested
     if (FileAttributes != 0) {
@@ -284,10 +284,10 @@ NTSTATUS DOKAN_CALLBACK EncFSSetFileAttributes(
         }
     }
     else {
-        DbgPrint(L"  [INFO] Attributes=0, no change needed\n");
+        DbgPrintV(L"  [INFO] Attributes=0, no change needed\n");
     }
 
-    DbgPrint(L"SetFileAttributes: '%s' OK\n", FileName);
+    DbgPrintV(L"SetFileAttributes: '%s' OK\n", FileName);
     return STATUS_SUCCESS;
 }
 
@@ -305,14 +305,14 @@ EncFSSetFileTime(LPCWSTR FileName, CONST FILETIME* CreationTime,
     CONST FILETIME* LastAccessTime, CONST FILETIME* LastWriteTime,
     PDOKAN_FILE_INFO DokanFileInfo) {
 
-    DbgPrint(L"SetFileTime: '%s' (create=%s, access=%s, write=%s)\n",
+    DbgPrintV(L"SetFileTime: '%s' (create=%s, access=%s, write=%s)\n",
         FileName,
         CreationTime ? L"set" : L"null",
         LastAccessTime ? L"set" : L"null",
         LastWriteTime ? L"set" : L"null");
 
     if (!DokanFileInfo->Context) {
-        DbgPrint(L"  [WARN] Context is NULL\n");
+        DbgPrintV(L"  [WARN] Context is NULL\n");
         return STATUS_INVALID_HANDLE;
     }
     EncFS::EncFSFile* encfsFile = ToEncFSFile(DokanFileInfo->Context);
@@ -323,7 +323,7 @@ EncFSSetFileTime(LPCWSTR FileName, CONST FILETIME* CreationTime,
         return DokanNtStatusFromWin32(error);
     }
 
-    DbgPrint(L"SetFileTime: '%s' OK\n", FileName);
+    DbgPrintV(L"SetFileTime: '%s' OK\n", FileName);
     return STATUS_SUCCESS;
 }
 
@@ -341,10 +341,10 @@ EncFSUnlockFile(LPCWSTR FileName, LONGLONG ByteOffset, LONGLONG Length,
     LARGE_INTEGER length;
     LARGE_INTEGER offset;
 
-    DbgPrint(L"UnlockFile: '%s' offset=%I64d len=%I64d\n", FileName, ByteOffset, Length);
+    DbgPrintV(L"UnlockFile: '%s' offset=%I64d len=%I64d\n", FileName, ByteOffset, Length);
 
     if (!DokanFileInfo->Context) {
-        DbgPrint(L"  [WARN] Context is NULL\n");
+        DbgPrintV(L"  [WARN] Context is NULL\n");
         return STATUS_INVALID_HANDLE;
     }
 
@@ -359,7 +359,7 @@ EncFSUnlockFile(LPCWSTR FileName, LONGLONG ByteOffset, LONGLONG Length,
         return DokanNtStatusFromWin32(error);
     }
 
-    DbgPrint(L"UnlockFile: '%s' OK\n", FileName);
+    DbgPrintV(L"UnlockFile: '%s' OK\n", FileName);
     return STATUS_SUCCESS;
 }
 
@@ -383,7 +383,7 @@ NTSTATUS DOKAN_CALLBACK EncFSGetFileSecurity(
     UNREFERENCED_PARAMETER(DokanFileInfo);
 
     GetFilePath(filePath, FileName, false);
-    DbgPrint(L"GetFileSecurity: '%s' secInfo=0x%08X bufLen=%lu\n", FileName, *SecurityInformation, BufferLength);
+    DbgPrintV(L"GetFileSecurity: '%s' secInfo=0x%08X bufLen=%lu\n", FileName, *SecurityInformation, BufferLength);
 
     requestingSaclInfo = ((*SecurityInformation & SACL_SECURITY_INFORMATION) ||
         (*SecurityInformation & BACKUP_SECURITY_INFORMATION));
@@ -392,10 +392,10 @@ NTSTATUS DOKAN_CALLBACK EncFSGetFileSecurity(
     if (!g_efo.g_HasSeSecurityPrivilege) {
         *SecurityInformation &= ~SACL_SECURITY_INFORMATION;
         *SecurityInformation &= ~BACKUP_SECURITY_INFORMATION;
-        DbgPrint(L"  [INFO] SeSecurityPrivilege not held, SACL info stripped\n");
+        DbgPrintV(L"  [INFO] SeSecurityPrivilege not held, SACL info stripped\n");
     }
 
-    DbgPrint(L"  [INFO] Opening handle with READ_CONTROL access\n");
+    DbgPrintV(L"  [INFO] Opening handle with READ_CONTROL access\n");
     HANDLE handle = CreateFileW(
         filePath,
         READ_CONTROL | ((requestingSaclInfo && g_efo.g_HasSeSecurityPrivilege) ? ACCESS_SYSTEM_SECURITY : 0),
@@ -417,7 +417,7 @@ NTSTATUS DOKAN_CALLBACK EncFSGetFileSecurity(
     if (!GetKernelObjectSecurity(handle, *SecurityInformation, SecurityDescriptor, BufferLength, LengthNeeded)) {
         int error = GetLastError();
         if (error == ERROR_INSUFFICIENT_BUFFER) {
-            DbgPrint(L"  [INFO] Buffer too small (needed=%lu, provided=%lu)\n", *LengthNeeded, BufferLength);
+            DbgPrintV(L"  [INFO] Buffer too small (needed=%lu, provided=%lu)\n", *LengthNeeded, BufferLength);
             return STATUS_BUFFER_OVERFLOW;
         }
         else {
@@ -427,7 +427,7 @@ NTSTATUS DOKAN_CALLBACK EncFSGetFileSecurity(
     }
 
     *LengthNeeded = GetSecurityDescriptorLength(SecurityDescriptor);
-    DbgPrint(L"GetFileSecurity: '%s' OK (sdLen=%lu)\n", FileName, *LengthNeeded);
+    DbgPrintV(L"GetFileSecurity: '%s' OK (sdLen=%lu)\n", FileName, *LengthNeeded);
     return STATUS_SUCCESS;
 }
 
@@ -446,10 +446,10 @@ NTSTATUS DOKAN_CALLBACK EncFSSetFileSecurity(
     PDOKAN_FILE_INFO DokanFileInfo) {
 
     UNREFERENCED_PARAMETER(SecurityDescriptorLength);
-    DbgPrint(L"SetFileSecurity: '%s' secInfo=0x%08X\n", FileName, *SecurityInformation);
+    DbgPrintV(L"SetFileSecurity: '%s' secInfo=0x%08X\n", FileName, *SecurityInformation);
 
     if (!DokanFileInfo->Context) {
-        DbgPrint(L"  [WARN] Context is NULL\n");
+        DbgPrintV(L"  [WARN] Context is NULL\n");
         return STATUS_INVALID_HANDLE;
     }
     EncFS::EncFSFile* encfsFile = ToEncFSFile(DokanFileInfo->Context);
@@ -465,7 +465,7 @@ NTSTATUS DOKAN_CALLBACK EncFSSetFileSecurity(
         }
     }
 
-    DbgPrint(L"SetFileSecurity: '%s' OK\n", FileName);
+    DbgPrintV(L"SetFileSecurity: '%s' OK\n", FileName);
     return STATUS_SUCCESS;
 }
 
@@ -488,7 +488,7 @@ NTSTATUS DOKAN_CALLBACK EncFSGetVolumeInformation(
     PDOKAN_FILE_INFO DokanFileInfo) {
     UNREFERENCED_PARAMETER(DokanFileInfo);
 
-    DbgPrint(L"GetVolumeInformation\n");
+    DbgPrintV(L"GetVolumeInformation\n");
 
     WCHAR volumeRoot[4];
     DWORD fsFlags = 0;
@@ -526,10 +526,10 @@ NTSTATUS DOKAN_CALLBACK EncFSGetVolumeInformation(
                 *FileSystemFlags &= ~FILE_NAMED_STREAMS;
             }
         }
-        DbgPrint(L"  [INFO] Underlying FS: '%s', flags=0x%08X\n", FileSystemNameBuffer, fsFlags);
+        DbgPrintV(L"  [INFO] Underlying FS: '%s', flags=0x%08X\n", FileSystemNameBuffer, fsFlags);
     }
     else {
-        DbgPrint(L"  [WARN] GetVolumeInformation for '%s' failed, using NTFS defaults\n", volumeRoot);
+        DbgPrintV(L"  [WARN] GetVolumeInformation for '%s' failed, using NTFS defaults\n", volumeRoot);
         wcscpy_s(FileSystemNameBuffer, FileSystemNameSize, L"NTFS");
     }
 
@@ -544,7 +544,7 @@ NTSTATUS DOKAN_CALLBACK EncFSGetVolumeInformation(
         }
     }
 
-    DbgPrint(L"GetVolumeInformation: OK (name='%s', fs='%s', serial=0x%08X)\n", 
+    DbgPrintV(L"GetVolumeInformation: OK (name='%s', fs='%s', serial=0x%08X)\n", 
              VolumeNameBuffer, FileSystemNameBuffer, VolumeSerialNumber ? *VolumeSerialNumber : 0);
     return STATUS_SUCCESS;
 }
@@ -582,7 +582,7 @@ NTSTATUS DOKAN_CALLBACK EncFSDokanGetDiskFreeSpace(
     *TotalNumberOfBytes = (ULONGLONG)lpTotalNumberOfBytes.QuadPart;
     *TotalNumberOfFreeBytes = (ULONGLONG)lpTotalNumberOfFreeBytes.QuadPart;
 
-    DbgPrint(L"GetDiskFreeSpace: total=%I64u, free=%I64u, avail=%I64u\n",
+    DbgPrintV(L"GetDiskFreeSpace: total=%I64u, free=%I64u, avail=%I64u\n",
         *TotalNumberOfBytes, *TotalNumberOfFreeBytes, *FreeBytesAvailable);
     return STATUS_SUCCESS;
 }
@@ -601,7 +601,7 @@ NTSTATUS DOKAN_CALLBACK EncFSMounted(LPCWSTR MountPoint, PDOKAN_FILE_INFO DokanF
     if (!g_efo.g_DebugMode) {
         wchar_t buff[20];
         if (swprintf_s(buff, 20, L"%s:\\", MountPoint) != -1) {
-            DbgPrint(L"  [INFO] Opening Explorer at '%s'\n", buff);
+            DbgPrintV(L"  [INFO] Opening Explorer at '%s'\n", buff);
             ShellExecuteW(NULL, NULL, buff, NULL, NULL, SW_SHOWNORMAL);
         }
     }

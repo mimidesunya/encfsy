@@ -53,7 +53,7 @@ static void PrintUserName(PDOKAN_FILE_INFO DokanFileInfo) {
 
     HANDLE handle = DokanOpenRequestorToken(DokanFileInfo);
     if (handle == INVALID_HANDLE_VALUE) {
-        DbgPrint(L"  [DEBUG] DokanOpenRequestorToken failed\n");
+        DbgPrintV(L"  [DEBUG] DokanOpenRequestorToken failed\n");
         return;
     }
     // RAII guard for token handle
@@ -63,7 +63,7 @@ static void PrintUserName(PDOKAN_FILE_INFO DokanFileInfo) {
     UCHAR buffer[1024];
     DWORD returnLength;
     if (!GetTokenInformation(handle, TokenUser, buffer, sizeof(buffer), &returnLength)) {
-        DbgPrint(L"  [DEBUG] GetTokenInformation failed (error=%lu)\n", GetLastError());
+        DbgPrintV(L"  [DEBUG] GetTokenInformation failed (error=%lu)\n", GetLastError());
         return;
     }
 
@@ -76,11 +76,11 @@ static void PrintUserName(PDOKAN_FILE_INFO DokanFileInfo) {
 
     if (!LookupAccountSid(NULL, tokenUser->User.Sid, accountName, &accountLength,
         domainName, &domainLength, &snu)) {
-        DbgPrint(L"  [DEBUG] LookupAccountSid failed (error=%lu)\n", GetLastError());
+        DbgPrintV(L"  [DEBUG] LookupAccountSid failed (error=%lu)\n", GetLastError());
         return;
     }
 
-    DbgPrint(L"  [DEBUG] Requestor: %s\\%s\n", domainName, accountName);
+    DbgPrintV(L"  [DEBUG] Requestor: %s\\%s\n", domainName, accountName);
 }
 
 /**
@@ -176,7 +176,7 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
                 DokanFileInfo->IsDirectory = TRUE;
                 ShareAccess |= FILE_SHARE_READ;
             } else {
-                DbgPrint(L"  [INFO] Directory found but FILE_NON_DIRECTORY_FILE specified\n");
+                DbgPrintV(L"  [INFO] Directory found but FILE_NON_DIRECTORY_FILE specified\n");
                 return STATUS_FILE_IS_A_DIRECTORY;
             }
         }
@@ -210,7 +210,7 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
                     if (reverter.active) RevertToSelf();
                     return DokanNtStatusFromWin32(error);
                 }
-                DbgPrint(L"  [INFO] Directory already exists\n");
+                DbgPrintV(L"  [INFO] Directory already exists\n");
             }
             if (reverter.active) RevertToSelf();
         }
@@ -220,7 +220,7 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
             if (fileAttr != INVALID_FILE_ATTRIBUTES &&
                 !(fileAttr & FILE_ATTRIBUTE_DIRECTORY) &&
                 (CreateOptions & FILE_DIRECTORY_FILE)) {
-                DbgPrint(L"  [INFO] Expected directory but found file\n");
+                DbgPrintV(L"  [INFO] Expected directory but found file\n");
                 return STATUS_NOT_A_DIRECTORY;
             }
             // Open directory handle
@@ -248,7 +248,7 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
         if ((fileAttr != INVALID_FILE_ATTRIBUTES && (fileAttr & FILE_ATTRIBUTE_READONLY) ||
             (fileAttributesAndFlags & FILE_ATTRIBUTE_READONLY)) &&
             (fileAttributesAndFlags & FILE_FLAG_DELETE_ON_CLOSE)) {
-            DbgPrint(L"  [INFO] Cannot delete read-only file\n");
+            DbgPrintV(L"  [INFO] Cannot delete read-only file\n");
             return STATUS_CANNOT_DELETE;
         }
         
@@ -342,10 +342,10 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
  * @param DokanFileInfo Dokan file context.
  */
 void DOKAN_CALLBACK EncFSCloseFile(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInfo) {
-    DbgPrint(L"CloseFile: '%s'\n", FileName);
+    DbgPrintV(L"CloseFile: '%s'\n", FileName);
 
     if (DokanFileInfo->Context) {
-        DbgPrint(L"CloseFile: '%s' - Deleting EncFSFile object\n", FileName);
+        DbgPrintV(L"CloseFile: '%s' - Deleting EncFSFile object\n", FileName);
         EncFS::EncFSFile* encfsFile = ToEncFSFile(DokanFileInfo->Context);
         delete encfsFile;
         DokanFileInfo->Context = 0;
@@ -365,7 +365,7 @@ void DOKAN_CALLBACK EncFSCloseFile(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileI
  * @param DokanFileInfo Dokan file context.
  */
 void DOKAN_CALLBACK EncFSCleanup(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInfo) {
-    DbgPrint(L"Cleanup: '%s' (deletePending=%d)\n", FileName, DokanFileInfo->DeletePending);
+    DbgPrintV(L"Cleanup: '%s' (deletePending=%d)\n", FileName, DokanFileInfo->DeletePending);
 
     if (DokanFileInfo->Context) {
         EncFS::EncFSFile* encfsFile = ToEncFSFile(DokanFileInfo->Context);
@@ -374,10 +374,10 @@ void DOKAN_CALLBACK EncFSCleanup(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInf
         // Pending I/O operations will get INVALID_HANDLE errors but won't crash
         encfsFile->flush();
         encfsFile->closeHandle();
-        DbgPrint(L"Cleanup: '%s' - Handle closed\n", FileName);
+        DbgPrintV(L"Cleanup: '%s' - Handle closed\n", FileName);
     }
     else {
-        DbgPrint(L"  [WARN] Context already NULL for '%s'\n", FileName);
+        DbgPrintV(L"  [WARN] Context already NULL for '%s'\n", FileName);
     }
 
     // Perform deferred deletion if requested
@@ -386,21 +386,21 @@ void DOKAN_CALLBACK EncFSCleanup(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInf
         GetFilePath(filePath, FileName, false);
 
         if (DokanFileInfo->IsDirectory) {
-            DbgPrint(L"  [INFO] Deleting directory '%s'\n", FileName);
+            DbgPrintV(L"  [INFO] Deleting directory '%s'\n", FileName);
             if (!RemoveDirectoryW(filePath)) {
                 ErrorPrint(L"Cleanup: RemoveDirectory '%s' FAILED (error=%lu)\n", FileName, GetLastError());
             }
             else {
-                DbgPrint(L"Cleanup: Directory '%s' deleted OK\n", FileName);
+                DbgPrintV(L"Cleanup: Directory '%s' deleted OK\n", FileName);
             }
         }
         else {
-            DbgPrint(L"  [INFO] Deleting file '%s'\n", FileName);
+            DbgPrintV(L"  [INFO] Deleting file '%s'\n", FileName);
             if (DeleteFileW(filePath) == 0) {
                 ErrorPrint(L"Cleanup: DeleteFile '%s' FAILED (error=%lu)\n", FileName, GetLastError());
             }
             else {
-                DbgPrint(L"Cleanup: File '%s' deleted OK\n", FileName);
+                DbgPrintV(L"Cleanup: File '%s' deleted OK\n", FileName);
             }
         }
     }
@@ -420,13 +420,13 @@ EncFSDeleteFile(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInfo) {
     WCHAR filePath[DOKAN_MAX_PATH];
 
     GetFilePath(filePath, FileName, false);
-    DbgPrint(L"DeleteFile: '%s' (pending=%d)\n", FileName, DokanFileInfo->DeletePending);
+    DbgPrintV(L"DeleteFile: '%s' (pending=%d)\n", FileName, DokanFileInfo->DeletePending);
 
     DWORD dwAttrib = GetFileAttributesW(filePath);
 
     // Cannot use DeleteFile on directories
     if (dwAttrib != INVALID_FILE_ATTRIBUTES && (dwAttrib & FILE_ATTRIBUTE_DIRECTORY)) {
-        DbgPrint(L"  [INFO] Cannot delete directory using DeleteFile\n");
+        DbgPrintV(L"  [INFO] Cannot delete directory using DeleteFile\n");
         return STATUS_ACCESS_DENIED;
     }
 
@@ -452,7 +452,7 @@ EncFSDeleteDirectory(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInfo) {
     WCHAR filePath[DOKAN_MAX_PATH];
 
     GetFilePath(filePath, FileName, false);
-    DbgPrint(L"DeleteDirectory: '%s' (pending=%d)\n", FileName, DokanFileInfo->DeletePending);
+    DbgPrintV(L"DeleteDirectory: '%s' (pending=%d)\n", FileName, DokanFileInfo->DeletePending);
 
     // Pre-check always succeeds
     if (!DokanFileInfo->DeletePending) {
@@ -483,7 +483,7 @@ EncFSDeleteDirectory(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInfo) {
     do {
         if (wcscmp(findData.cFileName, L"..") != 0 &&
             wcscmp(findData.cFileName, L".") != 0) {
-            DbgPrint(L"  [INFO] Directory not empty: contains '%s'\n", findData.cFileName);
+            DbgPrintV(L"  [INFO] Directory not empty: contains '%s'\n", findData.cFileName);
             return STATUS_DIRECTORY_NOT_EMPTY;
         }
     } while (FindNextFileW(hFind, &findData) != 0);
@@ -494,7 +494,7 @@ EncFSDeleteDirectory(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInfo) {
         return DokanNtStatusFromWin32(error);
     }
 
-    DbgPrint(L"DeleteDirectory: '%s' is empty, ready for deletion\n", FileName);
+    DbgPrintV(L"DeleteDirectory: '%s' is empty, ready for deletion\n", FileName);
     return STATUS_SUCCESS;
 }
 
@@ -520,7 +520,7 @@ NTSTATUS DOKAN_CALLBACK EncFSReadFile(LPCWSTR FileName, LPVOID Buffer,
     EncFS::EncFSFile* encfsFile;
     std::unique_ptr<EncFS::EncFSFile> tempEncFSFile;
 
-    DbgPrint(L"ReadFile: '%s' offset=%I64d len=%lu\n", FileName, Offset, BufferLength);
+    DbgPrintV(L"ReadFile: '%s' offset=%I64d len=%lu\n", FileName, Offset, BufferLength);
 
     // Open temporary handle if context is unavailable
     if (!DokanFileInfo->Context) {
@@ -537,7 +537,7 @@ NTSTATUS DOKAN_CALLBACK EncFSReadFile(LPCWSTR FileName, LPVOID Buffer,
             return STATUS_OBJECT_NAME_INVALID;
         }
         
-        DbgPrint(L"ReadFile: '%s' - Context NULL, opening temp handle\n", FileName);
+        DbgPrintV(L"ReadFile: '%s' - Context NULL, opening temp handle\n", FileName);
         HANDLE handle = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, NULL,
             OPEN_EXISTING, 0, NULL);
         if (handle == INVALID_HANDLE_VALUE) {
@@ -566,7 +566,7 @@ NTSTATUS DOKAN_CALLBACK EncFSReadFile(LPCWSTR FileName, LPVOID Buffer,
         size_t suffix_len = wcslen(suffix);
         plain = str_len >= suffix_len && 0 == wcscmp(FileName + str_len - suffix_len, suffix);
         if (plain) {
-            DbgPrint(L"  [INFO] Dropbox attr stream, using plaintext read\n");
+            DbgPrintV(L"  [INFO] Dropbox attr stream, using plaintext read\n");
         }
     }
 
@@ -585,7 +585,7 @@ NTSTATUS DOKAN_CALLBACK EncFSReadFile(LPCWSTR FileName, LPVOID Buffer,
                 // Config file is never encrypted
                 if (len >= 12 && wcscmp(filePath + len - 12, L"\\.encfs6.xml") == 0) {
                     plain = true;
-                    DbgPrint(L"  [INFO] Config file, using plaintext read\n");
+                    DbgPrintV(L"  [INFO] Config file, using plaintext read\n");
                 }
                 else {
                     readLen = encfsFile->reverseRead(FileName, (char*)Buffer, offset, BufferLength);
@@ -623,7 +623,7 @@ NTSTATUS DOKAN_CALLBACK EncFSReadFile(LPCWSTR FileName, LPVOID Buffer,
     }
 
     *ReadLength = readLen;
-    DbgPrint(L"ReadFile: '%s' OK (requested=%lu, read=%lu, offset=%I64d)\n", 
+    DbgPrintV(L"ReadFile: '%s' OK (requested=%lu, read=%lu, offset=%I64d)\n", 
         FileName, BufferLength, *ReadLength, Offset);
 
     return STATUS_SUCCESS;
@@ -647,7 +647,7 @@ NTSTATUS DOKAN_CALLBACK EncFSWriteFile(LPCWSTR FileName, LPCVOID Buffer,
     DWORD NumberOfBytesToWrite, LPDWORD NumberOfBytesWritten,
     LONGLONG Offset, PDOKAN_FILE_INFO DokanFileInfo) {
 
-    DbgPrint(L"WriteFile: '%s' offset=%I64d len=%lu (writeToEOF=%d, pagingIO=%d)\n", 
+    DbgPrintV(L"WriteFile: '%s' offset=%I64d len=%lu (writeToEOF=%d, pagingIO=%d)\n", 
         FileName, Offset, NumberOfBytesToWrite, 
         DokanFileInfo->WriteToEndOfFile, DokanFileInfo->PagingIo);
 
@@ -659,7 +659,7 @@ NTSTATUS DOKAN_CALLBACK EncFSWriteFile(LPCWSTR FileName, LPCVOID Buffer,
     if (!DokanFileInfo->Context) {
         WCHAR filePath[DOKAN_MAX_PATH];
         GetFilePath(filePath, FileName, false);
-        DbgPrint(L"WriteFile: '%s' - Context NULL, opening temp handle\n", FileName);
+        DbgPrintV(L"WriteFile: '%s' - Context NULL, opening temp handle\n", FileName);
         HANDLE handle = CreateFileW(filePath, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_WRITE, NULL,
             OPEN_EXISTING, 0, NULL);
         if (handle == INVALID_HANDLE_VALUE) {
@@ -693,19 +693,19 @@ NTSTATUS DOKAN_CALLBACK EncFSWriteFile(LPCWSTR FileName, LPCVOID Buffer,
     size_t off;
     if (DokanFileInfo->WriteToEndOfFile) {
         off = fileSize;
-        DbgPrint(L"  [INFO] Write to EOF: offset adjusted to %I64u\n", (UINT64)off);
+        DbgPrintV(L"  [INFO] Write to EOF: offset adjusted to %I64u\n", (UINT64)off);
     }
     else {
         // Paging I/O cannot extend file beyond allocated size
         if (DokanFileInfo->PagingIo) {
             if ((UINT64)Offset >= fileSize) {
-                DbgPrint(L"  [INFO] PagingIO offset beyond EOF, returning 0 bytes\n");
+                DbgPrintV(L"  [INFO] PagingIO offset beyond EOF, returning 0 bytes\n");
                 *NumberOfBytesWritten = 0;
                 return STATUS_SUCCESS;
             }
             if (((UINT64)Offset + NumberOfBytesToWrite) > fileSize) {
                 UINT64 bytes = fileSize - Offset;
-                DbgPrint(L"  [INFO] PagingIO truncated write: %lu -> %I64u\n", NumberOfBytesToWrite, bytes);
+                DbgPrintV(L"  [INFO] PagingIO truncated write: %lu -> %I64u\n", NumberOfBytesToWrite, bytes);
                 NumberOfBytesToWrite = (DWORD)bytes;
             }
         }
@@ -720,7 +720,7 @@ NTSTATUS DOKAN_CALLBACK EncFSWriteFile(LPCWSTR FileName, LPCVOID Buffer,
         size_t suffix_len = wcslen(suffix);
         plain = str_len >= suffix_len && 0 == wcscmp(FileName + str_len - suffix_len, suffix);
         if (plain) {
-            DbgPrint(L"  [INFO] Dropbox attr stream, using plaintext write\n");
+            DbgPrintV(L"  [INFO] Dropbox attr stream, using plaintext write\n");
         }
     }
 
@@ -753,7 +753,7 @@ NTSTATUS DOKAN_CALLBACK EncFSWriteFile(LPCWSTR FileName, LPCVOID Buffer,
     }
     *NumberOfBytesWritten = writtenLen;
 
-    DbgPrint(L"WriteFile: '%s' OK (requested=%lu, written=%lu)\n", FileName, NumberOfBytesToWrite, writtenLen);
+    DbgPrintV(L"WriteFile: '%s' OK (requested=%lu, written=%lu)\n", FileName, NumberOfBytesToWrite, writtenLen);
     return STATUS_SUCCESS;
 }
 
@@ -792,7 +792,7 @@ EncFSFindFiles(LPCWSTR FileName,
         return STATUS_OBJECT_NAME_INVALID;
     }
     
-    DbgPrint(L"FindFiles: '%s' -> '%s'\n", FileName, filePath);
+    DbgPrintV(L"FindFiles: '%s' -> '%s'\n", FileName, filePath);
 
     fileLen = wcslen(filePath);
     if (fileLen + 2 >= DOKAN_MAX_PATH) return STATUS_BUFFER_OVERFLOW;
@@ -842,7 +842,7 @@ EncFSFindFiles(LPCWSTR FileName,
             try {
                 ccFileName = strConv.to_bytes(wcFileName);
                 if (wcFileName.length() > 0 && ccFileName.empty()) {
-                    DbgPrint(L"  [WARN] Skipping file (conversion failed): '%s'\n", findData.cFileName);
+                    DbgPrintV(L"  [WARN] Skipping file (conversion failed): '%s'\n", findData.cFileName);
                     continue;
                 }
                 
@@ -862,11 +862,11 @@ EncFSFindFiles(LPCWSTR FileName,
             }
             catch (const EncFS::EncFSInvalidBlockException&) {
                 // Skip files with invalid encrypted names
-                DbgPrint(L"  [WARN] Skipping file (invalid encryption): '%s'\n", findData.cFileName);
+                DbgPrintV(L"  [WARN] Skipping file (invalid encryption): '%s'\n", findData.cFileName);
                 continue;
             }
             catch (const std::exception& ex) {
-                DbgPrint(L"  [WARN] Skipping file (exception: %S): '%s'\n", ex.what(), findData.cFileName);
+                DbgPrintV(L"  [WARN] Skipping file (exception: %S): '%s'\n", ex.what(), findData.cFileName);
                 continue;
             }
             
@@ -874,12 +874,12 @@ EncFSFindFiles(LPCWSTR FileName,
             try {
                 wPlainFileName = strConv.from_bytes(cPlainFileName);
                 if (cPlainFileName.length() > 0 && wPlainFileName.empty()) {
-                    DbgPrint(L"  [WARN] Skipping file (back-conversion failed)\n");
+                    DbgPrintV(L"  [WARN] Skipping file (back-conversion failed)\n");
                     continue;
                 }
             }
             catch (const std::exception& ex) {
-                DbgPrint(L"  [WARN] Skipping file (exception: %S)\n", ex.what());
+                DbgPrintV(L"  [WARN] Skipping file (exception: %S)\n", ex.what());
                 continue;
             }
             
@@ -903,7 +903,7 @@ EncFSFindFiles(LPCWSTR FileName,
         return DokanNtStatusFromWin32(error);
     }
 
-    DbgPrint(L"FindFiles: '%s' OK (entries=%d)\n", FileName, count);
+    DbgPrintV(L"FindFiles: '%s' OK (entries=%d)\n", FileName, count);
     return STATUS_SUCCESS;
 }
 
@@ -934,7 +934,7 @@ static NTSTATUS changeIVRecursive(LPCWSTR newFilePath, const string cOldPlainDir
     size_t oldPathLen = wcslen(oldPath);
     wcscpy_s(newPath, DOKAN_MAX_PATH, oldPath);
 
-    DbgPrint(L"ChangeIVRecursive: '%s'\n", newFilePath);
+    DbgPrintV(L"ChangeIVRecursive: '%s'\n", newFilePath);
 
     WIN32_FIND_DATAW find;
     HANDLE findHandle = FindFirstFileW(findPath, &find);
@@ -960,7 +960,7 @@ static NTSTATUS changeIVRecursive(LPCWSTR newFilePath, const string cOldPlainDir
             encfs.decodeFileName(cOldName, cOldPlainDirPath, plainName);
         }
         catch (const EncFS::EncFSInvalidBlockException&) {
-            DbgPrint(L"  [WARN] Skipping file (invalid name): '%s'\n", find.cFileName);
+            DbgPrintV(L"  [WARN] Skipping file (invalid name): '%s'\n", find.cFileName);
             continue;
         }
 
@@ -978,7 +978,7 @@ static NTSTATUS changeIVRecursive(LPCWSTR newFilePath, const string cOldPlainDir
 
         // Rename file if using chained name IV
         if (encfs.isChainedNameIV()) {
-            DbgPrint(L"  [INFO] Renaming (chained IV): '%s' -> '%s'\n", oldPath, newPath);
+            DbgPrintV(L"  [INFO] Renaming (chained IV): '%s' -> '%s'\n", oldPath, newPath);
             if (!MoveFileW(oldPath, newPath)) {
                 DWORD error = GetLastError();
                 ErrorPrint(L"ChangeIVRecursive: MoveFile FAILED (error=%lu)\n", error);
@@ -1001,7 +1001,7 @@ static NTSTATUS changeIVRecursive(LPCWSTR newFilePath, const string cOldPlainDir
         else {
             // Update file IV if using external IV chaining
             if (encfs.isExternalIVChaining()) {
-                DbgPrint(L"  [INFO] Updating file IV: '%s'\n", newPath);
+                DbgPrintV(L"  [INFO] Updating file IV: '%s'\n", newPath);
                 HANDLE handle2 = CreateFileW(newPath, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_WRITE, NULL,
                     OPEN_EXISTING, 0, NULL);
                 if (handle2 == INVALID_HANDLE_VALUE) {
@@ -1020,7 +1020,7 @@ static NTSTATUS changeIVRecursive(LPCWSTR newFilePath, const string cOldPlainDir
         }
     } while (FindNextFileW(findHandle, &find));
 
-    DbgPrint(L"ChangeIVRecursive: '%s' OK\n", newFilePath);
+    DbgPrintV(L"ChangeIVRecursive: '%s' OK\n", newFilePath);
     return STATUS_SUCCESS;
 }
 
@@ -1052,7 +1052,7 @@ EncFSMoveFile(LPCWSTR FileName, LPCWSTR NewFileName, BOOL ReplaceIfExisting,
         FileName, NewFileName, ReplaceIfExisting, DokanFileInfo->IsDirectory);
 
     if (!DokanFileInfo->Context) {
-        DbgPrint(L"  [WARN] Context is NULL\n");
+        DbgPrintV(L"  [WARN] Context is NULL\n");
         return STATUS_INVALID_HANDLE;
     }
 
@@ -1124,7 +1124,7 @@ EncFSMoveFile(LPCWSTR FileName, LPCWSTR NewFileName, BOOL ReplaceIfExisting,
                         // Collision with different file
                         if (wcscmp(candidate, filePath) != 0) {
                             if (!ReplaceIfExisting) {
-                                DbgPrint(L"  [INFO] Case-insensitive collision detected\n");
+                                DbgPrintV(L"  [INFO] Case-insensitive collision detected\n");
                                 return STATUS_OBJECT_NAME_COLLISION;
                             }
                             break;
@@ -1149,7 +1149,7 @@ EncFSMoveFile(LPCWSTR FileName, LPCWSTR NewFileName, BOOL ReplaceIfExisting,
             delete encfsFile;
             DokanFileInfo->Context = 0;
 
-            DbgPrint(L"  [INFO] Moving directory (with IV update)\n");
+            DbgPrintV(L"  [INFO] Moving directory (with IV update)\n");
             if (!MoveFileW(filePath, newFilePath)) {
                 DWORD error = GetLastError();
                 ErrorPrint(L"MoveFile: MoveFileW FAILED (error=%lu)\n", error);
@@ -1168,7 +1168,7 @@ EncFSMoveFile(LPCWSTR FileName, LPCWSTR NewFileName, BOOL ReplaceIfExisting,
         else {
             // Single file IV update
             if (encfs.isExternalIVChaining()) {
-                DbgPrint(L"  [INFO] Updating file IV for move\n");
+                DbgPrintV(L"  [INFO] Updating file IV for move\n");
                 if (!encfsFile->changeFileIV(FileName, NewFileName)) {
                     DWORD error = GetLastError();
                     ErrorPrint(L"MoveFile: changeFileIV FAILED (error=%lu)\n", error);
@@ -1205,23 +1205,16 @@ EncFSMoveFile(LPCWSTR FileName, LPCWSTR NewFileName, BOOL ReplaceIfExisting,
     }
 }
 
-#pragma warning(push)
-#pragma warning(disable : 4201)
-typedef struct _IO_STATUS_BLOCK {
-    union {
-        NTSTATUS Status;
-        PVOID Pointer;
-    } DUMMYUNIONNAME;
-    ULONG_PTR Information;
-} IO_STATUS_BLOCK, * PIO_STATUS_BLOCK;
-#pragma warning(pop)
-
 /**
- * @brief Enumerates alternate data streams of a file.
+ * @brief Finds alternate data streams for a file.
+ *
+ * This implementation uses FindFirstStreamW and FindNextStreamW to enumerate
+ * streams associated with the file. It translates between Dokan's FIND_STREAM_DATA
+ * structure and the native Windows FIND_STREAM_DATA structure.
  *
  * @param FileName Virtual path of the file.
- * @param FillFindStreamData Callback to add stream entries.
- * @param FindStreamContext Context for the callback.
+ * @param FillFindStreamData Callback to add stream entries to the result set.
+ * @param FindStreamContext Context parameter for FillFindStreamData callback.
  * @param DokanFileInfo Dokan file context.
  * @return NTSTATUS indicating success or failure.
  */
@@ -1237,7 +1230,7 @@ EncFSFindStreams(LPCWSTR FileName, PFillFindStreamData FillFindStreamData,
     int count = 0;
 
     GetFilePath(filePath, FileName, false);
-    DbgPrint(L"FindStreams: '%s'\n", FileName);
+    DbgPrintV(L"FindStreams: '%s'\n", FileName);
 
     hFind = FindFirstStreamW(filePath, FindStreamInfoStandard, &findData, 0);
     if (hFind == INVALID_HANDLE_VALUE) {
@@ -1262,7 +1255,7 @@ EncFSFindStreams(LPCWSTR FileName, PFillFindStreamData FillFindStreamData,
     error = GetLastError();
 
     if (!bufferFull) {
-        DbgPrint(L"FindStreams: '%s' buffer full (entries=%d)\n", FileName, count);
+        DbgPrintV(L"FindStreams: '%s' buffer full (entries=%d)\n", FileName, count);
         return STATUS_SUCCESS;
     }
 
@@ -1271,6 +1264,6 @@ EncFSFindStreams(LPCWSTR FileName, PFillFindStreamData FillFindStreamData,
         return DokanNtStatusFromWin32(error);
     }
 
-    DbgPrint(L"FindStreams: '%s' OK (entries=%d)\n", FileName, count);
+    DbgPrintV(L"FindStreams: '%s' OK (entries=%d)\n", FileName, count);
     return STATUS_SUCCESS;
 }

@@ -29,6 +29,8 @@ namespace EncFS
 	 * When multiple processes/threads open the same file with different handles,
 	 * each gets its own EncFSFile instance. This manager provides file-level
 	 * synchronization to prevent block corruption during concurrent access.
+	 * 
+	 * Optimization: Uses wstring_view-like approach with raw pointers where possible.
 	 */
 	class FileLockManager {
 	public:
@@ -49,11 +51,11 @@ namespace EncFS
 			return instance;
 		}
 		
-		// Get or create a lock for a specific file path
-		std::shared_ptr<FileLockEntry> getLock(const std::wstring& filePath);
+		// Get or create a lock for a specific file path (accepts raw pointer to avoid copy)
+		std::shared_ptr<FileLockEntry> getLock(const wchar_t* filePath);
 		
 		// Release a file lock (decrements ref count, removes if zero)
-		void releaseLock(const std::wstring& filePath);
+		void releaseLock(const wchar_t* filePath);
 		
 		// Prevent copying
 		FileLockManager(const FileLockManager&) = delete;
@@ -62,14 +64,18 @@ namespace EncFS
 	
 	/**
 	 * @brief RAII helper for file-level locking
+	 * 
+	 * Optimized to avoid unnecessary string copies by storing only a pointer
+	 * for short-lived locks (the caller's string must remain valid).
 	 */
 	class FileScopedLock {
 	private:
 		std::shared_ptr<FileLockManager::FileLockEntry> lockEntry;
 		std::unique_lock<std::mutex> lock;
-		std::wstring filePath;  // Store path for releaseLock in destructor
+		const wchar_t* filePathPtr;  // Store pointer to avoid copy (caller must keep string valid)
 	public:
-		FileScopedLock(const std::wstring& filePath);
+		// Constructor for LPCWSTR - avoids wstring copy
+		explicit FileScopedLock(const wchar_t* filePath);
 		~FileScopedLock();
 		
 		// Prevent copying
@@ -144,6 +150,29 @@ namespace EncFS
 		 */
 		inline HANDLE getHandle() const {
 			return this->handle;
+		}
+
+		/**
+		 * @brief Closes the underlying file handle without deleting the object
+		 * 
+		 * This is used during Cleanup to close the handle while keeping the
+		 * EncFSFile object alive. Pending I/O operations will get INVALID_HANDLE
+		 * errors but won't crash since the object is still valid.
+		 */
+		inline void closeHandle() {
+			std::lock_guard<std::mutex> lock(this->mutexLock);
+			if (this->handle && this->handle != INVALID_HANDLE_VALUE) {
+				CloseHandle(this->handle);
+				this->handle = INVALID_HANDLE_VALUE;
+			}
+		}
+
+		/**
+		 * @brief Checks if the file handle is still valid
+		 * @return True if handle is valid, false otherwise
+		 */
+		inline bool isHandleValid() const {
+			return this->handle && this->handle != INVALID_HANDLE_VALUE;
 		}
 
 		/**

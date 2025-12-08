@@ -26,10 +26,12 @@ namespace EncFS {
     // FileLockManager Implementation
     //=========================================================================
     
-    std::shared_ptr<FileLockManager::FileLockEntry> FileLockManager::getLock(const std::wstring& filePath) {
+    std::shared_ptr<FileLockManager::FileLockEntry> FileLockManager::getLock(const wchar_t* filePath) {
         std::lock_guard<std::mutex> guard(mapLock);
         
-        auto it = fileLocks.find(filePath);
+        // Use temporary wstring for map lookup (unavoidable for unordered_map)
+        std::wstring key(filePath);
+        auto it = fileLocks.find(key);
         if (it != fileLocks.end()) {
             it->second->refCount.fetch_add(1, std::memory_order_relaxed);
             return it->second;
@@ -38,11 +40,11 @@ namespace EncFS {
         // Create new lock entry
         auto entry = std::make_shared<FileLockEntry>();
         entry->refCount.store(1, std::memory_order_relaxed);
-        fileLocks[filePath] = entry;
+        fileLocks.emplace(std::move(key), entry);
         return entry;
     }
     
-    void FileLockManager::releaseLock(const std::wstring& filePath) {
+    void FileLockManager::releaseLock(const wchar_t* filePath) {
         std::lock_guard<std::mutex> guard(mapLock);
         
         auto it = fileLocks.find(filePath);
@@ -59,10 +61,10 @@ namespace EncFS {
     // FileScopedLock Implementation
     //=========================================================================
     
-    FileScopedLock::FileScopedLock(const std::wstring& path) 
+    FileScopedLock::FileScopedLock(const wchar_t* path) 
         : lockEntry(FileLockManager::getInstance().getLock(path))
         , lock(lockEntry->lock)
-        , filePath(path)
+        , filePathPtr(path)
     {
     }
     
@@ -70,7 +72,7 @@ namespace EncFS {
         // First release the lock to allow other threads to proceed
         lock.unlock();
         // Then release our reference to the lock entry
-        FileLockManager::getInstance().releaseLock(filePath);
+        FileLockManager::getInstance().releaseLock(filePathPtr);
     }
 
     //=========================================================================
@@ -428,12 +430,7 @@ namespace EncFS {
                     DWORD toRead = (DWORD)(blocksLength - totalRead);
                     if (!ReadFile(this->handle, &this->blockBuffer[0] + totalRead, toRead, &readLen, NULL)) {
                         DWORD err = GetLastError();
-                        if (this->blockBuffer.capacity() > BLOCK_BUFFER_REUSE_THRESHOLD) {
-                            this->blockBuffer.clear();
-                            this->blockBuffer.shrink_to_fit();
-                        } else {
-                            this->blockBuffer.clear();
-                        }
+                        this->blockBuffer.clear();  // Keep capacity
                         SetLastError(err);
                         return -1;
                     }
@@ -446,12 +443,8 @@ namespace EncFS {
 
                 // If nothing was read, return 0 (end of file or reading beyond file)
                 if (totalRead == 0) {
-                    if (this->blockBuffer.capacity() > BLOCK_BUFFER_REUSE_THRESHOLD) {
-                        this->blockBuffer.clear();
-                        this->blockBuffer.shrink_to_fit();
-                    } else {
-                        this->blockBuffer.clear();
-                    }
+                    // Keep capacity for reuse, just clear size
+                    this->blockBuffer.clear();
                     return 0;
                 }
 
@@ -486,13 +479,8 @@ namespace EncFS {
                     readPos += blockLen;
                 }
 
-                // Clear buffer only if it's large to free memory
-                if (this->blockBuffer.capacity() > BLOCK_BUFFER_REUSE_THRESHOLD) {
-                    this->blockBuffer.clear();
-                    this->blockBuffer.shrink_to_fit();
-                } else {
-                    this->blockBuffer.clear();
-                }
+                // Keep capacity for reuse, just clear size
+                this->blockBuffer.clear();
             }
             return copiedLen;
         }
@@ -678,8 +666,9 @@ namespace EncFS {
                 writtenTotal += blockDataLen;
             }
 
-            // Always flush to ensure data is visible to other handles
-            FlushFileBuffers(this->handle);
+            // Note: FlushFileBuffers removed here for performance
+            // The caller (Dokan callback) is responsible for flushing when needed
+            // This improves throughput significantly for sequential writes
 
             return (int32_t)writtenTotal;
         }
@@ -784,13 +773,8 @@ namespace EncFS {
             len = maxAvailable;
         }
         if (i >= (int32_t)len) {
-            // Clear buffer only if it's large
-            if (this->blockBuffer.capacity() > BLOCK_BUFFER_REUSE_THRESHOLD) {
-                this->blockBuffer.clear();
-                this->blockBuffer.shrink_to_fit();
-            } else {
-                this->blockBuffer.clear();
-            }
+            // Keep capacity for reuse
+            this->blockBuffer.clear();
             return i;
         }
 
@@ -836,13 +820,8 @@ namespace EncFS {
             shift = 0;
         }
         
-        // Clear buffer only if it's large
-        if (this->blockBuffer.capacity() > BLOCK_BUFFER_REUSE_THRESHOLD) {
-            this->blockBuffer.clear();
-            this->blockBuffer.shrink_to_fit();
-        } else {
-            this->blockBuffer.clear();
-        }
+        // Keep capacity for reuse
+        this->blockBuffer.clear();
         return i;
     }
 

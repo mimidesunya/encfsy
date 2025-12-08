@@ -57,16 +57,14 @@ void MyPrint(LPCWSTR format, ...) {
 }
 
 /**
- * @brief Debug print (only outputs if debug mode is enabled)
+ * @brief Debug print implementation (only outputs if debug mode is enabled)
  * @param format Wide-character format string (printf-style)
  * @param ... Variable arguments
  *
- * Checks g_DebugMode flag before outputting.
+ * Note: The g_DebugMode check is done in the DbgPrint macro before calling this.
+ * This function should not be called directly - use the DbgPrint macro instead.
  */
-void DbgPrint(LPCWSTR format, ...) {
-	if (!g_efo.g_DebugMode) {
-		return;
-	}
+void DbgPrintImpl(LPCWSTR format, ...) {
 	va_list argp;
 	va_start(argp, format);
 	PrintF(format, argp);
