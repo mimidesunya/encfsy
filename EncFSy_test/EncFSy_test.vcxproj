@@ -138,7 +138,9 @@
     <ClCompile Include="test_basic_io.cpp" />
     <ClCompile Include="test_edge_cases.cpp" />
     <ClCompile Include="test_file_size.cpp" />
+    <ClCompile Include="test_large_file.cpp" />
     <ClCompile Include="test_multithread.cpp" />
+    <ClCompile Include="test_performance.cpp" />
     <ClCompile Include="test_vs_build.cpp" />
   </ItemGroup>
   <ItemGroup>

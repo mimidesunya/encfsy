@@ -103,3 +103,28 @@ bool Test_MultiHandleWriteThenRead(const WCHAR* file);
 bool Test_Aapt2LikeMultiFileAccess(const WCHAR* file);
 bool Test_ConcurrentMultiOffsetWrite(const WCHAR* file);
 bool Test_StressMultiHandleReadWrite(const WCHAR* file);
+
+//=============================================================================
+// Large File Tests (test_large_file.cpp)
+// Tests for potential overflow issues when handling large files (>2GB)
+// These tests verify that size_t/int32_t type mixing doesn't cause issues
+//=============================================================================
+bool Test_LargeFileOffset(const WCHAR* file);
+bool Test_BlockNumberOverflow(const WCHAR* file);
+bool Test_ReturnValueOverflow(const WCHAR* file);
+bool Test_SparseFileWithLargeGaps(const WCHAR* file);
+bool Test_ReverseReadTypeConsistency(const WCHAR* file);
+bool Test_RandomAccessLargeFile(const WCHAR* file);
+bool Test_PerformanceAtHighOffsets(const WCHAR* file);
+
+//=============================================================================
+// Performance Tests (test_performance.cpp)
+// Tests for measuring throughput and identifying performance bottlenecks
+//=============================================================================
+bool Test_SequentialWritePerformance(const WCHAR* file);
+bool Test_SequentialReadPerformance(const WCHAR* file);
+bool Test_RandomReadPerformance(const WCHAR* file);
+bool Test_LargeSingleReadPerformance(const WCHAR* file);
+bool Test_FileResizePerformance(const WCHAR* file);
+bool Test_MemoryAllocationImpact(const WCHAR* file);
+bool Test_ConcurrentIOPerformance(const WCHAR* file);

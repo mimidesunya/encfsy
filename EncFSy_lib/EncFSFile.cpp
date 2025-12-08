@@ -344,6 +344,12 @@ namespace EncFS {
             return 0;
         }
 
+        // Overflow check for offset + length
+        if (off > SIZE_MAX - len) {
+            SetLastError(ERROR_ARITHMETIC_OVERFLOW);
+            return -1;
+        }
+
         try {
             // Lazy allocate buffers if needed
             this->ensureBuffersAllocated();
@@ -387,9 +393,10 @@ namespace EncFS {
             }
 
             // Calculate block positions
-            const size_t blockSize = encfs.getBlockSize();
-            const size_t blockHeaderSize = encfs.getHeaderSize();
-            const size_t blockDataSize = blockSize - blockHeaderSize;
+            // Use int64_t for block size to ensure 64-bit arithmetic
+            const int64_t blockSize = encfs.getBlockSize();
+            const int64_t blockHeaderSize = encfs.getHeaderSize();
+            const int64_t blockDataSize = blockSize - blockHeaderSize;
             
             // Safeguard against invalid block configuration
             if (blockDataSize == 0) {
@@ -397,23 +404,41 @@ namespace EncFS {
                 return -1;
             }
             
-            size_t shift = off % blockDataSize;
-            size_t blockNum = off / blockDataSize;
-            const size_t lastBlockNum = (off + len - 1) / blockDataSize;
+            // Use int64_t for all offset/block calculations to handle >4GB files
+            const int64_t off64 = static_cast<int64_t>(off);
+            const int64_t len64 = static_cast<int64_t>(len);
+            
+            int64_t shift = off64 % blockDataSize;
+            int64_t blockNum = off64 / blockDataSize;
+            const int64_t lastBlockNum = (off64 + len64 - 1) / blockDataSize;
+
+            // Overflow check for block calculations
+            if (lastBlockNum < blockNum) {
+                SetLastError(ERROR_ARITHMETIC_OVERFLOW);
+                return -1;
+            }
 
             int32_t copiedLen = 0;
 
-            // Calculate how many encrypted blocks to read
-            size_t blocksOffset = blockNum * blockSize;
-            const size_t blocksLength = (lastBlockNum + 1) * blockSize - blocksOffset;
+            // Calculate how many encrypted blocks to read (use int64_t)
+            int64_t blocksOffset = blockNum * blockSize;
+            const int64_t blocksLength = (lastBlockNum + 1) * blockSize - blocksOffset;
+            
+            // Buffer size limit check
+            const int64_t MAX_BUFFER_SIZE = 256LL * 1024 * 1024; // 256MB
+            if (blocksLength > MAX_BUFFER_SIZE) {
+                SetLastError(ERROR_BUFFER_OVERFLOW);
+                return -1;
+            }
+            
             if (encfs.isUniqueIV()) {
                 blocksOffset += EncFS::EncFSVolume::HEADER_SIZE;
             }
 
-            if (blocksLength) {
-                // Seek to read position
+            if (blocksLength > 0) {
+                // Seek to read position - use LONGLONG explicitly
                 LARGE_INTEGER distanceToMove;
-                distanceToMove.QuadPart = blocksOffset;
+                distanceToMove.QuadPart = static_cast<LONGLONG>(blocksOffset);
                 if (!SetFilePointerEx(this->handle, distanceToMove, NULL, FILE_BEGIN)) {
                     DWORD err = GetLastError();
                     SetLastError(err);
@@ -421,13 +446,16 @@ namespace EncFS {
                 }
 
                 // Prepare buffer for encrypted data
-                this->blockBuffer.resize(blocksLength);
+                this->blockBuffer.resize(static_cast<size_t>(blocksLength));
 
                 // Read encrypted data
                 DWORD totalRead = 0;
-                while (totalRead < blocksLength) {
+                while (static_cast<int64_t>(totalRead) < blocksLength) {
                     DWORD readLen = 0;
-                    DWORD toRead = (DWORD)(blocksLength - totalRead);
+                    // Limit each read to avoid DWORD overflow
+                    int64_t remaining = blocksLength - totalRead;
+                    DWORD toRead = (remaining > MAXDWORD) ? MAXDWORD : static_cast<DWORD>(remaining);
+                    
                     if (!ReadFile(this->handle, &this->blockBuffer[0] + totalRead, toRead, &readLen, NULL)) {
                         DWORD err = GetLastError();
                         this->blockBuffer.clear();  // Keep capacity
@@ -450,9 +478,10 @@ namespace EncFS {
 
                 // Decrypt the read blocks
                 size_t readPos = 0;
-                while (readPos < totalRead && len > 0) {
+                DWORD remainingLen = len;
+                while (readPos < totalRead && remainingLen > 0) {
                     size_t remain = totalRead - readPos;
-                    size_t blockLen = (remain > blockSize) ? blockSize : remain;
+                    size_t blockLen = (remain > static_cast<size_t>(blockSize)) ? static_cast<size_t>(blockSize) : remain;
 
                     // Decrypt current block
                     this->encodeBuffer.assign((const char*)&this->blockBuffer[readPos], blockLen);
@@ -461,19 +490,19 @@ namespace EncFS {
 
                     // Copy decrypted data to output buffer
                     size_t decLen = this->decodeBuffer.size();
-                    if (decLen > shift) {
-                        decLen -= shift;
+                    if (decLen > static_cast<size_t>(shift)) {
+                        decLen -= static_cast<size_t>(shift);
                     } else {
                         decLen = 0;
                     }
-                    if (decLen > len) {
-                        decLen = len;
+                    if (decLen > remainingLen) {
+                        decLen = remainingLen;
                     }
                     if (decLen > 0) {
                         memcpy(buff + copiedLen, this->decodeBuffer.data() + shift, decLen);
                         shift = 0;
-                        len -= (DWORD)decLen;
-                        copiedLen += (int32_t)decLen;
+                        remainingLen -= static_cast<DWORD>(decLen);
+                        copiedLen += static_cast<int32_t>(decLen);
                     }
                     blockNum++;
                     readPos += blockLen;
@@ -515,6 +544,12 @@ namespace EncFS {
             return 0;
         }
         
+        // Overflow check for offset + length
+        if (off > SIZE_MAX - len) {
+            SetLastError(ERROR_ARITHMETIC_OVERFLOW);
+            return -1;
+        }
+        
         try {
             // Lazy allocate buffers if needed
             this->ensureBuffersAllocated();
@@ -538,9 +573,10 @@ namespace EncFS {
             }
 
             // Calculate block positions
-            const size_t blockSize = encfs.getBlockSize();
-            const size_t blockHeaderSize = encfs.getHeaderSize();
-            const size_t blockDataSize = blockSize - blockHeaderSize;
+            // Use int64_t for block size to ensure 64-bit arithmetic
+            const int64_t blockSize = encfs.getBlockSize();
+            const int64_t blockHeaderSize = encfs.getHeaderSize();
+            const int64_t blockDataSize = blockSize - blockHeaderSize;
             
             // Safeguard against invalid block configuration
             if (blockDataSize == 0) {
@@ -548,17 +584,30 @@ namespace EncFS {
                 return -1;
             }
             
-            size_t shift = off % blockDataSize;
-            size_t blockNum = off / blockDataSize;
-            const size_t lastBlockNum = (off + len - 1) / blockDataSize;
-            size_t blocksOffset = blockNum * blockSize;
+            // Use int64_t for all offset/block calculations to handle >4GB files
+            const int64_t off64 = static_cast<int64_t>(off);
+            const int64_t len64 = static_cast<int64_t>(len);
+            const int64_t fileSize64 = static_cast<int64_t>(fileSize);
+            
+            int64_t shift = off64 % blockDataSize;
+            int64_t blockNum = off64 / blockDataSize;
+            const int64_t lastBlockNum = (off64 + len64 - 1) / blockDataSize;
+
+            // Overflow check for block calculations
+            if (lastBlockNum < blockNum) {
+                SetLastError(ERROR_ARITHMETIC_OVERFLOW);
+                return -1;
+            }
+            
+            // Use int64_t for blocksOffset to handle >4GB offsets
+            int64_t blocksOffset = blockNum * blockSize;
             if (encfs.isUniqueIV()) {
                 blocksOffset += EncFS::EncFSVolume::HEADER_SIZE;
             }
 
-            // Seek to write position
+            // Seek to write position - use LONGLONG explicitly
             LARGE_INTEGER distanceToMove;
-            distanceToMove.QuadPart = blocksOffset;
+            distanceToMove.QuadPart = static_cast<LONGLONG>(blocksOffset);
             if (!SetFilePointerEx(this->handle, distanceToMove, NULL, FILE_BEGIN)) {
                 return -1;
             }
@@ -568,15 +617,15 @@ namespace EncFS {
                 // Read existing block data if file has content at this position
                 // For files that were just truncated to 0 or new files, fileSize will be 0
                 // and we should not try to read non-existent data
-                size_t blockStartOffset = blockNum * blockDataSize;
+                int64_t blockStartOffset = blockNum * blockDataSize;
                 // Only try to read if the block actually has data (file extends into this block)
-                bool blockHasData = (fileSize > blockStartOffset);
+                bool blockHasData = (fileSize64 > blockStartOffset);
                 
                 if (blockHasData) {
                     // Read existing block from disk
-                    this->encodeBuffer.resize(encfs.getBlockSize());
+                    this->encodeBuffer.resize(static_cast<size_t>(blockSize));
                     DWORD readLen;
-                    if (!ReadFile(this->handle, &this->encodeBuffer[0], (DWORD)this->encodeBuffer.size(), &readLen, NULL)) {
+                    if (!ReadFile(this->handle, &this->encodeBuffer[0], static_cast<DWORD>(blockSize), &readLen, NULL)) {
                         return -1;
                     }
                     // Rewind file pointer
@@ -596,44 +645,45 @@ namespace EncFS {
                 }
                 
                 // Pad with zeros if necessary (for partial writes at an offset)
-                if (this->decodeBuffer.size() < shift) {
-                    this->decodeBuffer.append(shift - this->decodeBuffer.size(), (char)0);
+                if (this->decodeBuffer.size() < static_cast<size_t>(shift)) {
+                    this->decodeBuffer.append(static_cast<size_t>(shift) - this->decodeBuffer.size(), (char)0);
                 }
             }
 
-            size_t blockDataLen = 0;
+            int64_t blockDataLen = 0;
             size_t writtenTotal = 0;
             
             // Write data block by block
-            for (size_t i = 0; i < len; i += blockDataLen) {
-                blockDataLen = (len - i) > blockDataSize - shift ? (blockDataSize - shift) : (len - i);
+            for (int64_t i = 0; i < len64; i += blockDataLen) {
+                blockDataLen = (len64 - i) > blockDataSize - shift ? (blockDataSize - shift) : (len64 - i);
 
                 // Prepare decrypted block data
                 if (shift != 0) {
                     // Partial block write (first block with offset)
-                    if (this->decodeBuffer.size() < shift + blockDataLen) {
-                        this->decodeBuffer.resize(shift + blockDataLen);
+                    size_t neededSize = static_cast<size_t>(shift + blockDataLen);
+                    if (this->decodeBuffer.size() < neededSize) {
+                        this->decodeBuffer.resize(neededSize);
                     }
-                    memcpy(&this->decodeBuffer[shift], buff + i, blockDataLen);
+                    memcpy(&this->decodeBuffer[static_cast<size_t>(shift)], buff + i, static_cast<size_t>(blockDataLen));
                 }
                 else if (blockDataLen == blockDataSize) {
                     // Full block - no need to read existing data
-                    this->decodeBuffer.assign(buff + i, blockDataLen);
+                    this->decodeBuffer.assign(buff + i, static_cast<size_t>(blockDataLen));
                 }
-                else if (off + i + blockDataLen >= fileSize) {
+                else if (off64 + i + blockDataLen >= fileSize64) {
                     // EOF block or writing beyond file size - no need to read beyond file
-                    this->decodeBuffer.assign(buff + i, blockDataLen);
+                    this->decodeBuffer.assign(buff + i, static_cast<size_t>(blockDataLen));
                 }
                 else {
                     // Partial block in the middle of existing file - Read-modify-write
-                    this->encodeBuffer.resize(encfs.getBlockSize());
+                    this->encodeBuffer.resize(static_cast<size_t>(blockSize));
                     DWORD readLen;
-                    if (!ReadFile(this->handle, &this->encodeBuffer[0], (DWORD)this->encodeBuffer.size(), &readLen, NULL)) {
+                    if (!ReadFile(this->handle, &this->encodeBuffer[0], static_cast<DWORD>(blockSize), &readLen, NULL)) {
                         return -1;
                     }
                     // Rewind file pointer
                     LARGE_INTEGER backMove;
-                    backMove.QuadPart = -(LONGLONG)readLen;
+                    backMove.QuadPart = -static_cast<LONGLONG>(readLen);
                     if (!SetFilePointerEx(this->handle, backMove, NULL, FILE_CURRENT)) {
                         return -1;
                     }
@@ -646,10 +696,10 @@ namespace EncFS {
                         this->decodeBuffer.clear();
                     }
 
-                    if (this->decodeBuffer.size() < blockDataLen) {
-                        this->decodeBuffer.resize(blockDataLen);
+                    if (this->decodeBuffer.size() < static_cast<size_t>(blockDataLen)) {
+                        this->decodeBuffer.resize(static_cast<size_t>(blockDataLen));
                     }
-                    memcpy(&this->decodeBuffer[0], buff + i, blockDataLen);
+                    memcpy(&this->decodeBuffer[0], buff + i, static_cast<size_t>(blockDataLen));
                 }
 
                 // Encrypt and write the block
@@ -663,14 +713,14 @@ namespace EncFS {
 
                 blockNum++;
                 shift = 0;
-                writtenTotal += blockDataLen;
+                writtenTotal += static_cast<size_t>(blockDataLen);
             }
 
             // Note: FlushFileBuffers removed here for performance
             // The caller (Dokan callback) is responsible for flushing when needed
             // This improves throughput significantly for sequential writes
 
-            return (int32_t)writtenTotal;
+            return static_cast<int32_t>(writtenTotal);
         }
         catch (const EncFSInvalidBlockException&) {
             SetLastError(ERROR_FILE_CORRUPT);
@@ -709,49 +759,67 @@ namespace EncFS {
         int64_t fileIv = 0; // File IV is not used in reverse mode
 
         // Calculate block positions
-        int32_t blockSize = encfs.getBlockSize();
+        // Use int64_t for all calculations to handle >4GB files
+        const int64_t blockSize = encfs.getBlockSize();
         
         // Safeguard against invalid block configuration
-        if (blockSize <= 0) {
+        if (blockSize == 0) {
             SetLastError(ERROR_INVALID_PARAMETER);
             return -1;
         }
         
-        int32_t shift = off % blockSize;
-        int64_t blockNum = off / blockSize;
-        int64_t lastBlockNum = (off + len - 1) / blockSize;
+        // Use int64_t for all offset/block calculations
+        const int64_t off64 = static_cast<int64_t>(off);
+        const int64_t len64 = static_cast<int64_t>(len);
+        
+        int64_t shift = off64 % blockSize;
+        int64_t blockNum = off64 / blockSize;
+        int64_t lastBlockNum = (off64 + len64 - 1) / blockSize;
+
+        // Overflow check for block calculations
+        if (lastBlockNum < blockNum) {
+            SetLastError(ERROR_ARITHMETIC_OVERFLOW);
+            return -1;
+        }
 
         int64_t blocksOffset = blockNum * blockSize;
         int64_t blocksLength = (lastBlockNum + 1) * blockSize - blocksOffset;
+
+        // Buffer size limit check (prevent excessive memory allocation)
+        const size_t MAX_BUFFER_SIZE = 256 * 1024 * 1024; // 256MB
+        if ((size_t)blocksLength > MAX_BUFFER_SIZE) {
+            SetLastError(ERROR_BUFFER_OVERFLOW);
+            return -1;
+        }
 
         int32_t i = 0;
         int32_t blockDataLen;
 
         // Use cached block if available (with bounds check)
-        if (blockNum == this->lastBlockNum && this->encodeBuffer.size() > (size_t)shift) {
-            blockDataLen = (int32_t)std::min<size_t>(len, this->encodeBuffer.size() - shift);
-            memcpy(buff, &this->encodeBuffer[shift], blockDataLen);
+        if (blockNum == this->lastBlockNum && this->encodeBuffer.size() > static_cast<size_t>(shift)) {
+            blockDataLen = static_cast<int32_t>(std::min<int64_t>(len64, static_cast<int64_t>(this->encodeBuffer.size()) - shift));
+            memcpy(buff, &this->encodeBuffer[static_cast<size_t>(shift)], blockDataLen);
             blocksOffset = blockNum++ * blockSize;
             shift = 0;
             i += blockDataLen;
-            if (i >= (int32_t)len || this->encodeBuffer.size() < (size_t)blockSize) {
+            if (i >= static_cast<int32_t>(len) || this->encodeBuffer.size() < static_cast<size_t>(blockSize)) {
                 return i;
             }
         }
 
-        // Seek to read position
+        // Seek to read position - use LONGLONG explicitly
         LARGE_INTEGER distanceToMove;
-        distanceToMove.QuadPart = blocksOffset;
+        distanceToMove.QuadPart = static_cast<LONGLONG>(blocksOffset);
         if (!SetFilePointerEx(this->handle, distanceToMove, NULL, FILE_BEGIN)) {
             return -1;
         }
 
         // Prepare buffer
-        this->blockBuffer.resize(blocksLength);
+        this->blockBuffer.resize(static_cast<size_t>(blocksLength));
 
         // Read with partial read handling
         DWORD totalRead = 0;
-        while ((int64_t)totalRead < blocksLength) {
+        while (static_cast<int64_t>(totalRead) < blocksLength) {
             DWORD readLen = 0;
             DWORD toRead = (DWORD)(blocksLength - totalRead);
             if (!ReadFile(this->handle, &this->blockBuffer[0] + totalRead, toRead, &readLen, NULL)) {
@@ -781,38 +849,38 @@ namespace EncFS {
         // Encrypt the read data block by block
         int64_t bufferPos = 0;
         for (; i < (int32_t)len; i += blockDataLen) {
-            size_t remainInBuffer = totalRead - (bufferPos * blockSize);
-            if (remainInBuffer == 0) {
+            size_t remainInBuffer = totalRead - (size_t)(bufferPos * blockSize);
+            if (remainInBuffer <= 0) {
                 break;
             }
             
-            blockDataLen = (int32_t)std::min<size_t>(len - i, blockSize - shift);
-            blockDataLen = (int32_t)std::min<size_t>(blockDataLen, remainInBuffer - shift);
+            blockDataLen = static_cast<int32_t>(std::min<int64_t>(len - i, blockSize - shift));
+            blockDataLen = static_cast<int32_t>(std::min<int64_t>(blockDataLen, remainInBuffer - shift));
 
             // Prepare plain data
-            size_t copySize = blockDataLen + shift;
+            int64_t copySize = blockDataLen + shift;
             if (copySize > remainInBuffer) {
                 copySize = remainInBuffer;
             }
-            this->decodeBuffer.resize(copySize);
-            memcpy(&this->decodeBuffer[0], &this->blockBuffer[bufferPos * blockSize], copySize);
+            this->decodeBuffer.resize(static_cast<size_t>(copySize));
+            memcpy(&this->decodeBuffer[0], &this->blockBuffer[static_cast<size_t>(bufferPos * blockSize)], static_cast<size_t>(copySize));
 
             // Encrypt the block
             this->encodeBuffer.clear();
             encfs.encodeBlock(fileIv, this->lastBlockNum = blockNum, this->decodeBuffer, this->encodeBuffer);
 
             // Copy encrypted data to output buffer (with bounds check)
-            size_t availableInEncode = this->encodeBuffer.size();
-            if (availableInEncode > (size_t)shift) {
+            int64_t availableInEncode = static_cast<int64_t>(this->encodeBuffer.size());
+            if (availableInEncode > shift) {
                 availableInEncode -= shift;
             } else {
                 availableInEncode = 0;
             }
-            if ((size_t)blockDataLen > availableInEncode) {
-                blockDataLen = (int32_t)availableInEncode;
+            if (blockDataLen > availableInEncode) {
+                blockDataLen = static_cast<int32_t>(availableInEncode);
             }
             if (blockDataLen > 0) {
-                memcpy(buff + i, &this->encodeBuffer[shift], blockDataLen);
+                memcpy(buff + i, &this->encodeBuffer[static_cast<size_t>(shift)], blockDataLen);
             }
 
             blockNum++;
@@ -892,8 +960,10 @@ namespace EncFS {
         }
 
         // Calculate block boundary positions
-        size_t blockHeaderSize = encfs.getHeaderSize();
-        size_t blockDataSize = encfs.getBlockSize() - blockHeaderSize;
+        // Use int64_t for all calculations to handle >4GB files
+        const int64_t blockSize = encfs.getBlockSize();
+        const int64_t blockHeaderSize = encfs.getHeaderSize();
+        const int64_t blockDataSize = blockSize - blockHeaderSize;
         
         // Safeguard against invalid block configuration
         if (blockDataSize == 0) {
@@ -901,19 +971,22 @@ namespace EncFS {
             return false;
         }
         
-        size_t shift;
-        size_t blockNum;
-        size_t blocksOffset = 0;  // Initialize to prevent undefined behavior
+        const int64_t fileSize64 = static_cast<int64_t>(fileSize);
+        const int64_t length64 = static_cast<int64_t>(length);
         
-        if (length < fileSize) {
+        int64_t shift;
+        int64_t blockNum;
+        int64_t blocksOffset = 0;  // Initialize to prevent undefined behavior
+        
+        if (length64 < fileSize64) {
             // Shrinking file
-            shift = length % blockDataSize;
-            blockNum = length / blockDataSize;
+            shift = length64 % blockDataSize;
+            blockNum = length64 / blockDataSize;
         }
         else {
             // Expanding file
-            shift = fileSize % blockDataSize;
-            blockNum = fileSize / blockDataSize;
+            shift = fileSize64 % blockDataSize;
+            blockNum = fileSize64 / blockDataSize;
         }
         
         // Get file IV
@@ -927,20 +1000,20 @@ namespace EncFS {
         bool haveBoundaryBlock = false;
         
         if (shift != 0) {
-            blocksOffset = blockNum * encfs.getBlockSize();
+            blocksOffset = blockNum * blockSize;
             if (encfs.isUniqueIV()) {
                 blocksOffset += EncFS::EncFSVolume::HEADER_SIZE;
             }
             LARGE_INTEGER distanceToMove;
-            distanceToMove.QuadPart = blocksOffset;
+            distanceToMove.QuadPart = static_cast<LONGLONG>(blocksOffset);
             if (!SetFilePointerEx(this->handle, distanceToMove, NULL, FILE_BEGIN)) {
                 return false;
             }
             
             // Read and decrypt boundary block
-            this->encodeBuffer.resize(encfs.getBlockSize());
+            this->encodeBuffer.resize(static_cast<size_t>(blockSize));
             DWORD readLen;
-            if (!ReadFile(this->handle, &this->encodeBuffer[0], (DWORD)this->encodeBuffer.size(), &readLen, NULL)) {
+            if (!ReadFile(this->handle, &this->encodeBuffer[0], static_cast<DWORD>(blockSize), &readLen, NULL)) {
                 return false;
             }
             
@@ -961,10 +1034,10 @@ namespace EncFS {
         }
 
         // Set the new encrypted file size
-        size_t encodedLength = encfs.toEncodedLength(length);
+        int64_t encodedLength = encfs.toEncodedLength(length64);
         {
             LARGE_INTEGER offset;
-            offset.QuadPart = encodedLength;
+            offset.QuadPart = static_cast<LONGLONG>(encodedLength);
             if (!SetFilePointerEx(this->handle, offset, NULL, FILE_BEGIN)) {
                 return false;
             }
@@ -978,7 +1051,7 @@ namespace EncFS {
 
         // Re-encrypt and write boundary block if needed
         if (shift != 0 && haveBoundaryBlock) {
-            size_t blockDataLen = length - blockNum * blockDataSize;
+            int64_t blockDataLen = length64 - blockNum * blockDataSize;
             if (blockDataLen > blockDataSize) {
                 blockDataLen = blockDataSize;
             }
@@ -987,10 +1060,11 @@ namespace EncFS {
             this->decodeBuffer = boundaryBlockData;
             
             // Adjust decoded buffer size
-            if (this->decodeBuffer.size() < blockDataLen) {
-                this->decodeBuffer.append(blockDataLen - this->decodeBuffer.size(), (char)0);
+            size_t neededSize = static_cast<size_t>(blockDataLen);
+            if (this->decodeBuffer.size() < neededSize) {
+                this->decodeBuffer.append(neededSize - this->decodeBuffer.size(), (char)0);
             } else {
-                this->decodeBuffer.resize(blockDataLen);
+                this->decodeBuffer.resize(neededSize);
             }
             
             // Encrypt the block
@@ -999,7 +1073,7 @@ namespace EncFS {
 
             // Seek back to block position
             LARGE_INTEGER distanceToMove;
-            distanceToMove.QuadPart = (LONGLONG)blocksOffset;
+            distanceToMove.QuadPart = static_cast<LONGLONG>(blocksOffset);
             if (!SetFilePointerEx(this->handle, distanceToMove, NULL, FILE_BEGIN)) {
                 return false;
             }
@@ -1011,22 +1085,22 @@ namespace EncFS {
         }
 
         // Handle expansion - encode trailing block if needed
-        if (length > fileSize) {
-            size_t s = length % blockDataSize;
-            if (s != 0 && (fileSize == 0 || blockNum != length / blockDataSize)) {
-                blockNum = length / blockDataSize;
-                blocksOffset = blockNum * encfs.getBlockSize();
+        if (length64 > fileSize64) {
+            int64_t s = length64 % blockDataSize;
+            if (s != 0 && (fileSize64 == 0 || blockNum != length64 / blockDataSize)) {
+                blockNum = length64 / blockDataSize;
+                blocksOffset = blockNum * blockSize;
                 if (encfs.isUniqueIV()) {
                     blocksOffset += EncFS::EncFSVolume::HEADER_SIZE;
                 }
                 
-                this->decodeBuffer.assign(s, (char)0);
+                this->decodeBuffer.assign(static_cast<size_t>(s), (char)0);
                 this->encodeBuffer.clear();
                 encfs.encodeBlock(fileIv, this->lastBlockNum = blockNum, this->decodeBuffer, this->encodeBuffer);
                 
                 // Seek to the correct block position
                 LARGE_INTEGER distanceToMove;
-                distanceToMove.QuadPart = (LONGLONG)blocksOffset;
+                distanceToMove.QuadPart = static_cast<LONGLONG>(blocksOffset);
                 if (!SetFilePointerEx(this->handle, distanceToMove, NULL, FILE_BEGIN)) {
                     return false;
                 }

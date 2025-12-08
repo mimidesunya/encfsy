@@ -175,6 +175,32 @@ int main(int argc, char* argv[])
     runner.runTest("Overwrite then truncate", Test_OverwriteThenTruncate, file);
 
     //=========================================================================
+    // Large File Tests (potential overflow issues)
+    //=========================================================================
+    printf("\n--- LARGE FILE TESTS (overflow prevention) ---\n");
+    
+    runner.runTest("Large file offset (>2GB)", Test_LargeFileOffset, file);
+    runner.runTest("Block number overflow prevention", Test_BlockNumberOverflow, file);
+    runner.runTest("Return value overflow handling", Test_ReturnValueOverflow, file);
+    runner.runTest("Sparse file with large gaps", Test_SparseFileWithLargeGaps, file);
+    runner.runTest("Type consistency in file ops", Test_ReverseReadTypeConsistency, file);
+    runner.runTest("Random access to 5GB file", Test_RandomAccessLargeFile, file);
+    runner.runTest("Performance at high offsets", Test_PerformanceAtHighOffsets, file);
+
+    //=========================================================================
+    // Performance Tests
+    //=========================================================================
+    printf("\n--- PERFORMANCE TESTS ---\n");
+    
+    runner.runTest("Sequential write performance", Test_SequentialWritePerformance, file);
+    runner.runTest("Sequential read performance", Test_SequentialReadPerformance, file);
+    runner.runTest("Random access read performance", Test_RandomReadPerformance, file);
+    runner.runTest("Large single read performance", Test_LargeSingleReadPerformance, file);
+    runner.runTest("File resize performance", Test_FileResizePerformance, file);
+    runner.runTest("Memory allocation impact", Test_MemoryAllocationImpact, file);
+    runner.runTest("Concurrent I/O performance", Test_ConcurrentIOPerformance, file);
+
+    //=========================================================================
     // Summary
     //=========================================================================
     runner.printSummary();

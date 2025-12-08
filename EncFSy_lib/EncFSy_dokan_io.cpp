@@ -516,7 +516,8 @@ NTSTATUS DOKAN_CALLBACK EncFSReadFile(LPCWSTR FileName, LPVOID Buffer,
     DWORD BufferLength, LPDWORD ReadLength,
     LONGLONG Offset, PDOKAN_FILE_INFO DokanFileInfo) {
 
-    ULONG offset = (ULONG)Offset;
+    // Use size_t for offset to handle >4GB files correctly on 64-bit systems
+    size_t offset = static_cast<size_t>(Offset);
     EncFS::EncFSFile* encfsFile;
     std::unique_ptr<EncFS::EncFSFile> tempEncFSFile;
 
