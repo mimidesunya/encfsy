@@ -121,6 +121,10 @@ NTSTATUS DOKAN_CALLBACK EncFSSetEndOfFile(
     }
 
     EncFS::EncFSFile* encfsFile = ToEncFSFile(DokanFileInfo->Context);
+    
+    // Acquire file-level lock to prevent data corruption during concurrent access
+    EncFS::FileScopedLock fileLock(FileName);
+    
     if (!encfsFile->setLength(FileName, ByteOffset)) {
         DWORD error = GetLastError();
         ErrorPrint(L"SetEndOfFile: '%s' FAILED (error=%lu, size=%I64d)\n", FileName, error, ByteOffset);
@@ -226,6 +230,10 @@ NTSTATUS DOKAN_CALLBACK EncFSSetAllocationSize(
     }
 
     EncFS::EncFSFile* encfsFile = ToEncFSFile(DokanFileInfo->Context);
+    
+    // Acquire file-level lock to prevent data corruption during concurrent access
+    EncFS::FileScopedLock fileLock(FileName);
+    
     LARGE_INTEGER encodedFileSize;
     if (GetFileSizeEx(encfsFile->getHandle(), &encodedFileSize)) {
         size_t decodedFileSize = encfs.toDecodedLength(encodedFileSize.QuadPart);

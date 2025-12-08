@@ -520,6 +520,8 @@ NTSTATUS DOKAN_CALLBACK EncFSReadFile(LPCWSTR FileName, LPVOID Buffer,
     EncFS::EncFSFile* encfsFile;
     std::unique_ptr<EncFS::EncFSFile> tempEncFSFile;
 
+    DbgPrint(L"ReadFile: '%s' offset=%I64d len=%lu\n", FileName, Offset, BufferLength);
+
     // Open temporary handle if context is unavailable
     if (!DokanFileInfo->Context) {
         WCHAR filePath[DOKAN_MAX_PATH];
@@ -550,7 +552,9 @@ NTSTATUS DOKAN_CALLBACK EncFSReadFile(LPCWSTR FileName, LPVOID Buffer,
         encfsFile = ToEncFSFile(DokanFileInfo->Context);
     }
 
-    DbgPrint(L"ReadFile: '%s' offset=%I64d len=%lu\n", FileName, Offset, BufferLength);
+    // Acquire file-level lock AFTER getting context to prevent data corruption
+    // during concurrent multi-handle access to the same file
+    EncFS::FileScopedLock fileLock(FileName);
 
     int32_t readLen;
     bool plain = false;
@@ -669,6 +673,10 @@ NTSTATUS DOKAN_CALLBACK EncFSWriteFile(LPCWSTR FileName, LPCVOID Buffer,
     else {
         encfsFile = ToEncFSFile(DokanFileInfo->Context);
     }
+
+    // Acquire file-level lock AFTER getting context to prevent data corruption
+    // during concurrent multi-handle access to the same file
+    EncFS::FileScopedLock fileLock(FileName);
 
     // Get logical (decrypted) file size
     LARGE_INTEGER li;
