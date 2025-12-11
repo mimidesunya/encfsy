@@ -18,13 +18,163 @@ namespace EncFSy_gui
     public partial class MainForm : Form
     {
         private string historyFile = Application.LocalUserAppDataPath + "\\history.txt";
+        private string settingsFile = Application.LocalUserAppDataPath + "\\settings.txt";
         private string encfsExecutable = Path.GetDirectoryName(Application.ExecutablePath) + "\\encfs.exe";
         private bool isAdvancedMode = false;
+        private bool isInitializing = true;
 
         public MainForm()
         {
             InitializeComponent();
+            LoadSettings();
+            InitializeLanguageComboBox();
+            ApplyLocalization();
             UpdateAdvancedModeVisibility();
+            isInitializing = false;
+        }
+
+        /// <summary>
+        /// Initialize the language combo box with available languages.
+        /// </summary>
+        private void InitializeLanguageComboBox()
+        {
+            languageComboBox.Items.Clear();
+            foreach (var lang in Strings.AvailableLanguages)
+            {
+                languageComboBox.Items.Add(new LanguageItem(lang.Key, lang.Value));
+            }
+
+            // Select current language
+            for (int i = 0; i < languageComboBox.Items.Count; i++)
+            {
+                if (((LanguageItem)languageComboBox.Items[i]).Code == Strings.CurrentLanguage)
+                {
+                    languageComboBox.SelectedIndex = i;
+                    break;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Helper class to store language code and display name.
+        /// </summary>
+        private class LanguageItem
+        {
+            public string Code { get; }
+            public string DisplayName { get; }
+
+            public LanguageItem(string code, string displayName)
+            {
+                Code = code;
+                DisplayName = displayName;
+            }
+
+            public override string ToString()
+            {
+                return DisplayName;
+            }
+        }
+
+        /// <summary>
+        /// Apply localized strings to all UI elements.
+        /// </summary>
+        private void ApplyLocalization()
+        {
+            // Window title
+            this.Text = Strings.AppTitle;
+
+            // Group boxes
+            driveGroup.Text = Strings.DriveSelection;
+            directoryGroup.Text = Strings.EncryptedDirectory;
+            basicOptionsGroup.Text = Strings.Options;
+            advancedOptionsGroup.Text = Strings.AdvancedOptions;
+            advancedSettingsGroup.Text = Strings.Settings;
+            commandPreviewGroup.Text = Strings.CommandPreview;
+
+            // Buttons
+            mountButton.Text = Strings.Mount;
+            unmountButton.Text = Strings.Unmount;
+            selectDirectoryButton.Text = Strings.Browse;
+            refreshButton.Text = Strings.Refresh;
+            copyCommandButton.Text = Strings.Copy;
+
+            // Column headers
+            driveColumn.Text = Strings.Drive;
+            statusColumn.Text = Strings.Status;
+
+            // Checkboxes
+            altStreamCheckBox.Text = Strings.AltStream;
+            mountManagerCheckBox.Text = Strings.MountManager;
+            caseInsensitiveCheckBox.Text = Strings.IgnoreCase;
+            readOnlyCheckBox.Text = Strings.ReadOnly;
+            paranoiaCheckBox.Text = Strings.Paranoia;
+            removableCheckBox.Text = Strings.Removable;
+            currentSessionCheckBox.Text = Strings.CurrentSession;
+
+            // Labels
+            timeoutLabel.Text = Strings.Timeout;
+            volumeNameLabel.Text = Strings.VolumeName;
+            volumeSerialLabel.Text = Strings.VolumeSerial;
+            languageLabel.Text = Strings.Language;
+
+            // Advanced mode checkbox
+            advancedModeCheckBox.Text = isAdvancedMode 
+                ? Strings.HideAdvancedOptions 
+                : Strings.ShowAdvancedOptions;
+
+            // Tooltips
+            toolTip.SetToolTip(refreshButton, Strings.TooltipRefresh);
+            toolTip.SetToolTip(altStreamCheckBox, Strings.TooltipAltStream);
+            toolTip.SetToolTip(mountManagerCheckBox, Strings.TooltipMountManager);
+            toolTip.SetToolTip(paranoiaCheckBox, Strings.TooltipParanoia);
+            toolTip.SetToolTip(languageComboBox, Strings.TooltipLanguage);
+        }
+
+        /// <summary>
+        /// Load settings from file.
+        /// </summary>
+        private void LoadSettings()
+        {
+            try
+            {
+                if (File.Exists(settingsFile))
+                {
+                    using (StreamReader reader = new StreamReader(settingsFile, Encoding.UTF8))
+                    {
+                        string line;
+                        while ((line = reader.ReadLine()) != null)
+                        {
+                            if (line.StartsWith("language="))
+                            {
+                                string lang = line.Substring("language=".Length);
+                                Strings.SetLanguage(lang);
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // Ignore settings load errors, use system default
+            }
+        }
+
+        /// <summary>
+        /// Save settings to file.
+        /// </summary>
+        private void SaveSettings()
+        {
+            try
+            {
+                using (StreamWriter writer = new StreamWriter(settingsFile, false, Encoding.UTF8))
+                {
+                    writer.WriteLine("language=" + Strings.CurrentLanguage);
+                }
+            }
+            catch (Exception)
+            {
+                // Ignore settings save errors
+            }
         }
 
         #region Event Handlers
@@ -35,11 +185,24 @@ namespace EncFSy_gui
             UpdateCommandPreview();
         }
 
+        private void languageComboBox_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            if (isInitializing) return;
+
+            var selectedItem = languageComboBox.SelectedItem as LanguageItem;
+            if (selectedItem != null && selectedItem.Code != Strings.CurrentLanguage)
+            {
+                Strings.SetLanguage(selectedItem.Code);
+                SaveSettings();
+                ApplyLocalization();
+            }
+        }
+
         private void selectDirectoryButton_Click(object sender, EventArgs e)
         {
             using (FolderBrowserDialog dialog = new FolderBrowserDialog())
             {
-                dialog.Description = "Select the encrypted directory (rootDir)";
+                dialog.Description = Strings.SelectEncryptedDirectory;
                 if (dialog.ShowDialog() == DialogResult.OK)
                 {
                     rootPathCombo.Text = dialog.SelectedPath;
@@ -53,7 +216,7 @@ namespace EncFSy_gui
         {
             if (driveListView.SelectedItems.Count == 0)
             {
-                MessageBox.Show("Please select a drive letter.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(Strings.SelectDriveError, Strings.Error, MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
@@ -75,7 +238,7 @@ namespace EncFSy_gui
                 SecureString securePassword = passwordForm.SecurePassword;
                 if (securePassword == null || securePassword.Length == 0)
                 {
-                    MessageBox.Show("Password cannot be empty.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    MessageBox.Show(Strings.PasswordEmptyError, Strings.Error, MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return;
                 }
 
@@ -152,7 +315,7 @@ namespace EncFSy_gui
             if (!string.IsNullOrEmpty(commandPreviewTextBox.Text))
             {
                 Clipboard.SetText(commandPreviewTextBox.Text);
-                toolTip.Show("Copied!", copyCommandButton, 0, -20, 1500);
+                toolTip.Show(Strings.Copied, copyCommandButton, 0, -20, 1500);
             }
         }
 
@@ -164,8 +327,8 @@ namespace EncFSy_gui
         {
             // Update checkbox text to indicate expand/collapse state
             advancedModeCheckBox.Text = isAdvancedMode 
-                ? "Hide Advanced Options Å£" 
-                : "Show Advanced Options Å•";
+                ? Strings.HideAdvancedOptions 
+                : Strings.ShowAdvancedOptions;
             
             // Show/hide advanced controls - form will auto-resize
             advancedOptionsGroup.Visible = isAdvancedMode;
@@ -333,7 +496,7 @@ namespace EncFSy_gui
                     {
                         this.Invoke((MethodInvoker)delegate
                         {
-                            MessageBox.Show(this, $"Mount result: '{encfsOut}'", "EncFS", 
+                            MessageBox.Show(this, string.Format(Strings.MountResult, encfsOut), "EncFS", 
                                 MessageBoxButtons.OK, MessageBoxIcon.Information);
                         });
                     }
@@ -342,7 +505,7 @@ namespace EncFSy_gui
                 {
                     this.Invoke((MethodInvoker)delegate
                     {
-                        MessageBox.Show(this, $"Error: {ex.Message}", "EncFS Error", 
+                        MessageBox.Show(this, $"{Strings.Error}: {ex.Message}", Strings.Error, 
                             MessageBoxButtons.OK, MessageBoxIcon.Error);
                     });
                 }
@@ -380,7 +543,7 @@ namespace EncFSy_gui
                         {
                             this.Invoke((MethodInvoker)delegate
                             {
-                                MessageBox.Show(this, $"Mount failed: {message}", "EncFS Error",
+                                MessageBox.Show(this, string.Format(Strings.MountFailed, message), Strings.Error,
                                     MessageBoxButtons.OK, MessageBoxIcon.Error);
                             });
                         }
@@ -390,7 +553,7 @@ namespace EncFSy_gui
                     {
                         this.Invoke((MethodInvoker)delegate
                         {
-                            MessageBox.Show(this, $"Mount result: '{output}'", "EncFS",
+                            MessageBox.Show(this, string.Format(Strings.MountResult, output), "EncFS",
                                 MessageBoxButtons.OK, MessageBoxIcon.Information);
                         });
                     }
@@ -400,7 +563,7 @@ namespace EncFSy_gui
                 {
                     this.Invoke((MethodInvoker)delegate
                     {
-                        MessageBox.Show(this, $"Error: {ex.Message}", "EncFS Error",
+                        MessageBox.Show(this, $"{Strings.Error}: {ex.Message}", Strings.Error,
                             MessageBoxButtons.OK, MessageBoxIcon.Error);
                     });
                 }

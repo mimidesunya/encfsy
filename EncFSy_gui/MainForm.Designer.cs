@@ -90,6 +90,8 @@ namespace EncFSy_gui
             this.allocationUnitNumeric = new System.Windows.Forms.NumericUpDown();
             this.sectorSizeLabel = new System.Windows.Forms.Label();
             this.sectorSizeNumeric = new System.Windows.Forms.NumericUpDown();
+            this.languageLabel = new System.Windows.Forms.Label();
+            this.languageComboBox = new System.Windows.Forms.ComboBox();
             
             // Command preview group
             this.commandPreviewGroup = new System.Windows.Forms.GroupBox();
@@ -513,9 +515,11 @@ namespace EncFSy_gui
             this.advancedSettingsGroup.Controls.Add(this.allocationUnitNumeric);
             this.advancedSettingsGroup.Controls.Add(this.sectorSizeLabel);
             this.advancedSettingsGroup.Controls.Add(this.sectorSizeNumeric);
+            this.advancedSettingsGroup.Controls.Add(this.languageLabel);
+            this.advancedSettingsGroup.Controls.Add(this.languageComboBox);
             this.advancedSettingsGroup.Margin = new System.Windows.Forms.Padding(5);
             this.advancedSettingsGroup.Name = "advancedSettingsGroup";
-            this.advancedSettingsGroup.Size = new System.Drawing.Size(440, 75);
+            this.advancedSettingsGroup.Size = new System.Drawing.Size(440, 100);
             this.advancedSettingsGroup.TabIndex = 6;
             this.advancedSettingsGroup.TabStop = false;
             this.advancedSettingsGroup.Text = "Settings";
@@ -647,6 +651,27 @@ namespace EncFSy_gui
             this.sectorSizeNumeric.TabIndex = 11;
             this.sectorSizeNumeric.ValueChanged += new System.EventHandler(this.anyOption_Changed);
             this.toolTip.SetToolTip(this.sectorSizeNumeric, "Sector size (0 = default)");
+            
+            // 
+            // languageLabel
+            // 
+            this.languageLabel.AutoSize = true;
+            this.languageLabel.Location = new System.Drawing.Point(7, 72);
+            this.languageLabel.Name = "languageLabel";
+            this.languageLabel.Size = new System.Drawing.Size(55, 13);
+            this.languageLabel.TabIndex = 12;
+            this.languageLabel.Text = "Language:";
+            
+            // 
+            // languageComboBox
+            // 
+            this.languageComboBox.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
+            this.languageComboBox.FormattingEnabled = true;
+            this.languageComboBox.Location = new System.Drawing.Point(70, 69);
+            this.languageComboBox.Name = "languageComboBox";
+            this.languageComboBox.Size = new System.Drawing.Size(100, 21);
+            this.languageComboBox.TabIndex = 13;
+            this.languageComboBox.SelectedIndexChanged += new System.EventHandler(this.languageComboBox_SelectedIndexChanged);
             
             // 
             // commandPreviewGroup
@@ -790,6 +815,8 @@ namespace EncFSy_gui
         private System.Windows.Forms.NumericUpDown allocationUnitNumeric;
         private System.Windows.Forms.Label sectorSizeLabel;
         private System.Windows.Forms.NumericUpDown sectorSizeNumeric;
+        private System.Windows.Forms.Label languageLabel;
+        private System.Windows.Forms.ComboBox languageComboBox;
         
         // Command preview
         private System.Windows.Forms.TextBox commandPreviewTextBox;

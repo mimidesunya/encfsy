@@ -14,6 +14,9 @@ namespace EncFSy_gui
         [STAThread]
         static void Main()
         {
+            // Initialize language based on system culture
+            Strings.InitLanguage();
+            
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             Application.Run(new MainForm());

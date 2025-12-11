@@ -45,9 +45,23 @@ namespace EncFSy_gui
         public PasswordForm()
         {
             InitializeComponent();
+            ApplyLocalization();
             this.AcceptButton = this.okButton;
             this.CancelButton = this.cancelButton;
             securePassword = new SecureString();
+        }
+
+        /// <summary>
+        /// Apply localized strings to all UI elements.
+        /// </summary>
+        private void ApplyLocalization()
+        {
+            this.Text = Strings.PasswordFormTitle;
+            passwordLabel.Text = Strings.Password;
+            showPassword.Text = Strings.ShowPassword;
+            rememberPassword.Text = Strings.RememberPassword;
+            okButton.Text = Strings.OK;
+            cancelButton.Text = Strings.Cancel;
         }
 
         /// <summary>

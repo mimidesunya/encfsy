@@ -1,11 +1,14 @@
 ﻿#include "EncFSy.h"
 #include "CredentialManager.h"
+#include "Messages.h"
 
 #include <malloc.h>
 #include <iostream>
 #include <windows.h>
 #include <tchar.h>
 #include <codecvt>
+#include <io.h>
+#include <fcntl.h>
 
 using namespace std;
 
@@ -13,66 +16,10 @@ using namespace std;
  * @brief Displays command-line usage information
  * 
  * Shows all available options, arguments, and example usage for the EncFSy console application.
+ * Language is determined by Windows system settings.
  */
 void ShowUsage() {
-	// clang-format off
-	fprintf(stderr,
-		"Usage: encfs.exe [options] <rootDir> <mountPoint>\n"
-		"\n"
-		"Arguments:\n"
-		"  rootDir      (e.g., C:\\test)                Directory to be encrypted and mounted.\n"
-		"  mountPoint   (e.g., M: or C:\\mount\\dokan)   Mount location - either a drive letter\n"
-		"                                               such as M:\\ or an empty NTFS folder.\n"
-		"\n"
-		"Options:\n"
-		"  -u <mountPoint>                              Unmount the specified volume.\n"
-		"  -l                                           List currently mounted Dokan volumes.\n"
-		"  -v                                           Send debug output to an attached debugger.\n"
-		"  -s                                           Send debug output to stderr.\n"
-		"  -i <ms>              (default: 120000)       Timeout (in milliseconds) before a running\n"
-		"                                               operation is aborted and the volume unmounted.\n"
-		"  --use-credential                             Read password from Windows Credential Manager\n"
-		"                                               instead of prompting. Password is kept stored.\n"
-		"  --use-credential-once                        Read password from Windows Credential Manager\n"
-		"                                               and delete it after reading (one-time use).\n"
-		"  --dokan-debug                                Enable Dokan debug output.\n"
-		"  --dokan-network <UNC>                        UNC path for a network volume (e.g., \\\\host\\myfs).\n"
-		"  --dokan-removable                            Present the volume as removable media.\n"
-		"  --dokan-write-protect                        Mount the filesystem read-only.\n"
-		"  --dokan-mount-manager                        Register the volume with the Windows Mount Manager\n"
-		"                                               (enables Recycle Bin support, etc.).\n"
-		"  --dokan-current-session                      Make the volume visible only in the current session.\n"
-		"  --dokan-filelock-user-mode                   Handle LockFile/UnlockFile in user mode; otherwise\n"
-		"                                               Dokan manages them automatically.\n"
-		"  --dokan-enable-unmount-network-drive         Allow unmounting network drive via Explorer.\n"
-		"  --dokan-dispatch-driver-logs                 Forward kernel driver logs to userland (slow).\n"
-		"  --dokan-allow-ipc-batching                   Enable IPC batching for slow filesystems\n"
-		"                                               (e.g., remote storage).\n"
-		"  --public                                     Impersonate the calling user when opening handles\n"
-		"                                               in CreateFile. Requires administrator privileges.\n"
-		"  --allocation-unit-size <bytes>               Allocation-unit size reported by the volume.\n"
-		"  --sector-size <bytes>                        Sector size reported by the volume.\n"
-		"  --volume-name <name>                         Volume name shown in Explorer (default: EncFS).\n"
-		"  --volume-serial <hex>                        Volume serial number in hex (default: from underlying).\n"
-		"  --paranoia                                   Enable AES-256 encryption, renamed IVs, and external\n"
-		"                                               IV chaining.\n"
-		"  --alt-stream                                 Enable NTFS alternate data streams.\n"
-		"  --case-insensitive                           Perform case-insensitive filename matching.\n"
-		"  --reverse                                    Reverse mode: show plaintext rootDir as encrypted\n"
-		"                                               at mountPoint.\n"
-		"\n"
-		"Examples:\n"
-		"  encfs.exe C:\\Users M:                                    # Mount C:\\Users as drive M:\\\n"
-		"  encfs.exe C:\\Users C:\\mount\\dokan                       # Mount C:\\Users at NTFS folder C:\\mount\\dokan\n"
-		"  encfs.exe C:\\Users M: --dokan-network \\\\myfs\\share       # Mount as network drive with UNC \\\\myfs\\share\n"
-		"  encfs.exe C:\\Data M: --volume-name \"My Secure Drive\"     # Mount with custom volume name\n"
-		"  encfs.exe C:\\Data M: --use-credential                    # Use stored password (keep it stored)\n"
-		"  encfs.exe C:\\Data M: --use-credential-once               # Use stored password (delete after use)\n"
-		"\n"
-		"To unmount, press Ctrl+C in this console or run:\n"
-		"  encfs.exe -u <mountPoint>\n"
-	);
-	// clang-format on
+	fprintf(stderr, "%s", EncFSMessages::GetUsageText());
 }
 
 /**
@@ -141,6 +88,12 @@ void getpass(const char *prompt, char* password, int size)
  * @brief Main entry point for EncFSy console application
  */
 int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
+	// Initialize language settings based on system locale
+	EncFSMessages::InitLanguage();
+	
+	// Set console output to UTF-8 for proper display of localized messages
+	SetConsoleOutputCP(CP_UTF8);
+	
 	ULONG command;
 
 	// Operation flags
@@ -191,7 +144,37 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 				break;
 			case L'-':
 				// Process long options (starting with --)
-				if (wcscmp(argv[command], L"--use-credential") == 0) {
+				if (wcscmp(argv[command], L"--lang") == 0) {
+					// Override language setting for testing
+					command++;
+					if (command < argc) {
+						if (_wcsicmp(argv[command], L"ja") == 0 || _wcsicmp(argv[command], L"jp") == 0) {
+							EncFSMessages::g_CurrentLanguage = EncFSMessages::Language::Japanese;
+						}
+						else if (_wcsicmp(argv[command], L"ko") == 0 || _wcsicmp(argv[command], L"kr") == 0) {
+							EncFSMessages::g_CurrentLanguage = EncFSMessages::Language::Korean;
+						}
+						else if (_wcsicmp(argv[command], L"zh") == 0 || _wcsicmp(argv[command], L"zh-cn") == 0) {
+							EncFSMessages::g_CurrentLanguage = EncFSMessages::Language::ChineseSimplified;
+						}
+						else if (_wcsicmp(argv[command], L"zh-tw") == 0 || _wcsicmp(argv[command], L"zh-hk") == 0) {
+							EncFSMessages::g_CurrentLanguage = EncFSMessages::Language::ChineseTraditional;
+						}
+						else if (_wcsicmp(argv[command], L"ru") == 0) {
+							EncFSMessages::g_CurrentLanguage = EncFSMessages::Language::Russian;
+						}
+						else if (_wcsicmp(argv[command], L"ar") == 0) {
+							EncFSMessages::g_CurrentLanguage = EncFSMessages::Language::Arabic;
+						}
+						else if (_wcsicmp(argv[command], L"de") == 0) {
+							EncFSMessages::g_CurrentLanguage = EncFSMessages::Language::German;
+						}
+						else if (_wcsicmp(argv[command], L"en") == 0) {
+							EncFSMessages::g_CurrentLanguage = EncFSMessages::Language::English;
+						}
+					}
+				}
+				else if (wcscmp(argv[command], L"--use-credential") == 0) {
 					// Use Windows Credential Manager for password (keep it stored)
 					useCredential = true;
 				}
@@ -284,7 +267,8 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 				break;
 			default:
 				// Unknown option
-				fwprintf(stderr, L"unknown command: %s\n", argv[command]);
+				fwprintf(stderr, L"%hs", EncFSMessages::MSG_UNKNOWN_COMMAND());
+				fwprintf(stderr, L"%s\n", argv[command]);
 				return EXIT_FAILURE;
 			}
 		}
@@ -318,7 +302,7 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 	}
 	else if (unmount) {
 		// Unmount the specified volume
-		if (argc < 3) {
+		if (efo.MountPoint[0] == L'\0') {
 			ShowUsage();
 			return EXIT_FAILURE;
 		}
@@ -326,7 +310,8 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 	}
 	else {
 		// Mount a new encrypted volume
-		if (argc < 3) {
+		// Check if required arguments (rootDir and mountPoint) are provided
+		if (efo.RootDirectory[0] == L'\0' || efo.MountPoint[0] == L'\0') {
 			ShowUsage();
 			return EXIT_FAILURE;
 		}
@@ -339,8 +324,8 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 		if (!IsEncFSExists(efo.RootDirectory)) {
 			// Configuration doesn't exist - create new volume
 			// Note: Cannot use credential manager for new volume creation
-			printf("EncFS configuration file doesn't exist.\n");
-			getpass("Enter new password: ", password, sizeof password);
+			printf("%s", EncFSMessages::MSG_CONFIG_NOT_EXIST());
+			getpass(EncFSMessages::MSG_ENTER_NEW_PASSWORD(), password, sizeof password);
 			CreateEncFS(efo.RootDirectory, password, mode, efo.Reverse);
 			// Password is cleared by CreateEncFS/deriveKey, but ensure it's cleared
 			SecureZeroMemory(password, sizeof(password));
@@ -357,13 +342,12 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 					EncFS::CredentialManager::DeletePassword(efo.RootDirectory);
 				}
 			} else {
-				fprintf(stderr, "Error: No stored password found in Credential Manager for this volume.\n");
-				fprintf(stderr, "Please use the GUI to save a password first, or run without --use-credential.\n");
+				fprintf(stderr, "%s", EncFSMessages::MSG_CREDENTIAL_NOT_FOUND());
 				return EXIT_FAILURE;
 			}
 		} else {
 			// Prompt for password from console/stdin
-			getpass("Enter password: ", password, sizeof password);
+			getpass(EncFSMessages::MSG_ENTER_PASSWORD(), password, sizeof password);
 			passwordObtained = true;
 		}
 
