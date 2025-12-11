@@ -155,6 +155,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="CredentialManager.h" />
     <ClInclude Include="EncFSFile.h" />
     <ClInclude Include="EncFSUtils.hpp" />
     <ClInclude Include="EncFSVolume.h" />

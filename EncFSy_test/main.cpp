@@ -175,6 +175,18 @@ int main(int argc, char* argv[])
     runner.runTest("Overwrite then truncate", Test_OverwriteThenTruncate, file);
 
     //=========================================================================
+    // File Rename Pattern Tests (Adobe Reader regression)
+    //=========================================================================
+    printf("\n--- FILE RENAME PATTERN TESTS (Adobe Reader regression) ---\n");
+    
+    runner.runTest("Adobe Reader-like save pattern", Test_AdobeReaderSavePattern, rootDir);
+    runner.runTest("Rapid rename to same target", Test_RapidRenameToSameTarget, rootDir);
+    runner.runTest("Rename chain cycle (A->B->C->A)", Test_RenameChainCycle, rootDir);
+    runner.runTest("Write-rename-read immediate", Test_WriteRenameReadImmediate, rootDir);
+    runner.runTest("Rapid rename cycle", Test_RapidRenameCycle, rootDir);
+    runner.runTest("Rename with concurrent access", Test_RenameWithConcurrentAccess, rootDir);
+
+    //=========================================================================
     // Large File Tests (potential overflow issues)
     //=========================================================================
     printf("\n--- LARGE FILE TESTS (overflow prevention) ---\n");

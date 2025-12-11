@@ -4,6 +4,8 @@ using System.ComponentModel;
 using System.Data;
 using System.Drawing;
 using System.Linq;
+using System.Runtime.InteropServices;
+using System.Security;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -63,20 +65,40 @@ namespace EncFSy_gui
             using (PasswordForm passwordForm = new PasswordForm())
             {
                 passwordForm.StartPosition = FormStartPosition.CenterParent;
+                passwordForm.SetRootDirectory(rootPath);
+                
                 if (passwordForm.ShowDialog(this) != DialogResult.OK)
                 {
                     return;
                 }
 
-                string password = passwordForm.Password;
-                if (string.IsNullOrEmpty(password))
+                SecureString securePassword = passwordForm.SecurePassword;
+                if (securePassword == null || securePassword.Length == 0)
                 {
                     MessageBox.Show("Password cannot be empty.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return;
                 }
 
+                bool rememberPassword = passwordForm.RememberPassword;
+                
+                // Always save password to Credential Manager for secure transfer to encfs.exe
+                // encfs.exe will delete it if --use-credential-once is specified
+                CredentialManager.SavePassword(rootPath, securePassword);
+
                 string args = BuildCommandArguments(rootPath, drive);
-                ExecuteMount(args, password);
+                
+                if (rememberPassword)
+                {
+                    // Keep password stored - use --use-credential
+                    args += " --use-credential";
+                }
+                else
+                {
+                    // Delete password after reading - use --use-credential-once
+                    args += " --use-credential-once";
+                }
+                
+                ExecuteMountWithCredential(args);
             }
 
             Thread.Sleep(3000);
@@ -254,13 +276,28 @@ namespace EncFSy_gui
             commandPreviewTextBox.Text = $"encfs.exe {args}";
         }
 
-        private void ExecuteMount(string args, string password)
+        private void ExecuteMount(string args, SecureString securePassword)
         {
             Process process = StartEncFS(args);
 
             Thread inputThread = new Thread(() =>
             {
-                process.StandardInput.WriteLine(password);
+                // Convert SecureString to string for process input
+                IntPtr unmanagedString = IntPtr.Zero;
+                try
+                {
+                    unmanagedString = Marshal.SecureStringToGlobalAllocUnicode(securePassword);
+                    string password = Marshal.PtrToStringUni(unmanagedString);
+                    process.StandardInput.WriteLine(password);
+                    
+                    // Clear the password string from memory
+                    password = null;
+                }
+                finally
+                {
+                    if (unmanagedString != IntPtr.Zero)
+                        Marshal.ZeroFreeGlobalAllocUnicode(unmanagedString);
+                }
             });
             inputThread.Start();
 
@@ -273,7 +310,21 @@ namespace EncFSy_gui
 
                     if (encfsOut != null && encfsOut.Equals("Enter new password: "))
                     {
-                        process.StandardInput.WriteLine(password);
+                        // Convert SecureString to string for process input (new password confirmation)
+                        IntPtr unmanagedString = IntPtr.Zero;
+                        try
+                        {
+                            unmanagedString = Marshal.SecureStringToGlobalAllocUnicode(securePassword);
+                            string password = Marshal.PtrToStringUni(unmanagedString);
+                            process.StandardInput.WriteLine(password);
+                            password = null;
+                        }
+                        finally
+                        {
+                            if (unmanagedString != IntPtr.Zero)
+                                Marshal.ZeroFreeGlobalAllocUnicode(unmanagedString);
+                        }
+                        
                         encfsOut = process.StandardOutput.ReadLine();
                         encfsOut = process.StandardOutput.ReadLine();
                     }
@@ -292,6 +343,64 @@ namespace EncFSy_gui
                     this.Invoke((MethodInvoker)delegate
                     {
                         MessageBox.Show(this, $"Error: {ex.Message}", "EncFS Error", 
+                            MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    });
+                }
+            });
+            outputThread.IsBackground = true;
+            outputThread.Start();
+        }
+
+        /// <summary>
+        /// Executes mount using Windows Credential Manager (no password over stdin).
+        /// This is more secure as the password never leaves the Credential Manager.
+        /// </summary>
+        private void ExecuteMountWithCredential(string args)
+        {
+            Process process = StartEncFS(args);
+
+            Thread outputThread = new Thread(() =>
+            {
+                try
+                {
+                    // Read all output
+                    string output = process.StandardOutput.ReadToEnd();
+                    string error = process.StandardError.ReadToEnd();
+                    process.WaitForExit();
+
+                    // Trim whitespace from output
+                    output = output?.Trim() ?? "";
+                    error = error?.Trim() ?? "";
+
+                    // Check for errors (non-zero exit code or stderr output)
+                    if (process.ExitCode != 0)
+                    {
+                        string message = !string.IsNullOrEmpty(error) ? error : output;
+                        if (!string.IsNullOrEmpty(message))
+                        {
+                            this.Invoke((MethodInvoker)delegate
+                            {
+                                MessageBox.Show(this, $"Mount failed: {message}", "EncFS Error",
+                                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                            });
+                        }
+                    }
+                    // Success case - only show message if it's NOT "Success"
+                    else if (!string.IsNullOrEmpty(output) && !output.Equals("Success", StringComparison.OrdinalIgnoreCase))
+                    {
+                        this.Invoke((MethodInvoker)delegate
+                        {
+                            MessageBox.Show(this, $"Mount result: '{output}'", "EncFS",
+                                MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        });
+                    }
+                    // If output is "Success" or empty with exit code 0, do nothing (success)
+                }
+                catch (Exception ex)
+                {
+                    this.Invoke((MethodInvoker)delegate
+                    {
+                        MessageBox.Show(this, $"Error: {ex.Message}", "EncFS Error",
                             MessageBoxButtons.OK, MessageBoxIcon.Error);
                     });
                 }
@@ -381,7 +490,22 @@ namespace EncFSy_gui
                 {
                     if (encfsDrives.Contains(drive))
                     {
-                        ListViewItem item = new ListViewItem(new[] { drive, "EncFS (Mounted)" });
+                        // Get volume label for mounted EncFS drive
+                        string volumeLabel = "";
+                        try
+                        {
+                            DriveInfo driveInfo = new DriveInfo(i.ToString());
+                            if (driveInfo.IsReady && !string.IsNullOrEmpty(driveInfo.VolumeLabel))
+                            {
+                                volumeLabel = driveInfo.VolumeLabel;
+                            }
+                        }
+                        catch (Exception)
+                        {
+                            // Ignore errors when getting volume label
+                        }
+
+                        ListViewItem item = new ListViewItem(new[] { drive, volumeLabel });
                         item.BackColor = Color.LightGreen;
                         driveListView.Items.Add(item);
                     }
@@ -389,7 +513,7 @@ namespace EncFSy_gui
                 }
                 else
                 {
-                    ListViewItem item = new ListViewItem(new[] { drive, "(Available)" });
+                    ListViewItem item = new ListViewItem(new[] { drive, "" });
                     driveListView.Items.Add(item);
                 }
             }
@@ -400,7 +524,7 @@ namespace EncFSy_gui
         private void UpdateButtons()
         {
             bool hasSelection = driveListView.SelectedItems.Count > 0;
-            bool isEncFSMount = hasSelection && driveListView.SelectedItems[0].SubItems[1].Text.Contains("Mounted");
+            bool isEncFSMount = hasSelection && driveListView.SelectedItems[0].BackColor == Color.LightGreen;
             bool hasValidPath = Directory.Exists(rootPathCombo.Text);
 
             mountButton.Enabled = hasSelection && !isEncFSMount && hasValidPath;

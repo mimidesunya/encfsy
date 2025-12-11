@@ -40,6 +40,12 @@ bool Test_MultipleConcurrentHandles(const WCHAR* file);
 bool Test_WordLikeSavePattern(const WCHAR* rootDir);
 bool Test_InterleavedReadWriteWithResize(const WCHAR* file);
 bool Test_OverwriteThenTruncate(const WCHAR* file);
+bool Test_AdobeReaderSavePattern(const WCHAR* rootDir);
+bool Test_RapidRenameToSameTarget(const WCHAR* rootDir);
+bool Test_RenameChainCycle(const WCHAR* rootDir);
+bool Test_WriteRenameReadImmediate(const WCHAR* rootDir);
+bool Test_RapidRenameCycle(const WCHAR* rootDir);
+bool Test_RenameWithConcurrentAccess(const WCHAR* rootDir);
 
 //=============================================================================
 // VS Build-like Tests (test_vs_build.cpp)

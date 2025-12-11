@@ -13,9 +13,19 @@
         /// <param name="disposing">true if managed resources should be disposed; otherwise, false.</param>
         protected override void Dispose(bool disposing)
         {
-            if (disposing && (components != null))
+            if (disposing)
             {
-                components.Dispose();
+                // Dispose SecureString
+                if (securePassword != null)
+                {
+                    securePassword.Dispose();
+                    securePassword = null;
+                }
+                
+                if (components != null)
+                {
+                    components.Dispose();
+                }
             }
             base.Dispose(disposing);
         }
@@ -33,6 +43,7 @@
             this.passwordLabel = new System.Windows.Forms.Label();
             this.passwordText = new System.Windows.Forms.TextBox();
             this.showPassword = new System.Windows.Forms.CheckBox();
+            this.rememberPassword = new System.Windows.Forms.CheckBox();
             this.okButton = new System.Windows.Forms.Button();
             this.cancelButton = new System.Windows.Forms.Button();
             this.mainPanel.SuspendLayout();
@@ -47,6 +58,7 @@
             this.mainPanel.Controls.Add(this.passwordLabel);
             this.mainPanel.Controls.Add(this.passwordText);
             this.mainPanel.Controls.Add(this.showPassword);
+            this.mainPanel.Controls.Add(this.rememberPassword);
             this.mainPanel.Controls.Add(this.okButton);
             this.mainPanel.Controls.Add(this.cancelButton);
             this.mainPanel.Location = new System.Drawing.Point(0, 0);
@@ -94,13 +106,23 @@
             this.showPassword.UseVisualStyleBackColor = true;
             this.showPassword.CheckedChanged += new System.EventHandler(this.showPassword_CheckedChanged);
             // 
+            // rememberPassword
+            // 
+            this.rememberPassword.AutoSize = true;
+            this.rememberPassword.Location = new System.Drawing.Point(58, 88);
+            this.rememberPassword.Name = "rememberPassword";
+            this.rememberPassword.Size = new System.Drawing.Size(125, 17);
+            this.rememberPassword.TabIndex = 4;
+            this.rememberPassword.Text = "Remember Password";
+            this.rememberPassword.UseVisualStyleBackColor = true;
+            // 
             // okButton
             // 
             this.okButton.Font = new System.Drawing.Font("Microsoft Sans Serif", 9F);
-            this.okButton.Location = new System.Drawing.Point(152, 95);
+            this.okButton.Location = new System.Drawing.Point(152, 115);
             this.okButton.Name = "okButton";
             this.okButton.Size = new System.Drawing.Size(75, 28);
-            this.okButton.TabIndex = 4;
+            this.okButton.TabIndex = 5;
             this.okButton.Text = "OK";
             this.okButton.UseVisualStyleBackColor = true;
             this.okButton.Click += new System.EventHandler(this.okButton_Click);
@@ -108,10 +130,10 @@
             // cancelButton
             // 
             this.cancelButton.Font = new System.Drawing.Font("Microsoft Sans Serif", 9F);
-            this.cancelButton.Location = new System.Drawing.Point(233, 95);
+            this.cancelButton.Location = new System.Drawing.Point(233, 115);
             this.cancelButton.Name = "cancelButton";
             this.cancelButton.Size = new System.Drawing.Size(75, 28);
-            this.cancelButton.TabIndex = 5;
+            this.cancelButton.TabIndex = 6;
             this.cancelButton.Text = "Cancel";
             this.cancelButton.UseVisualStyleBackColor = true;
             this.cancelButton.Click += new System.EventHandler(this.cancelButton_Click);
@@ -148,6 +170,7 @@
         private System.Windows.Forms.Label passwordLabel;
         private System.Windows.Forms.TextBox passwordText;
         private System.Windows.Forms.CheckBox showPassword;
+        private System.Windows.Forms.CheckBox rememberPassword;
         private System.Windows.Forms.Button okButton;
         private System.Windows.Forms.Button cancelButton;
     }

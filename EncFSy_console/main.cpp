@@ -1,4 +1,5 @@
 ﻿#include "EncFSy.h"
+#include "CredentialManager.h"
 
 #include <malloc.h>
 #include <iostream>
@@ -30,6 +31,10 @@ void ShowUsage() {
 		"  -s                                           Send debug output to stderr.\n"
 		"  -i <ms>              (default: 120000)       Timeout (in milliseconds) before a running\n"
 		"                                               operation is aborted and the volume unmounted.\n"
+		"  --use-credential                             Read password from Windows Credential Manager\n"
+		"                                               instead of prompting. Password is kept stored.\n"
+		"  --use-credential-once                        Read password from Windows Credential Manager\n"
+		"                                               and delete it after reading (one-time use).\n"
 		"  --dokan-debug                                Enable Dokan debug output.\n"
 		"  --dokan-network <UNC>                        UNC path for a network volume (e.g., \\\\host\\myfs).\n"
 		"  --dokan-removable                            Present the volume as removable media.\n"
@@ -61,6 +66,8 @@ void ShowUsage() {
 		"  encfs.exe C:\\Users C:\\mount\\dokan                       # Mount C:\\Users at NTFS folder C:\\mount\\dokan\n"
 		"  encfs.exe C:\\Users M: --dokan-network \\\\myfs\\share       # Mount as network drive with UNC \\\\myfs\\share\n"
 		"  encfs.exe C:\\Data M: --volume-name \"My Secure Drive\"     # Mount with custom volume name\n"
+		"  encfs.exe C:\\Data M: --use-credential                    # Use stored password (keep it stored)\n"
+		"  encfs.exe C:\\Data M: --use-credential-once               # Use stored password (delete after use)\n"
 		"\n"
 		"To unmount, press Ctrl+C in this console or run:\n"
 		"  encfs.exe -u <mountPoint>\n"
@@ -132,20 +139,14 @@ void getpass(const char *prompt, char* password, int size)
 
 /**
  * @brief Main entry point for EncFSy console application
- * @param argc Number of command-line arguments
- * @param argv Array of command-line argument strings (wide character)
- * @return EXIT_SUCCESS (0) on success, EXIT_FAILURE or error code on failure
- * 
- * Supports three main operations:
- * 1. Mount an encrypted volume
- * 2. Unmount an existing volume (-u option)
- * 3. List all mounted volumes (-l option)
  */
 int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 	ULONG command;
 
 	// Operation flags
 	bool unmount = false, list = false;
+	bool useCredential = false;       // Use Windows Credential Manager (keep password)
+	bool useCredentialOnce = false;   // Use Windows Credential Manager (delete after use)
 	
 	// Encryption mode (STANDARD or PARANOIA)
 	EncFSMode mode = STANDARD;
@@ -190,7 +191,15 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 				break;
 			case L'-':
 				// Process long options (starting with --)
-				if (wcscmp(argv[command], L"--dokan-debug") == 0) {
+				if (wcscmp(argv[command], L"--use-credential") == 0) {
+					// Use Windows Credential Manager for password (keep it stored)
+					useCredential = true;
+				}
+				else if (wcscmp(argv[command], L"--use-credential-once") == 0) {
+					// Use Windows Credential Manager for password (delete after use)
+					useCredentialOnce = true;
+				}
+				else if (wcscmp(argv[command], L"--dokan-debug") == 0) {
 					// Enable Dokan library debug output
 					efo.g_DokanDebug = TRUE;
 				}
@@ -322,20 +331,50 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
 			return EXIT_FAILURE;
 		}
 
-		char password[100];
+		char password[256];  // Increased buffer size for credential manager
+		int result = EXIT_SUCCESS;
+		bool passwordObtained = false;
 		
 		// Check if EncFS configuration exists
 		if (!IsEncFSExists(efo.RootDirectory)) {
 			// Configuration doesn't exist - create new volume
+			// Note: Cannot use credential manager for new volume creation
 			printf("EncFS configuration file doesn't exist.\n");
 			getpass("Enter new password: ", password, sizeof password);
 			CreateEncFS(efo.RootDirectory, password, mode, efo.Reverse);
+			// Password is cleared by CreateEncFS/deriveKey, but ensure it's cleared
+			SecureZeroMemory(password, sizeof(password));
 		}
 		
 		// Get password for unlocking the volume
-		getpass("Enter password: ", password, sizeof password);
+		if (useCredential || useCredentialOnce) {
+			// Try to get password from Windows Credential Manager
+			if (EncFS::CredentialManager::GetPassword(efo.RootDirectory, password, sizeof(password))) {
+				passwordObtained = true;
+				
+				// Delete credential after reading if --use-credential-once was specified
+				if (useCredentialOnce) {
+					EncFS::CredentialManager::DeletePassword(efo.RootDirectory);
+				}
+			} else {
+				fprintf(stderr, "Error: No stored password found in Credential Manager for this volume.\n");
+				fprintf(stderr, "Please use the GUI to save a password first, or run without --use-credential.\n");
+				return EXIT_FAILURE;
+			}
+		} else {
+			// Prompt for password from console/stdin
+			getpass("Enter password: ", password, sizeof password);
+			passwordObtained = true;
+		}
 
-		// Start the EncFS filesystem
-		return StartEncFS(efo, password);
+		if (passwordObtained) {
+			// Start the EncFS filesystem
+			result = StartEncFS(efo, password);
+			
+			// Securely clear password from memory after use
+			SecureZeroMemory(password, sizeof(password));
+		}
+		
+		return result;
 	}
 }

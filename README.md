@@ -6,6 +6,40 @@ encfsy は **Dokany** と **Crypto++** をバックエンドに採用した Wind
 
 ディレクトリ・ファイルのツリー構造はそのままに、ファイル名と内容を暗号化します。ドライブ全体を暗号化するのに比べて、Dropbox や Google Drive あるいは rsync でリモートのドライブと同期するのに有用です。暗号化された状態でリモートとファイルを共有するため、ドライブの管理者にファイルの中身を見られることがありません。
 
+## セキュリティ機能
+encfsy は **Windows Credential Manager** を使用してパスワードを安全に管理します。
+
+- パスワードは **DPAPI** (Data Protection API) で暗号化され、現在のユーザーアカウントに紐付けられます
+- GUI と encfs.exe 間でパスワードを標準入力で渡す必要がなく、プロセス間通信での傍受リスクを排除
+- 「パスワードを記憶する」オプションでパスワードを保存、次回起動時に自動入力
+- パスワードは**暗号化ディレクトリ（rootDir）ごとに個別に保存**されます
+
+### パスワードの保存場所
+保存されたパスワードは、コントロールパネル → 資格情報マネージャー → Windows 資格情報 で確認できます。
+`EncFSy:c:\path\to\encrypted` のような名前で表示されます。
+
+## GUI の使い方
+**EncFSy_gui.exe** を使用すると、コマンドラインを使わずに簡単にボリュームをマウント・アンマウントできます。
+
+1. 暗号化ディレクトリ (rootDir) を選択
+2. マウント先のドライブ文字を選択
+3. パスワードを入力（「Remember Password」で記憶可能）
+4. 「Mount」をクリック
+
+「Show Advanced Options」でコマンドライン版と同等の詳細設定も可能です。
+
+## コマンドラインでの Credential Manager 利用
+GUI で「Remember Password」をチェックしてマウントすると、パスワードが Windows Credential Manager に保存されます。
+その後、コマンドラインから `--use-credential` オプションでパスワード入力なしにマウントできます。
+
+```bash
+# 1. まず GUI で「Remember Password」をチェックしてマウント
+#    → パスワードが Credential Manager に保存される
+
+# 2. 次回以降、コマンドラインからパスワード入力なしでマウント可能
+encfs.exe C:\Data M: --use-credential
+```
+
 ## ファイル名の長さ制限
 encfsy は新しい「ロングパス」API を利用しているため、フルパス全体の 260 文字（MAX_PATH）制限は適用されません。
 
@@ -26,6 +60,12 @@ Usage: encfs.exe [options] <rootDir> <mountPoint>
   -v                                           デバッグ出力をデバッガへ送信
   -s                                           デバッグ出力を stderr へ送信
   -i <ms>              (既定: 120000)          操作タイムアウト（ミリ秒）経過で自動アンマウント
+  --use-credential                             Windows Credential Manager からパスワードを取得
+                                               （パスワードは保持される）
+                                               ※事前に GUI で「Remember Password」をチェックして
+                                               パスワードを保存しておく必要があります
+  --use-credential-once                        Windows Credential Manager からパスワードを取得
+                                               （読み取り後に削除、一回限りの使用）
   --dokan-debug                                Dokan のデバッグ出力を有効化
   --dokan-network <UNC>                        ネットワークボリュームの UNC パス (例: \\host\myfs)
   --dokan-removable                            リムーバブルメディアとしてマウント
@@ -51,6 +91,7 @@ Usage: encfs.exe [options] <rootDir> <mountPoint>
   encfs.exe C:\Users C:\mount\dokan                       # C:\mount\dokan にマウント
   encfs.exe C:\Users M: --dokan-network \\myfs\share      # UNC \\myfs\share でネットワークドライブ
   encfs.exe C:\Data M: --volume-name "セキュアドライブ"   # カスタムボリューム名でマウント
+  encfs.exe C:\Data M: --use-credential                   # Credential Manager から保存済みパスワードを使用
 
 アンマウントするには Ctrl+C（このコンソール）または:
   encfs.exe -u <mountPoint>
@@ -70,6 +111,40 @@ The program encrypts file names and contents while leaving the directory tree in
 This makes it ideal for syncing encrypted data with Dropbox, Google Drive, rsync, or other
 remote storage: the files stay encrypted end‑to‑end, so storage administrators cannot see
 their contents.
+
+## Security Features
+encfsy uses **Windows Credential Manager** for secure password management.
+
+- Passwords are encrypted with **DPAPI** (Data Protection API) and tied to the current user account
+- Eliminates the need to pass passwords via stdin between GUI and encfs.exe, removing interception risks
+- "Remember Password" option saves passwords for automatic entry on next launch
+- Passwords are **stored separately for each encrypted directory (rootDir)**
+
+### Where Passwords Are Stored
+Saved passwords can be viewed in Control Panel → Credential Manager → Windows Credentials.
+They appear with names like `EncFSy:c:\path\to\encrypted`.
+
+## GUI Usage
+Use **EncFSy_gui.exe** to easily mount and unmount volumes without the command line.
+
+1. Select the encrypted directory (rootDir)
+2. Choose a drive letter for mounting
+3. Enter your password (check "Remember Password" to save it)
+4. Click "Mount"
+
+"Show Advanced Options" provides access to the same detailed settings as the command-line version.
+
+## Using Credential Manager from Command Line
+When you mount with "Remember Password" checked in the GUI, the password is saved to Windows Credential Manager.
+You can then mount from the command line without entering a password using the `--use-credential` option.
+
+```bash
+# 1. First, mount via GUI with "Remember Password" checked
+#    → Password is saved to Credential Manager
+
+# 2. Subsequently, mount from command line without password prompt
+encfs.exe C:\Data M: --use-credential
+```
 
 ## Filename Length Limit
 encfsy uses the modern *long‑path* API, so the traditional 260‑character **MAX_PATH**
@@ -97,6 +172,12 @@ Options:
   -s                                           Send debug output to stderr.
   -i <ms>              (default: 120000)       Timeout (in milliseconds) before a running
                                                operation is aborted and the volume unmounted.
+  --use-credential                             Read password from Windows Credential Manager
+                                               (password is kept stored).
+                                               Note: Password must be saved first via GUI
+                                               with "Remember Password" checked.
+  --use-credential-once                        Read password from Windows Credential Manager
+                                               and delete it after reading (one-time use).
   --dokan-debug                                Enable Dokan debug output.
   --dokan-network <UNC>                        UNC path for a network volume (e.g., \\host\myfs).
   --dokan-removable                            Present the volume as removable media.
@@ -128,6 +209,7 @@ Examples:
   encfs.exe C:\Users C:\mount\dokan                        # Mount C:\Users at NTFS folder C:\mount\dokan
   encfs.exe C:\Users M: --dokan-network \\myfs\share       # Mount as network drive with UNC \\myfs\share
   encfs.exe C:\Data M: --volume-name "My Secure Drive"     # Mount with custom volume name
+  encfs.exe C:\Data M: --use-credential                    # Use stored password from Credential Manager
 
 To unmount, press Ctrl+C in this console or run:
   encfs.exe -u <mountPoint>
