@@ -7,8 +7,6 @@
 !include WinVer.nsh
 !include MUI2.nsh
 
-LoadLanguageFile "${NSISDIR}\Contrib\Language files\English.nlf"
-
 Name "EncFSyInstaller ${VERSION}"
 BrandingText https://github.com/miyabe/encfsy/
 OutFile "EncFSynstall_${VERSION}.exe"
@@ -16,15 +14,44 @@ OutFile "EncFSynstall_${VERSION}.exe"
 
 InstallDir $PROGRAMFILES32\Zamasoft\EncFSy
 RequestExecutionLevel admin
-LicenseData "licdata.rtf"
 ShowUninstDetails show
 
-Page license
-Page components
-Page instfiles
+; MUI Pages
+!insertmacro MUI_PAGE_LICENSE "licdata.rtf"
+!insertmacro MUI_PAGE_COMPONENTS
+!insertmacro MUI_PAGE_INSTFILES
 
-UninstPage uninstConfirm
-UninstPage instfiles
+!insertmacro MUI_UNPAGE_CONFIRM
+!insertmacro MUI_UNPAGE_INSTFILES
+
+; MUI Language settings (must be after MUI_PAGE_* macros)
+!insertmacro MUI_LANGUAGE "English"
+!insertmacro MUI_LANGUAGE "Japanese"
+!insertmacro MUI_LANGUAGE "Korean"
+!insertmacro MUI_LANGUAGE "SimpChinese"
+!insertmacro MUI_LANGUAGE "TradChinese"
+!insertmacro MUI_LANGUAGE "Arabic"
+!insertmacro MUI_LANGUAGE "German"
+!insertmacro MUI_LANGUAGE "Russian"
+
+; Language strings
+LangString MSG_DOKANY_REQUIRED ${LANG_ENGLISH} "EncFSy requires Dokany. Please try again after installed Dokany."
+LangString MSG_DOKANY_REQUIRED ${LANG_JAPANESE} "EncFSyÇ…ÇÕDokanyÇ™ïKóvÇ≈Ç∑ÅBDokanyÇÉCÉìÉXÉgÅ[ÉãÇµÇƒÇ©ÇÁçƒìxÇ®ééÇµÇ≠ÇæÇ≥Ç¢ÅB"
+LangString MSG_DOKANY_REQUIRED ${LANG_KOREAN} "EncFSy? Dokany? ?????. Dokany? ??? ? ?? ??????."
+LangString MSG_DOKANY_REQUIRED ${LANG_SIMPCHINESE} "EncFSy é˘óv DokanyÅB?à¿ëï Dokany ç@èd?ÅB"
+LangString MSG_DOKANY_REQUIRED ${LANG_TRADCHINESE} "EncFSy é˘óv DokanyÅBêøà¿Â‰ Dokany å„èdééÅB"
+LangString MSG_DOKANY_REQUIRED ${LANG_ARABIC} "????? EncFSy ?????? Dokany. ???? ???????? ??? ???? ??? ????? Dokany."
+LangString MSG_DOKANY_REQUIRED ${LANG_GERMAN} "EncFSy erfordert Dokany. Bitte versuchen Sie es erneut, nachdem Sie Dokany installiert haben."
+LangString MSG_DOKANY_REQUIRED ${LANG_RUSSIAN} "EncFSy ÑÑÑÇÑuÑqÑÖÑuÑÑ Dokany. ÑPÑÄÑwÑpÑ|ÑÖÑzÑÉÑÑÑp, ÑÅÑÄÑrÑÑÑÄÑÇÑyÑÑÑu ÑÅÑÄÑÅÑçÑÑÑ{ÑÖ ÑÅÑÄÑÉÑ|Ñu ÑÖÑÉÑÑÑpÑ~ÑÄÑrÑ{Ñy Dokany."
+
+LangString DESC_SECTION ${LANG_ENGLISH} "Install EncFSy encrypted filesystem."
+LangString DESC_SECTION ${LANG_JAPANESE} "EncFSyà√çÜâªÉtÉ@ÉCÉãÉVÉXÉeÉÄÇÉCÉìÉXÉgÅ[ÉãÇµÇ‹Ç∑ÅB"
+LangString DESC_SECTION ${LANG_KOREAN} "EncFSy ??? ?? ???? ?????."
+LangString DESC_SECTION ${LANG_SIMPCHINESE} "à¿ëï EncFSy â¡ñßï∂åèån?ÅB"
+LangString DESC_SECTION ${LANG_TRADCHINESE} "à¿Â‰ EncFSy â¡ñß?àƒånìùÅB"
+LangString DESC_SECTION ${LANG_ARABIC} "????? ???? ??????? ?????? EncFSy."
+LangString DESC_SECTION ${LANG_GERMAN} "EncFSy verschl?sseltes Dateisystem installieren."
+LangString DESC_SECTION ${LANG_RUSSIAN} "ÑTÑÉÑÑÑpÑ~ÑÄÑrÑyÑÑÑé ÑxÑpÑäÑyÑÜÑÇÑÄÑrÑpÑ~Ñ~ÑÖÑê ÑÜÑpÑzÑ|ÑÄÑrÑÖÑê ÑÉÑyÑÉÑÑÑuÑ}ÑÖ EncFSy."
 
 !macro EncFSyFiles
 
@@ -57,6 +84,11 @@ Section "EncFSy" section_x64
   !insertmacro EncFSySetup
 SectionEnd
 
+; Section descriptions
+!insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
+  !insertmacro MUI_DESCRIPTION_TEXT ${section_x64} $(DESC_SECTION)
+!insertmacro MUI_FUNCTION_DESCRIPTION_END
+
 Section "Uninstall"
   RMDir /r $PROGRAMFILES32\Zamasoft\EncFSy
   RMDir $PROGRAMFILES32\EncFSy
@@ -69,9 +101,12 @@ Section "Uninstall"
 SectionEnd
 
 Function .onInit
+  ; Show language selection dialog
+  !insertmacro MUI_LANGDLL_DISPLAY
+
   ${DisableX64FSRedirection}
   IfFileExists "$SYSDIR\drivers\dokan2.sys" Skip
-    MessageBox MB_OK "EncFSy requires Dokany. Please try again after installed Dokany."
+    MessageBox MB_OK $(MSG_DOKANY_REQUIRED)
     ExecShell "open" "https://github.com/dokan-dev/dokany/releases"
     Abort
   Skip:
