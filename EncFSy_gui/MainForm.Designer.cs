@@ -35,6 +35,11 @@ namespace EncFSy_gui
             // Main container
             this.mainContainer = new System.Windows.Forms.FlowLayoutPanel();
             
+            // Language selection panel (at the top)
+            this.languagePanel = new System.Windows.Forms.Panel();
+            this.languageLabel = new System.Windows.Forms.Label();
+            this.languageComboBox = new System.Windows.Forms.ComboBox();
+            
             // Drive selection group
             this.driveGroup = new System.Windows.Forms.GroupBox();
             this.driveListView = new System.Windows.Forms.ListView();
@@ -88,8 +93,6 @@ namespace EncFSy_gui
             this.allocationUnitNumeric = new System.Windows.Forms.NumericUpDown();
             this.sectorSizeLabel = new System.Windows.Forms.Label();
             this.sectorSizeNumeric = new System.Windows.Forms.NumericUpDown();
-            this.languageLabel = new System.Windows.Forms.Label();
-            this.languageComboBox = new System.Windows.Forms.ComboBox();
             
             // Command preview group
             this.commandPreviewGroup = new System.Windows.Forms.GroupBox();
@@ -98,6 +101,7 @@ namespace EncFSy_gui
             
             // Suspend layout
             this.mainContainer.SuspendLayout();
+            this.languagePanel.SuspendLayout();
             this.driveGroup.SuspendLayout();
             this.directoryGroup.SuspendLayout();
             this.basicOptionsGroup.SuspendLayout();
@@ -121,6 +125,7 @@ namespace EncFSy_gui
             this.mainContainer.Name = "mainContainer";
             this.mainContainer.Padding = new System.Windows.Forms.Padding(5);
             this.mainContainer.WrapContents = false;
+            this.mainContainer.Controls.Add(this.languagePanel);
             this.mainContainer.Controls.Add(this.driveGroup);
             this.mainContainer.Controls.Add(this.directoryGroup);
             this.mainContainer.Controls.Add(this.basicOptionsGroup);
@@ -132,6 +137,37 @@ namespace EncFSy_gui
             this.mainContainer.TabIndex = 0;
             
             // 
+            // languagePanel
+            // 
+            this.languagePanel.Controls.Add(this.languageLabel);
+            this.languagePanel.Controls.Add(this.languageComboBox);
+            this.languagePanel.Margin = new System.Windows.Forms.Padding(5);
+            this.languagePanel.Name = "languagePanel";
+            this.languagePanel.Size = new System.Drawing.Size(440, 28);
+            this.languagePanel.TabIndex = 0;
+            
+            // 
+            // languageLabel
+            // 
+            this.languageLabel.AutoSize = true;
+            this.languageLabel.Location = new System.Drawing.Point(3, 6);
+            this.languageLabel.Name = "languageLabel";
+            this.languageLabel.Size = new System.Drawing.Size(55, 13);
+            this.languageLabel.TabIndex = 0;
+            this.languageLabel.Text = "Language:";
+            
+            // 
+            // languageComboBox
+            // 
+            this.languageComboBox.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
+            this.languageComboBox.FormattingEnabled = true;
+            this.languageComboBox.Location = new System.Drawing.Point(65, 3);
+            this.languageComboBox.Name = "languageComboBox";
+            this.languageComboBox.Size = new System.Drawing.Size(120, 21);
+            this.languageComboBox.TabIndex = 1;
+            this.languageComboBox.SelectedIndexChanged += new System.EventHandler(this.languageComboBox_SelectedIndexChanged);
+            
+            // 
             // driveGroup
             // 
             this.driveGroup.Controls.Add(this.driveListView);
@@ -139,7 +175,7 @@ namespace EncFSy_gui
             this.driveGroup.Margin = new System.Windows.Forms.Padding(5);
             this.driveGroup.Name = "driveGroup";
             this.driveGroup.Size = new System.Drawing.Size(440, 140);
-            this.driveGroup.TabIndex = 0;
+            this.driveGroup.TabIndex = 1;
             this.driveGroup.TabStop = false;
             this.driveGroup.Text = "Drive Selection";
             
@@ -193,7 +229,7 @@ namespace EncFSy_gui
             this.directoryGroup.Margin = new System.Windows.Forms.Padding(5);
             this.directoryGroup.Name = "directoryGroup";
             this.directoryGroup.Size = new System.Drawing.Size(440, 55);
-            this.directoryGroup.TabIndex = 1;
+            this.directoryGroup.TabIndex = 2;
             this.directoryGroup.TabStop = false;
             this.directoryGroup.Text = "Encrypted Directory (rootDir)";
             
@@ -229,7 +265,7 @@ namespace EncFSy_gui
             this.basicOptionsGroup.Margin = new System.Windows.Forms.Padding(5);
             this.basicOptionsGroup.Name = "basicOptionsGroup";
             this.basicOptionsGroup.Size = new System.Drawing.Size(440, 55);
-            this.basicOptionsGroup.TabIndex = 2;
+            this.basicOptionsGroup.TabIndex = 3;
             this.basicOptionsGroup.TabStop = false;
             this.basicOptionsGroup.Text = "Options";
             
@@ -299,7 +335,7 @@ namespace EncFSy_gui
             this.buttonsPanel.Margin = new System.Windows.Forms.Padding(5);
             this.buttonsPanel.Name = "buttonsPanel";
             this.buttonsPanel.Size = new System.Drawing.Size(440, 45);
-            this.buttonsPanel.TabIndex = 3;
+            this.buttonsPanel.TabIndex = 4;
             
             // 
             // mountButton
@@ -335,7 +371,7 @@ namespace EncFSy_gui
             this.advancedModePanel.Margin = new System.Windows.Forms.Padding(5, 10, 5, 5);
             this.advancedModePanel.Name = "advancedModePanel";
             this.advancedModePanel.Size = new System.Drawing.Size(440, 25);
-            this.advancedModePanel.TabIndex = 4;
+            this.advancedModePanel.TabIndex = 5;
             
             // 
             // separatorLabel
@@ -374,7 +410,7 @@ namespace EncFSy_gui
             this.advancedOptionsGroup.Margin = new System.Windows.Forms.Padding(5);
             this.advancedOptionsGroup.Name = "advancedOptionsGroup";
             this.advancedOptionsGroup.Size = new System.Drawing.Size(440, 70);
-            this.advancedOptionsGroup.TabIndex = 5;
+            this.advancedOptionsGroup.TabIndex = 6;
             this.advancedOptionsGroup.TabStop = false;
             this.advancedOptionsGroup.Text = "Advanced Options";
             this.advancedOptionsGroup.Visible = false;
@@ -485,12 +521,10 @@ namespace EncFSy_gui
             this.advancedSettingsGroup.Controls.Add(this.allocationUnitNumeric);
             this.advancedSettingsGroup.Controls.Add(this.sectorSizeLabel);
             this.advancedSettingsGroup.Controls.Add(this.sectorSizeNumeric);
-            this.advancedSettingsGroup.Controls.Add(this.languageLabel);
-            this.advancedSettingsGroup.Controls.Add(this.languageComboBox);
             this.advancedSettingsGroup.Margin = new System.Windows.Forms.Padding(5);
             this.advancedSettingsGroup.Name = "advancedSettingsGroup";
-            this.advancedSettingsGroup.Size = new System.Drawing.Size(440, 100);
-            this.advancedSettingsGroup.TabIndex = 6;
+            this.advancedSettingsGroup.Size = new System.Drawing.Size(440, 75);
+            this.advancedSettingsGroup.TabIndex = 7;
             this.advancedSettingsGroup.TabStop = false;
             this.advancedSettingsGroup.Text = "Settings";
             this.advancedSettingsGroup.Visible = false;
@@ -623,27 +657,6 @@ namespace EncFSy_gui
             this.toolTip.SetToolTip(this.sectorSizeNumeric, "Sector size (0 = default)");
             
             // 
-            // languageLabel
-            // 
-            this.languageLabel.AutoSize = true;
-            this.languageLabel.Location = new System.Drawing.Point(7, 72);
-            this.languageLabel.Name = "languageLabel";
-            this.languageLabel.Size = new System.Drawing.Size(55, 13);
-            this.languageLabel.TabIndex = 12;
-            this.languageLabel.Text = "Language:";
-            
-            // 
-            // languageComboBox
-            // 
-            this.languageComboBox.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
-            this.languageComboBox.FormattingEnabled = true;
-            this.languageComboBox.Location = new System.Drawing.Point(70, 69);
-            this.languageComboBox.Name = "languageComboBox";
-            this.languageComboBox.Size = new System.Drawing.Size(100, 21);
-            this.languageComboBox.TabIndex = 13;
-            this.languageComboBox.SelectedIndexChanged += new System.EventHandler(this.languageComboBox_SelectedIndexChanged);
-            
-            // 
             // commandPreviewGroup
             // 
             this.commandPreviewGroup.Controls.Add(this.commandPreviewTextBox);
@@ -651,7 +664,7 @@ namespace EncFSy_gui
             this.commandPreviewGroup.Margin = new System.Windows.Forms.Padding(5);
             this.commandPreviewGroup.Name = "commandPreviewGroup";
             this.commandPreviewGroup.Size = new System.Drawing.Size(440, 75);
-            this.commandPreviewGroup.TabIndex = 7;
+            this.commandPreviewGroup.TabIndex = 8;
             this.commandPreviewGroup.TabStop = false;
             this.commandPreviewGroup.Text = "Command Preview";
             this.commandPreviewGroup.Visible = false;
@@ -702,6 +715,8 @@ namespace EncFSy_gui
             
             // Resume layout
             this.mainContainer.ResumeLayout(false);
+            this.languagePanel.ResumeLayout(false);
+            this.languagePanel.PerformLayout();
             this.driveGroup.ResumeLayout(false);
             this.directoryGroup.ResumeLayout(false);
             this.basicOptionsGroup.ResumeLayout(false);
@@ -726,6 +741,11 @@ namespace EncFSy_gui
 
         // Main container
         private System.Windows.Forms.FlowLayoutPanel mainContainer;
+        
+        // Language selection panel
+        private System.Windows.Forms.Panel languagePanel;
+        private System.Windows.Forms.Label languageLabel;
+        private System.Windows.Forms.ComboBox languageComboBox;
         
         // Groups
         private System.Windows.Forms.GroupBox driveGroup;
@@ -783,8 +803,6 @@ namespace EncFSy_gui
         private System.Windows.Forms.NumericUpDown allocationUnitNumeric;
         private System.Windows.Forms.Label sectorSizeLabel;
         private System.Windows.Forms.NumericUpDown sectorSizeNumeric;
-        private System.Windows.Forms.Label languageLabel;
-        private System.Windows.Forms.ComboBox languageComboBox;
         
         // Command preview
         private System.Windows.Forms.TextBox commandPreviewTextBox;
