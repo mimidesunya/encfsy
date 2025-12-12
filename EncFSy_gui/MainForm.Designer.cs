@@ -53,7 +53,6 @@ namespace EncFSy_gui
             this.mountManagerCheckBox = new System.Windows.Forms.CheckBox();
             this.caseInsensitiveCheckBox = new System.Windows.Forms.CheckBox();
             this.readOnlyCheckBox = new System.Windows.Forms.CheckBox();
-            this.reverseCheckBox = new System.Windows.Forms.CheckBox();
             
             // Buttons panel
             this.buttonsPanel = new System.Windows.Forms.Panel();
@@ -73,6 +72,7 @@ namespace EncFSy_gui
             this.fileLockUserModeCheckBox = new System.Windows.Forms.CheckBox();
             this.enableUnmountNetworkCheckBox = new System.Windows.Forms.CheckBox();
             this.allowIpcBatchingCheckBox = new System.Windows.Forms.CheckBox();
+            this.reverseCheckBox = new System.Windows.Forms.CheckBox();
             
             // Advanced settings group
             this.advancedSettingsGroup = new System.Windows.Forms.GroupBox();
@@ -226,7 +226,6 @@ namespace EncFSy_gui
             this.basicOptionsGroup.Controls.Add(this.mountManagerCheckBox);
             this.basicOptionsGroup.Controls.Add(this.caseInsensitiveCheckBox);
             this.basicOptionsGroup.Controls.Add(this.readOnlyCheckBox);
-            this.basicOptionsGroup.Controls.Add(this.reverseCheckBox);
             this.basicOptionsGroup.Margin = new System.Windows.Forms.Padding(5);
             this.basicOptionsGroup.Name = "basicOptionsGroup";
             this.basicOptionsGroup.Size = new System.Drawing.Size(440, 55);
@@ -291,19 +290,6 @@ namespace EncFSy_gui
             this.readOnlyCheckBox.UseVisualStyleBackColor = true;
             this.readOnlyCheckBox.CheckedChanged += new System.EventHandler(this.anyOption_Changed);
             this.toolTip.SetToolTip(this.readOnlyCheckBox, "Mount as read-only filesystem");
-            
-            // 
-            // reverseCheckBox
-            // 
-            this.reverseCheckBox.AutoSize = true;
-            this.reverseCheckBox.Location = new System.Drawing.Point(10, 68);
-            this.reverseCheckBox.Name = "reverseCheckBox";
-            this.reverseCheckBox.Size = new System.Drawing.Size(66, 17);
-            this.reverseCheckBox.TabIndex = 8;
-            this.reverseCheckBox.Text = "Reverse";
-            this.reverseCheckBox.UseVisualStyleBackColor = true;
-            this.reverseCheckBox.CheckedChanged += new System.EventHandler(this.anyOption_Changed);
-            this.toolTip.SetToolTip(this.reverseCheckBox, "Reverse mode: show plaintext as encrypted");
             
             // 
             // buttonsPanel
@@ -384,6 +370,7 @@ namespace EncFSy_gui
             this.advancedOptionsGroup.Controls.Add(this.fileLockUserModeCheckBox);
             this.advancedOptionsGroup.Controls.Add(this.enableUnmountNetworkCheckBox);
             this.advancedOptionsGroup.Controls.Add(this.allowIpcBatchingCheckBox);
+            this.advancedOptionsGroup.Controls.Add(this.reverseCheckBox);
             this.advancedOptionsGroup.Margin = new System.Windows.Forms.Padding(5);
             this.advancedOptionsGroup.Name = "advancedOptionsGroup";
             this.advancedOptionsGroup.Size = new System.Drawing.Size(440, 70);
@@ -469,6 +456,19 @@ namespace EncFSy_gui
             this.allowIpcBatchingCheckBox.UseVisualStyleBackColor = true;
             this.allowIpcBatchingCheckBox.CheckedChanged += new System.EventHandler(this.anyOption_Changed);
             this.toolTip.SetToolTip(this.allowIpcBatchingCheckBox, "Enable IPC batching for slow filesystems");
+            
+            // 
+            // reverseCheckBox
+            // 
+            this.reverseCheckBox.AutoSize = true;
+            this.reverseCheckBox.Location = new System.Drawing.Point(260, 45);
+            this.reverseCheckBox.Name = "reverseCheckBox";
+            this.reverseCheckBox.Size = new System.Drawing.Size(66, 17);
+            this.reverseCheckBox.TabIndex = 6;
+            this.reverseCheckBox.Text = "Reverse";
+            this.reverseCheckBox.UseVisualStyleBackColor = true;
+            this.reverseCheckBox.CheckedChanged += new System.EventHandler(this.anyOption_Changed);
+            this.toolTip.SetToolTip(this.reverseCheckBox, "Reverse mode: show plaintext as encrypted");
             
             // 
             // advancedSettingsGroup
@@ -753,7 +753,6 @@ namespace EncFSy_gui
         private System.Windows.Forms.CheckBox mountManagerCheckBox;
         private System.Windows.Forms.CheckBox caseInsensitiveCheckBox;
         private System.Windows.Forms.CheckBox readOnlyCheckBox;
-        private System.Windows.Forms.CheckBox reverseCheckBox;
         
         // Advanced mode toggle
         private System.Windows.Forms.CheckBox advancedModeCheckBox;
@@ -769,6 +768,7 @@ namespace EncFSy_gui
         private System.Windows.Forms.CheckBox fileLockUserModeCheckBox;
         private System.Windows.Forms.CheckBox enableUnmountNetworkCheckBox;
         private System.Windows.Forms.CheckBox allowIpcBatchingCheckBox;
+        private System.Windows.Forms.CheckBox reverseCheckBox;
         
         // Advanced settings
         private System.Windows.Forms.Label timeoutLabel;

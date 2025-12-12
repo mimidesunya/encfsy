@@ -9,6 +9,8 @@
 #pragma once
 
 #include <windows.h>
+#include <string>
+#include <fstream>
 
 namespace EncFSMessages {
 
@@ -25,6 +27,42 @@ enum class Language {
 
 // Use static storage for C++14 compatibility (inline variables require C++17)
 static Language g_CurrentLanguage = Language::English;
+static std::string g_Version = "(dev)";
+
+/**
+ * @brief Reads version from Version.txt file
+ */
+inline void InitVersion() {
+    // Get the directory where the executable is located
+    char exePath[MAX_PATH];
+    if (GetModuleFileNameA(NULL, exePath, MAX_PATH) > 0) {
+        std::string path(exePath);
+        size_t pos = path.find_last_of("\\/");
+        if (pos != std::string::npos) {
+            std::string dir = path.substr(0, pos + 1);
+            std::string versionFile = dir + "Version.txt";
+            
+            std::ifstream file(versionFile);
+            if (file.is_open()) {
+                std::getline(file, g_Version);
+                // Trim whitespace
+                size_t start = g_Version.find_first_not_of(" \t\r\n");
+                size_t end = g_Version.find_last_not_of(" \t\r\n");
+                if (start != std::string::npos && end != std::string::npos) {
+                    g_Version = g_Version.substr(start, end - start + 1);
+                }
+                file.close();
+            }
+        }
+    }
+}
+
+/**
+ * @brief Gets the version string
+ */
+inline const char* GetVersion() {
+    return g_Version.c_str();
+}
 
 /**
  * @brief Detects the system language and sets g_CurrentLanguage
@@ -153,8 +191,7 @@ inline const char* GetUsageText_JA() {
         u8"  --dokan-mount-manager                        Windows Mount Manager に登録（ごみ箱などを有効化）\n"
         u8"  --dokan-current-session                      現在のセッションのみにボリュームを公開\n"
         u8"  --dokan-filelock-user-mode                   LockFile/UnlockFile をユーザーモードで処理\n"
-        u8"  --dokan-enable-unmount-network-drive         エクスプローラーからネットワークドライブを\n"
-        u8"                                               アンマウント可能にする\n"
+        u8"  --dokan-enable-unmount-network-drive         エクスプローラーからネットワークドライブをアンマウント可能にする\n"
         u8"  --dokan-dispatch-driver-logs                 カーネルドライバーのログをユーザーランドに転送（低速）\n"
         u8"  --dokan-allow-ipc-batching                   低速なファイルシステム向けに IPC バッチ処理を有効化\n"
         u8"  --public                                     CreateFile 時に呼び出しユーザーを偽装（管理者権限要）\n"
@@ -507,6 +544,22 @@ inline const char* GetUsageText() {
         default:
             return GetUsageText_EN();
     }
+}
+
+// ============================================================================
+// Usage Text with Version Header
+// ============================================================================
+
+// Storage for formatted usage text with version
+static std::string g_FormattedUsageText;
+
+/**
+ * @brief Gets usage text with version header prepended
+ */
+inline const char* GetUsageTextWithVersion() {
+    std::string header = "EncFSy " + g_Version + "\n\n";
+    g_FormattedUsageText = header + GetUsageText();
+    return g_FormattedUsageText.c_str();
 }
 
 // ============================================================================

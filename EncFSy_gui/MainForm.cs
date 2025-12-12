@@ -675,8 +675,6 @@ namespace EncFSy_gui
                 args.Append(" --case-insensitive");
             if (readOnlyCheckBox.Checked)
                 args.Append(" --dokan-write-protect");
-            if (reverseCheckBox.Checked)
-                args.Append(" --reverse");
 
             // Advanced options (only if advanced mode is enabled)
             if (isAdvancedMode)
@@ -693,6 +691,8 @@ namespace EncFSy_gui
                     args.Append(" --dokan-enable-unmount-network-drive");
                 if (allowIpcBatchingCheckBox.Checked)
                     args.Append(" --dokan-allow-ipc-batching");
+                if (reverseCheckBox.Checked)
+                    args.Append(" --reverse");
                 if (timeoutNumeric.Value != 120000)
                     args.Append($" -i {(int)timeoutNumeric.Value}");
 

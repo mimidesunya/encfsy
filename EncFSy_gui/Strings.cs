@@ -1,12 +1,55 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
+using System.Reflection;
 
 namespace EncFSy_gui
 {
     public static class Strings
     {
         private static string _currentLanguage = "en";
+        private static readonly string _version;
+
+        static Strings()
+        {
+            // Try to read version from Version.txt in application directory
+            // Falls back to "(dev)" if file not found (development environment)
+            try
+            {
+                string exePath = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+                string versionFile = Path.Combine(exePath, "Version.txt");
+                
+                // Also check parent directory (for development environment)
+                if (!File.Exists(versionFile))
+                {
+                    versionFile = Path.Combine(exePath, "..", "Version.txt");
+                }
+                if (!File.Exists(versionFile))
+                {
+                    versionFile = Path.Combine(exePath, "..", "..", "Version.txt");
+                }
+                if (!File.Exists(versionFile))
+                {
+                    versionFile = Path.Combine(exePath, "..", "..", "..", "Version.txt");
+                }
+                
+                if (File.Exists(versionFile))
+                {
+                    _version = File.ReadAllText(versionFile).Trim();
+                }
+                else
+                {
+                    // Development environment - no Version.txt
+                    _version = "(dev)";
+                }
+            }
+            catch
+            {
+                // Fallback to dev indicator on any error
+                _version = "(dev)";
+            }
+        }
 
         // Language display names and codes
         public static readonly Dictionary<string, string> AvailableLanguages = new Dictionary<string, string>
@@ -67,7 +110,7 @@ namespace EncFSy_gui
         }
 
         // Window Titles
-        public static string AppTitle { get { return "EncFSy"; } }
+        public static string AppTitle { get { return $"EncFSy {_version}"; } }
         public static string PasswordFormTitle { get { return L("Enter Password", "パスワード入力", "비밀번호 입력", "输入密码", "輸入密碼", "Введите пароль", "أدخل كلمة المرور", "Passwort eingeben"); } }
 
         // Group Box Titles

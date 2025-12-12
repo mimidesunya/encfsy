@@ -1,4 +1,6 @@
-!define VERSION "1.1.3"
+; Read version from Version.txt
+!define SRCDIR ".."
+!searchparse /file "${SRCDIR}\Version.txt" "" VERSION
 
 !include LogicLib.nsh
 !include x64.nsh
@@ -28,8 +30,9 @@ UninstPage instfiles
 
   SetOutPath $PROGRAMFILES32\Zamasoft\EncFSy
  
-    File ../x64\Release\encfsw.exe
-    File ../x64\Release\encfs.exe
+    File ${SRCDIR}\x64\Release\encfsw.exe
+    File ${SRCDIR}\x64\Release\encfs.exe
+    File ${SRCDIR}\Version.txt
 
   SetShellVarContext all
   CreateDirectory $SMPROGRAMS\EncFSy

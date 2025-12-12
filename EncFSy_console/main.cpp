@@ -19,7 +19,7 @@ using namespace std;
  * Language is determined by Windows system settings.
  */
 void ShowUsage() {
-	fprintf(stderr, "%s", EncFSMessages::GetUsageText());
+	fprintf(stderr, "%s", EncFSMessages::GetUsageTextWithVersion());
 }
 
 /**
@@ -88,6 +88,9 @@ void getpass(const char *prompt, char* password, int size)
  * @brief Main entry point for EncFSy console application
  */
 int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
+	// Initialize version from Version.txt
+	EncFSMessages::InitVersion();
+	
 	// Initialize language settings based on system locale
 	EncFSMessages::InitLanguage();
 	
