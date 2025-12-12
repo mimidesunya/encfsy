@@ -49,7 +49,7 @@ Saved passwords can be viewed in Control Panel → Credential Manager → Window
 They appear with names like `EncFSy:c:\path\to\encrypted`.
 
 ## GUI Usage
-Use **EncFSy_gui.exe** to easily mount and unmount volumes without the command line.
+Use **encfsw.exe** to easily mount and unmount volumes without the command line.
 
 1. Select the encrypted directory (rootDir)
 2. Choose a drive letter for mounting

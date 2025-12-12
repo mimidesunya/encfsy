@@ -73,8 +73,6 @@ namespace EncFSy_gui
             this.fileLockUserModeCheckBox = new System.Windows.Forms.CheckBox();
             this.enableUnmountNetworkCheckBox = new System.Windows.Forms.CheckBox();
             this.allowIpcBatchingCheckBox = new System.Windows.Forms.CheckBox();
-            this.debugModeCheckBox = new System.Windows.Forms.CheckBox();
-            this.stderrCheckBox = new System.Windows.Forms.CheckBox();
             
             // Advanced settings group
             this.advancedSettingsGroup = new System.Windows.Forms.GroupBox();
@@ -298,13 +296,12 @@ namespace EncFSy_gui
             // reverseCheckBox
             // 
             this.reverseCheckBox.AutoSize = true;
-            this.reverseCheckBox.Location = new System.Drawing.Point(10, 22);
+            this.reverseCheckBox.Location = new System.Drawing.Point(10, 68);
             this.reverseCheckBox.Name = "reverseCheckBox";
             this.reverseCheckBox.Size = new System.Drawing.Size(66, 17);
-            this.reverseCheckBox.TabIndex = 4;
+            this.reverseCheckBox.TabIndex = 8;
             this.reverseCheckBox.Text = "Reverse";
             this.reverseCheckBox.UseVisualStyleBackColor = true;
-            this.reverseCheckBox.Visible = false;
             this.reverseCheckBox.CheckedChanged += new System.EventHandler(this.anyOption_Changed);
             this.toolTip.SetToolTip(this.reverseCheckBox, "Reverse mode: show plaintext as encrypted");
             
@@ -379,18 +376,17 @@ namespace EncFSy_gui
             // 
             // advancedOptionsGroup
             // 
+            this.advancedOptionsGroup.AutoSize = false;
+            this.advancedOptionsGroup.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
             this.advancedOptionsGroup.Controls.Add(this.paranoiaCheckBox);
             this.advancedOptionsGroup.Controls.Add(this.removableCheckBox);
             this.advancedOptionsGroup.Controls.Add(this.currentSessionCheckBox);
             this.advancedOptionsGroup.Controls.Add(this.fileLockUserModeCheckBox);
             this.advancedOptionsGroup.Controls.Add(this.enableUnmountNetworkCheckBox);
             this.advancedOptionsGroup.Controls.Add(this.allowIpcBatchingCheckBox);
-            this.advancedOptionsGroup.Controls.Add(this.debugModeCheckBox);
-            this.advancedOptionsGroup.Controls.Add(this.stderrCheckBox);
-            this.advancedOptionsGroup.Controls.Add(this.reverseCheckBox);
             this.advancedOptionsGroup.Margin = new System.Windows.Forms.Padding(5);
             this.advancedOptionsGroup.Name = "advancedOptionsGroup";
-            this.advancedOptionsGroup.Size = new System.Drawing.Size(440, 75);
+            this.advancedOptionsGroup.Size = new System.Drawing.Size(440, 70);
             this.advancedOptionsGroup.TabIndex = 5;
             this.advancedOptionsGroup.TabStop = false;
             this.advancedOptionsGroup.Text = "Advanced Options";
@@ -473,32 +469,6 @@ namespace EncFSy_gui
             this.allowIpcBatchingCheckBox.UseVisualStyleBackColor = true;
             this.allowIpcBatchingCheckBox.CheckedChanged += new System.EventHandler(this.anyOption_Changed);
             this.toolTip.SetToolTip(this.allowIpcBatchingCheckBox, "Enable IPC batching for slow filesystems");
-            
-            // 
-            // debugModeCheckBox
-            // 
-            this.debugModeCheckBox.AutoSize = true;
-            this.debugModeCheckBox.Location = new System.Drawing.Point(260, 45);
-            this.debugModeCheckBox.Name = "debugModeCheckBox";
-            this.debugModeCheckBox.Size = new System.Drawing.Size(58, 17);
-            this.debugModeCheckBox.TabIndex = 6;
-            this.debugModeCheckBox.Text = "Debug";
-            this.debugModeCheckBox.UseVisualStyleBackColor = true;
-            this.debugModeCheckBox.CheckedChanged += new System.EventHandler(this.anyOption_Changed);
-            this.toolTip.SetToolTip(this.debugModeCheckBox, "Send debug output to debugger");
-            
-            // 
-            // stderrCheckBox
-            // 
-            this.stderrCheckBox.AutoSize = true;
-            this.stderrCheckBox.Location = new System.Drawing.Point(335, 45);
-            this.stderrCheckBox.Name = "stderrCheckBox";
-            this.stderrCheckBox.Size = new System.Drawing.Size(55, 17);
-            this.stderrCheckBox.TabIndex = 7;
-            this.stderrCheckBox.Text = "Stderr";
-            this.stderrCheckBox.UseVisualStyleBackColor = true;
-            this.stderrCheckBox.CheckedChanged += new System.EventHandler(this.anyOption_Changed);
-            this.toolTip.SetToolTip(this.stderrCheckBox, "Send debug output to stderr");
             
             // 
             // advancedSettingsGroup
@@ -799,8 +769,6 @@ namespace EncFSy_gui
         private System.Windows.Forms.CheckBox fileLockUserModeCheckBox;
         private System.Windows.Forms.CheckBox enableUnmountNetworkCheckBox;
         private System.Windows.Forms.CheckBox allowIpcBatchingCheckBox;
-        private System.Windows.Forms.CheckBox debugModeCheckBox;
-        private System.Windows.Forms.CheckBox stderrCheckBox;
         
         // Advanced settings
         private System.Windows.Forms.Label timeoutLabel;

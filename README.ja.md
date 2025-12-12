@@ -23,7 +23,7 @@ encfsy は **Windows Credential Manager** を使用してパスワードを安�
 `EncFSy:c:\path\to\encrypted` のような名前で表示されます。
 
 ## GUI の使い方
-**EncFSy_gui.exe** を使用すると、コマンドラインを使わずに簡単にボリュームをマウント・アンマウントできます。
+**encfsw.exe** を使用すると、コマンドラインを使わずに簡単にボリュームをマウント・アンマウントできます。
 
 1. 暗号化ディレクトリ (rootDir) を選択
 2. マウント先のドライブ文字を選択

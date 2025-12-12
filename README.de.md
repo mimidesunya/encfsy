@@ -25,7 +25,7 @@ Gespeicherte Passwörter können in Systemsteuerung → Anmeldeinformationsverwa
 Sie erscheinen mit Namen wie `EncFSy:c:\path\to\encrypted`.
 
 ## GUI-Verwendung
-Verwenden Sie **EncFSy_gui.exe**, um Volumes einfach ohne Befehlszeile ein- und auszuhängen.
+Verwenden Sie **encfsw.exe**, um Volumes einfach ohne Befehlszeile ein- und auszuhängen.
 
 1. Wählen Sie das verschlüsselte Verzeichnis (rootDir)
 2. Wählen Sie einen Laufwerksbuchstaben zum Einhängen

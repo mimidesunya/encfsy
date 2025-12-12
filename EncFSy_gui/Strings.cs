@@ -92,13 +92,17 @@ namespace EncFSy_gui
         public static string HideAdvancedOptions { get { return L("Hide Advanced Options ▲", "詳細オプションを隠す ▲", "고급 옵션 숨기기 ▲", "隐藏高级选项 ▲", "隱藏進階選項 ▲", "Скрыть доп. параметры ▲", "إخفاء الخيارات المتقدمة ▲", "Erweiterte Optionen ▲"); } }
         public static string AltStream { get { return L("Alt Stream", "代替ストリーム", "대체 스트림", "备用流", "替代資料流", "Альт. потоки", "تدفق بديل", "Alt. Streams"); } }
         public static string MountManager { get { return L("Mount Manager", "マウント管理", "마운트 관리자", "挂载管理器", "掛載管理員", "Диспетчер", "مدير التركيب", "Mount-Manager"); } }
-        public static string IgnoreCase { get { return L("Ignore Case", "大小文字無視", "대소문자 무시", "忽略大小写", "忽略大小攝", "Без регистра", "تجاهل الحالة", "Groß-/Klein."); } }
+        public static string IgnoreCase { get { return L("Ignore Case", "大小文字無視", "대소문자 무시", "忽略大小写", "忽略大小寫", "Без регистра", "تجاهل الحالة", "Groß-/Klein."); } }
         public static string ReadOnly { get { return L("Read Only", "読み取り専用", "읽기 전용", "只读", "唯讀", "Только чтение", "للقراءة فقط", "Nur Lesen"); } }
+        public static string Reverse { get { return L("Reverse", "リバースモード", "리버스 모드", "反向模式", "反向模式", "Обратный режим", "وضع معكوس", "Reverse-Modus"); } }
         public static string Paranoia { get { return L("Paranoia", "パラノイア", "편집증 모드", "偏执模式", "偏執模式", "Паранойя", "وضع الأمان", "Paranoia"); } }
         public static string Removable { get { return L("Removable", "リムーバブル", "이동식", "可移动", "卸除式", "Съёмный", "قابل للإزالة", "Wechselm."); } }
-        public static string CurrentSession { get { return L("Current Session", "現セッション", "현재 세션", "当前会话", "目前工作階段", "Сессия", "الجلسة الحالية", "Sitzung"); } }
+        public static string CurrentSession { get { return L("Current Session", "現在のセッション", "현재 세션", "当前会话", "目前工作階段", "Сессия", "الجلسة الحالية", "Sitzung"); } }
         public static string ShowPassword { get { return L("Show Password", "パスワードを表示", "비밀번호 표시", "显示密码", "顯示密碼", "Показать пароль", "إظهار كلمة المرور", "Passwort anzeigen"); } }
         public static string RememberPassword { get { return L("Remember Password", "パスワードを記憶", "비밀번호 기억", "记住密码", "記住密碼", "Запомнить пароль", "تذكر كلمة المرور", "Passwort merken"); } }
+        public static string FileLockUserMode { get { return L("User-mode FileLock", "ユーザーモード FileLock", "사용자 모드 FileLock", "用户模式 FileLock", "使用者模式 FileLock", "FileLock в пользовательском режиме", "FileLock في وضع المستخدم", "FileLock (Benutzermodus)"); } }
+        public static string EnableUnmountNetwork { get { return L("Explorer Unmount", "エクスプローラーでアンマウント", "탐색기에서 언마운트", "在资源管理器中卸载", "在檔案總管中卸載", "Размонтировать через проводник", "إلغاء التركيب عبر المستكشف", "Über Explorer aushängen"); } }
+        public static string AllowIpcBatching { get { return L("IPC Batching", "IPC バッチング", "IPC 배칭", "IPC 批处理", "IPC 批次處理", "IPC пакетная обработка", "تجميع IPC", "IPC-Batching"); } }
 
         // Labels
         public static string Language { get { return L("Language:", "言語:", "언어:", "语言:", "語言:", "Язык:", "اللغة:", "Sprache:"); } }
@@ -108,6 +112,9 @@ namespace EncFSy_gui
         public static string Timeout { get { return L("Timeout:", "タイムアウト:", "타임아웃:", "超时:", "逾時:", "Таймаут:", "مهلة:", "Timeout:"); } }
         public static string VolumeName { get { return L("Name:", "名前:", "이름:", "名称:", "名稱:", "Имя:", "الاسم:", "Name:"); } }
         public static string VolumeSerial { get { return L("Serial:", "シリアル:", "시리얼:", "序列号:", "序號:", "Серийный:", "التسلسلي:", "Serial:"); } }
+        public static string NetworkUnc { get { return L("UNC:", "UNC:", "UNC:", "UNC:", "UNC:", "UNC:", "UNC:", "UNC:"); } }
+        public static string AllocationUnit { get { return L("Alloc Unit:", "割り当て単位:", "할당 단위:", "分配单元:", "配置單位:", "Размер кластера:", "حجم التخصيص:", "Allok.-Einheit:"); } }
+        public static string SectorSize { get { return L("Sector:", "セクター:", "섹터:", "扇区:", "磁區:", "Сектор:", "قطاع:", "Sektor:"); } }
 
         // Messages
         public static string Error { get { return L("Error", "エラー", "오류", "错误", "錯誤", "Ошибка", "خطأ", "Fehler"); } }

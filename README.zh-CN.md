@@ -25,7 +25,7 @@ encfsy 使用 **Windows 凭据管理器** 进行安全的密码管理。
 它们以 `EncFSy:c:\path\to\encrypted` 这样的名称显示。
 
 ## GUI 使用方法
-使用 **EncFSy_gui.exe** 可以轻松地挂载和卸载卷，无需使用命令行。
+使用 **encfsw.exe** 可以轻松地挂载和卸载卷，无需使用命令行。
 
 1. 选择加密目录（rootDir）
 2. 选择要挂载的驱动器号

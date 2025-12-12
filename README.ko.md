@@ -25,7 +25,7 @@ encfsy는 안전한 비밀번호 관리를 위해 **Windows Credential Manager**
 `EncFSy:c:\path\to\encrypted`와 같은 이름으로 표시됩니다.
 
 ## GUI 사용법
-**EncFSy_gui.exe**를 사용하면 명령줄 없이 쉽게 볼륨을 마운트 및 언마운트할 수 있습니다.
+**encfsw.exe**를 사용하면 명령줄 없이 쉽게 볼륨을 마운트 및 언마운트할 수 있습니다.
 
 1. 암호화 디렉토리(rootDir) 선택
 2. 마운트할 드라이브 문자 선택

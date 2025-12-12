@@ -25,7 +25,7 @@ encfsy 使用 **Windows 認證管理員** 進行安全的密碼管理。
 它們以 `EncFSy:c:\path\to\encrypted` 這樣的名稱顯示。
 
 ## GUI 使用方法
-使用 **EncFSy_gui.exe** 可以輕鬆地掛載和卸載磁碟區，無需使用命令列。
+使用 **encfsw.exe** 可以輕鬆地掛載和卸載磁碟區，無需使用命令列。
 
 1. 選擇加密目錄（rootDir）
 2. 選擇要掛載的磁碟機代號

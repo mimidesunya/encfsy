@@ -19,14 +19,132 @@ namespace EncFSy_gui
     {
         private string historyFile = Application.LocalUserAppDataPath + "\\history.txt";
         private string settingsFile = Application.LocalUserAppDataPath + "\\settings.txt";
+        private string rootOptionsFile = Application.LocalUserAppDataPath + "\\root_options.txt";
         private string encfsExecutable = Path.GetDirectoryName(Application.ExecutablePath) + "\\encfs.exe";
         private bool isAdvancedMode = false;
         private bool isInitializing = true;
+        private bool isLoadingOptions = false;
+        private Dictionary<string, RootPathOptions> rootPathOptionsCache = new Dictionary<string, RootPathOptions>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Stores options for a specific root path.
+        /// </summary>
+        private class RootPathOptions
+        {
+            // Basic options
+            public bool AltStream { get; set; } = true;
+            public bool MountManager { get; set; } = true;
+            public bool CaseInsensitive { get; set; } = true;
+            public bool ReadOnly { get; set; } = false;
+            public bool Reverse { get; set; } = false;
+
+            // Advanced options
+            public bool Paranoia { get; set; } = false;
+            public bool Removable { get; set; } = false;
+            public bool CurrentSession { get; set; } = false;
+            public bool FileLockUserMode { get; set; } = false;
+            public bool EnableUnmountNetwork { get; set; } = false;
+            public bool AllowIpcBatching { get; set; } = false;
+
+            // Advanced settings
+            public int Timeout { get; set; } = 120000;
+            public string VolumeName { get; set; } = "";
+            public string VolumeSerial { get; set; } = "";
+            public string NetworkUnc { get; set; } = "";
+            public int AllocationUnitSize { get; set; } = 0;
+            public int SectorSize { get; set; } = 0;
+
+            public string Serialize()
+            {
+                var parts = new List<string>
+                {
+                    AltStream ? "1" : "0",
+                    MountManager ? "1" : "0",
+                    CaseInsensitive ? "1" : "0",
+                    ReadOnly ? "1" : "0",
+                    Reverse ? "1" : "0",
+                    Paranoia ? "1" : "0",
+                    Removable ? "1" : "0",
+                    CurrentSession ? "1" : "0",
+                    FileLockUserMode ? "1" : "0",
+                    EnableUnmountNetwork ? "1" : "0",
+                    AllowIpcBatching ? "1" : "0",
+                    Timeout.ToString(),
+                    VolumeName ?? string.Empty,
+                    VolumeSerial ?? string.Empty,
+                    NetworkUnc ?? string.Empty,
+                    AllocationUnitSize.ToString(),
+                    SectorSize.ToString()
+                };
+                return string.Join("|", parts);
+            }
+
+            public static RootPathOptions Deserialize(string data)
+            {
+                var options = new RootPathOptions();
+                if (string.IsNullOrEmpty(data))
+                    return options;
+
+                var parts = data.Split('|');
+                options.AltStream = GetBool(parts, 0);
+                options.MountManager = GetBool(parts, 1);
+                options.CaseInsensitive = GetBool(parts, 2);
+                options.ReadOnly = GetBool(parts, 3);
+                options.Reverse = GetBool(parts, 4);
+                options.Paranoia = GetBool(parts, 5);
+                options.Removable = GetBool(parts, 6);
+                options.CurrentSession = GetBool(parts, 7);
+                options.FileLockUserMode = GetBool(parts, 8);
+                options.EnableUnmountNetwork = GetBool(parts, 9);
+                options.AllowIpcBatching = GetBool(parts, 10);
+
+                bool hasLegacyDebugFlags = parts.Length >= 19 && IsBinaryFlag(parts, 11) && IsBinaryFlag(parts, 12);
+                int boolCountNew = 11;
+                int timeoutIndex = hasLegacyDebugFlags ? 13 : boolCountNew;
+                int volumeNameIndex = timeoutIndex + 1;
+                int volumeSerialIndex = timeoutIndex + 2;
+                int networkIndex = timeoutIndex + 3;
+                int allocationIndex = timeoutIndex + 4;
+                int sectorIndex = timeoutIndex + 5;
+
+                if (TryParseInt(parts, timeoutIndex, out int timeout))
+                    options.Timeout = timeout;
+                if (volumeNameIndex < parts.Length)
+                    options.VolumeName = parts[volumeNameIndex];
+                if (volumeSerialIndex < parts.Length)
+                    options.VolumeSerial = parts[volumeSerialIndex];
+                if (networkIndex < parts.Length)
+                    options.NetworkUnc = parts[networkIndex];
+                if (TryParseInt(parts, allocationIndex, out int allocUnit))
+                    options.AllocationUnitSize = allocUnit;
+                if (TryParseInt(parts, sectorIndex, out int sectorSize))
+                    options.SectorSize = sectorSize;
+
+                return options;
+            }
+
+            private static bool GetBool(string[] parts, int index)
+            {
+                return index < parts.Length && parts[index] == "1";
+            }
+
+            private static bool IsBinaryFlag(string[] parts, int index)
+            {
+                return index < parts.Length && (parts[index] == "0" || parts[index] == "1");
+            }
+
+            private static bool TryParseInt(string[] parts, int index, out int value)
+            {
+                value = 0;
+                return index < parts.Length && int.TryParse(parts[index], out value);
+            }
+        }
 
         public MainForm()
         {
             InitializeComponent();
             LoadSettings();
+            LoadRootPathOptions();
             InitializeLanguageComboBox();
             ApplyLocalization();
             UpdateAdvancedModeVisibility();
@@ -107,14 +225,21 @@ namespace EncFSy_gui
             mountManagerCheckBox.Text = Strings.MountManager;
             caseInsensitiveCheckBox.Text = Strings.IgnoreCase;
             readOnlyCheckBox.Text = Strings.ReadOnly;
+            reverseCheckBox.Text = Strings.Reverse;
             paranoiaCheckBox.Text = Strings.Paranoia;
             removableCheckBox.Text = Strings.Removable;
             currentSessionCheckBox.Text = Strings.CurrentSession;
+            fileLockUserModeCheckBox.Text = Strings.FileLockUserMode;
+            enableUnmountNetworkCheckBox.Text = Strings.EnableUnmountNetwork;
+            allowIpcBatchingCheckBox.Text = Strings.AllowIpcBatching;
 
             // Labels
             timeoutLabel.Text = Strings.Timeout;
             volumeNameLabel.Text = Strings.VolumeName;
             volumeSerialLabel.Text = Strings.VolumeSerial;
+            networkUncLabel.Text = Strings.NetworkUnc;
+            allocationUnitLabel.Text = Strings.AllocationUnit;
+            sectorSizeLabel.Text = Strings.SectorSize;
             languageLabel.Text = Strings.Language;
 
             // Advanced mode checkbox
@@ -177,6 +302,159 @@ namespace EncFSy_gui
             }
         }
 
+        /// <summary>
+        /// Load root path options from file.
+        /// </summary>
+        private void LoadRootPathOptions()
+        {
+            rootPathOptionsCache.Clear();
+            try
+            {
+                if (File.Exists(rootOptionsFile))
+                {
+                    using (StreamReader reader = new StreamReader(rootOptionsFile, Encoding.UTF8))
+                    {
+                        string line;
+                        while ((line = reader.ReadLine()) != null)
+                        {
+                            int separatorIndex = line.IndexOf('\t');
+                            if (separatorIndex > 0)
+                            {
+                                string rootPath = line.Substring(0, separatorIndex);
+                                string optionsData = line.Substring(separatorIndex + 1);
+                                rootPathOptionsCache[rootPath] = RootPathOptions.Deserialize(optionsData);
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // Ignore load errors
+            }
+        }
+
+        /// <summary>
+        /// Save all root path options to file.
+        /// </summary>
+        private void SaveRootPathOptions()
+        {
+            try
+            {
+                using (StreamWriter writer = new StreamWriter(rootOptionsFile, false, Encoding.UTF8))
+                {
+                    foreach (var kvp in rootPathOptionsCache)
+                    {
+                        writer.WriteLine($"{kvp.Key}\t{kvp.Value.Serialize()}");
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // Ignore save errors
+            }
+        }
+
+        /// <summary>
+        /// Get options for the current root path from UI.
+        /// </summary>
+        private RootPathOptions GetCurrentOptions()
+        {
+            return new RootPathOptions
+            {
+                // Basic options
+                AltStream = altStreamCheckBox.Checked,
+                MountManager = mountManagerCheckBox.Checked,
+                CaseInsensitive = caseInsensitiveCheckBox.Checked,
+                ReadOnly = readOnlyCheckBox.Checked,
+                Reverse = reverseCheckBox.Checked,
+
+                // Advanced options
+                Paranoia = paranoiaCheckBox.Checked,
+                Removable = removableCheckBox.Checked,
+                CurrentSession = currentSessionCheckBox.Checked,
+                FileLockUserMode = fileLockUserModeCheckBox.Checked,
+                EnableUnmountNetwork = enableUnmountNetworkCheckBox.Checked,
+                AllowIpcBatching = allowIpcBatchingCheckBox.Checked,
+
+                // Advanced settings
+                Timeout = (int)timeoutNumeric.Value,
+                VolumeName = volumeNameTextBox.Text,
+                VolumeSerial = volumeSerialTextBox.Text,
+                NetworkUnc = networkUncTextBox.Text,
+                AllocationUnitSize = (int)allocationUnitNumeric.Value,
+                SectorSize = (int)sectorSizeNumeric.Value
+            };
+        }
+
+        /// <summary>
+        /// Apply options to UI controls.
+        /// </summary>
+        private void ApplyOptions(RootPathOptions options)
+        {
+            isLoadingOptions = true;
+            try
+            {
+                // Basic options
+                altStreamCheckBox.Checked = options.AltStream;
+                mountManagerCheckBox.Checked = options.MountManager;
+                caseInsensitiveCheckBox.Checked = options.CaseInsensitive;
+                readOnlyCheckBox.Checked = options.ReadOnly;
+                reverseCheckBox.Checked = options.Reverse;
+
+                // Advanced options
+                paranoiaCheckBox.Checked = options.Paranoia;
+                removableCheckBox.Checked = options.Removable;
+                currentSessionCheckBox.Checked = options.CurrentSession;
+                fileLockUserModeCheckBox.Checked = options.FileLockUserMode;
+                enableUnmountNetworkCheckBox.Checked = options.EnableUnmountNetwork;
+                allowIpcBatchingCheckBox.Checked = options.AllowIpcBatching;
+
+                // Advanced settings
+                timeoutNumeric.Value = Math.Max(timeoutNumeric.Minimum, Math.Min(timeoutNumeric.Maximum, options.Timeout));
+                volumeNameTextBox.Text = options.VolumeName ?? "";
+                volumeSerialTextBox.Text = options.VolumeSerial ?? "";
+                networkUncTextBox.Text = options.NetworkUnc ?? "";
+                allocationUnitNumeric.Value = Math.Max(allocationUnitNumeric.Minimum, Math.Min(allocationUnitNumeric.Maximum, options.AllocationUnitSize));
+                sectorSizeNumeric.Value = Math.Max(sectorSizeNumeric.Minimum, Math.Min(sectorSizeNumeric.Maximum, options.SectorSize));
+            }
+            finally
+            {
+                isLoadingOptions = false;
+            }
+        }
+
+        /// <summary>
+        /// Save options for the current root path.
+        /// </summary>
+        private void SaveCurrentRootPathOptions()
+        {
+            string rootPath = rootPathCombo.Text;
+            if (!string.IsNullOrWhiteSpace(rootPath))
+            {
+                rootPathOptionsCache[rootPath] = GetCurrentOptions();
+                SaveRootPathOptions();
+            }
+        }
+
+        /// <summary>
+        /// Load and apply options for the specified root path.
+        /// </summary>
+        private void LoadAndApplyRootPathOptions(string rootPath)
+        {
+            if (string.IsNullOrWhiteSpace(rootPath)) return;
+
+            if (rootPathOptionsCache.TryGetValue(rootPath, out RootPathOptions options))
+            {
+                ApplyOptions(options);
+            }
+            else
+            {
+                // Apply default options for new root path
+                ApplyOptions(new RootPathOptions());
+            }
+        }
+
         #region Event Handlers
 
         private void MainForm_Load(object sender, EventArgs e)
@@ -200,12 +478,19 @@ namespace EncFSy_gui
 
         private void selectDirectoryButton_Click(object sender, EventArgs e)
         {
+            // Save current options before changing root path
+            if (!isInitializing && !isLoadingOptions && !string.IsNullOrWhiteSpace(rootPathCombo.Text))
+            {
+                SaveCurrentRootPathOptions();
+            }
+
             using (FolderBrowserDialog dialog = new FolderBrowserDialog())
             {
                 dialog.Description = Strings.SelectEncryptedDirectory;
                 if (dialog.ShowDialog() == DialogResult.OK)
                 {
                     rootPathCombo.Text = dialog.SelectedPath;
+                    LoadAndApplyRootPathOptions(dialog.SelectedPath);
                     UpdateButtons();
                     UpdateCommandPreview();
                 }
@@ -299,14 +584,36 @@ namespace EncFSy_gui
             UpdateCommandPreview();
         }
 
+        private string previousRootPath = "";
+
         private void rootPathCombo_TextChanged(object sender, EventArgs e)
         {
+            // Save options for previous root path before switching
+            if (!isInitializing && !isLoadingOptions && !string.IsNullOrWhiteSpace(previousRootPath) && previousRootPath != rootPathCombo.Text)
+            {
+                rootPathOptionsCache[previousRootPath] = GetCurrentOptions();
+                SaveRootPathOptions();
+            }
+
+            // Load options for new root path
+            string currentPath = rootPathCombo.Text;
+            if (!isInitializing && !isLoadingOptions && !string.IsNullOrWhiteSpace(currentPath) && currentPath != previousRootPath)
+            {
+                LoadAndApplyRootPathOptions(currentPath);
+            }
+
+            previousRootPath = currentPath;
             UpdateButtons();
             UpdateCommandPreview();
         }
 
         private void anyOption_Changed(object sender, EventArgs e)
         {
+            // Save options when any option changes (not during initialization or loading)
+            if (!isInitializing && !isLoadingOptions)
+            {
+                SaveCurrentRootPathOptions();
+            }
             UpdateCommandPreview();
         }
 
@@ -386,12 +693,6 @@ namespace EncFSy_gui
                     args.Append(" --dokan-enable-unmount-network-drive");
                 if (allowIpcBatchingCheckBox.Checked)
                     args.Append(" --dokan-allow-ipc-batching");
-                if (debugModeCheckBox.Checked)
-                    args.Append(" -v");
-                if (stderrCheckBox.Checked)
-                    args.Append(" -s");
-
-                // Timeout
                 if (timeoutNumeric.Value != 120000)
                     args.Append($" -i {(int)timeoutNumeric.Value}");
 
