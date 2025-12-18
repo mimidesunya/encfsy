@@ -169,6 +169,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="ScanInvalid.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\EncFSy_lib\EncFSy_lib.vcxproj">
@@ -177,6 +178,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Messages.h" />
+    <ClInclude Include="ScanInvalid.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
