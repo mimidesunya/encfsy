@@ -36,6 +36,11 @@ encfs.exe --lang zh-tw           # Traditional Chinese
 encfs.exe --lang ru              # Russian
 ```
 
+## ⚠️ Important: Avoid `--paranoia` for two-way cloud sync
+When `--paranoia` mode (external IV chaining) is enabled, any filename changes made by sync tools can make the file contents **irrecoverable garbage**, even if you manually rename the files back.
+- For bidirectional cloud sync (Dropbox/OneDrive/Google Drive, etc.), **do not use `--paranoia`**.
+- If you must use it, limit usage to one-way backup scenarios where filenames never change.
+
 ## Security Features
 encfsy uses **Windows Credential Manager** for secure password management.
 

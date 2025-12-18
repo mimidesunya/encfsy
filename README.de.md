@@ -12,6 +12,11 @@ Es läuft **ausschließlich auf 64-Bit-Systemen**.
 Das Programm verschlüsselt Dateinamen und -inhalte, während die Verzeichnisbaumstruktur erhalten bleibt.
 Dies macht es ideal für die Synchronisierung verschlüsselter Daten mit Dropbox, Google Drive, rsync oder anderen Remote-Speichern: Die Dateien bleiben Ende-zu-Ende verschlüsselt, sodass Speicheradministratoren deren Inhalte nicht einsehen können.
 
+## ⚠️ Bei bidirektionaler Cloud-Synchronisation kein `--paranoia` verwenden
+Im Modus `--paranoia` (externe IV-Verkettung) führen Umbenennungen durch Sync-Tools dazu, dass der Dateinhalt **dauerhaft unlesbarer Müll** wird, selbst wenn Sie die Namen manuell zurücksetzen.
+- Für bidirektionale Syncs (Dropbox/OneDrive/Google Drive usw.) **`--paranoia` deaktivieren**.
+- Wenn unbedingt nötig, nur für einseitige Backups einsetzen, bei denen sich Dateinamen nie ändern.
+
 ## Sicherheitsfunktionen
 encfsy verwendet die **Windows-Anmeldeinformationsverwaltung** für sichere Passwortverwaltung.
 

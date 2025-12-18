@@ -12,6 +12,11 @@ encfsy 是基於 **Dokany** 和 **Crypto++** 的 Windows 版 EncFS 實作。
 該程式在保持目錄樹結構不變的情況下加密檔案名稱和檔案內容。
 這使其非常適合與 Dropbox、Google Drive、rsync 或其他遠端儲存同步加密資料：檔案保持端對端加密，儲存管理員無法查看其內容。
 
+## ⚠️ 雙向雲端同步時請不要使用 `--paranoia`
+啟用 `--paranoia` 模式（外部 IV 鏈接）時，如果同步工具變更了檔名，即使手動改回原名，**內容仍會變成無法解密的垃圾資料**。
+- 在 Dropbox/OneDrive/Google Drive 等雙向同步情境，請 **不要啟用 `--paranoia`**。
+- 若必須使用，請限定在檔名不會變更的單向備份用途。
+
 ## 安全功能
 encfsy 使用 **Windows 認證管理員** 進行安全的密碼管理。
 
