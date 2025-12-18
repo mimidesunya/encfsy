@@ -12,7 +12,6 @@ bool Test_CaseInsensitiveOpen(const WCHAR* fileLowerCase, const WCHAR* fileCaseV
 bool Test_BufferedIO(const WCHAR* file);
 bool Test_AppendWrite(const WCHAR* file);
 bool Test_NoBufferingIO(const WCHAR* file, const WCHAR* drive);
-bool Test_AlternateDataStreams(const WCHAR* baseFile);
 bool Test_FileAttributesAndTimes(const WCHAR* file);
 bool Test_SharingAndLocks(const WCHAR* file);
 bool Test_SparseFile(const WCHAR* file);
@@ -134,3 +133,53 @@ bool Test_LargeSingleReadPerformance(const WCHAR* file);
 bool Test_FileResizePerformance(const WCHAR* file);
 bool Test_MemoryAllocationImpact(const WCHAR* file);
 bool Test_ConcurrentIOPerformance(const WCHAR* file);
+
+//=============================================================================
+// Windows-Specific Filesystem Tests (test_windows_fs.cpp)
+// Tests for Windows filesystem features:
+// - Alternate Data Streams (ADS)
+// - Symbolic links and directory junctions
+// - Hard links
+// - Memory-mapped files
+// - File change notifications
+// - Special/reserved filenames
+// - Unicode filenames
+// - Volume information
+// - Windows shortcuts (.lnk files)
+//=============================================================================
+
+// Alternate Data Streams
+bool Test_AlternateDataStreams(const WCHAR* baseFile);
+bool Test_MultipleAlternateStreams(const WCHAR* baseFile);
+bool Test_LargeAlternateStream(const WCHAR* baseFile);
+bool Test_ADSSurvivesRename(const WCHAR* rootDir);
+
+// Symbolic Links
+bool Test_SymbolicLinkFile(const WCHAR* rootDir);
+bool Test_SymbolicLinkDirectory(const WCHAR* rootDir);
+
+// Hard Links
+bool Test_HardLink(const WCHAR* rootDir);
+bool Test_MultipleHardLinks(const WCHAR* rootDir);
+
+// Memory-Mapped Files
+bool Test_MemoryMappedFileRead(const WCHAR* file);
+bool Test_MemoryMappedFileWrite(const WCHAR* file);
+
+// File Change Notifications
+bool Test_FileChangeNotification(const WCHAR* rootDir);
+
+// Special Filenames
+bool Test_ReservedFilenames(const WCHAR* rootDir);
+bool Test_TrailingSpacesAndDots(const WCHAR* rootDir);
+bool Test_LongFilenames(const WCHAR* rootDir);
+bool Test_UnicodeFilenames(const WCHAR* rootDir);
+
+// Volume Information
+bool Test_VolumeInformation(const WCHAR* rootDir);
+bool Test_DiskFreeSpace(const WCHAR* rootDir);
+
+// Windows Shortcuts (.lnk files)
+bool Test_ShortcutFile(const WCHAR* rootDir);
+bool Test_ShortcutToDirectory(const WCHAR* rootDir);
+bool Test_ShortcutMemoryMappedRead(const WCHAR* rootDir);

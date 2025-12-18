@@ -1,10 +1,375 @@
 // EncFSy_test.cpp - Main test entry point
 //
+// =============================================================================
+// TEST SETUP REQUIREMENTS:
+// =============================================================================
+// 1. Build output: test.exe (this program)
+// 2. encfs.exe must be in the same directory as test.exe
+// 3. Test configuration (hardcoded):
+//      - Encrypted Root Dir: F:\work\encfs
+//      - Mount Point: O:
+//      - Password: TEST
+//      - Options: --dokan-mount-manager --alt-stream --case-insensitive
 // ./encfs.exe F:\work\encfs O: --dokan-mount-manager --alt-stream --case-insensitive
+//
+// =============================================================================
+// USAGE:
+// =============================================================================
+//   test.exe           - Run tests on EncFS (auto mount/unmount)
+//   test.exe -r        - Run tests on raw filesystem (baseline verification)
+//   test.exe -s        - Stop on first failure
+//   test.exe -h        - Show help
+//
+// =============================================================================
+// AUTOMATIC BEHAVIOR:
+// =============================================================================
+// - If .encfs6.xml doesn't exist, it will be auto-created with password "TEST"
+// - EncFS volume is auto-mounted before tests
+// - EncFS volume is auto-unmounted after tests
+// =============================================================================
 
 #include "test_common.h"
 #include "test_declarations.h"
+#include <process.h>
+#include <thread>
+#include <chrono>
 
+//=============================================================================
+// EncFS Mount/Unmount Configuration
+//=============================================================================
+static const WCHAR* ENCFS_EXE = L".\\encfs.exe";
+static const WCHAR* ENCFS_ROOT_DIR = L"F:\\work\\encfs";
+static const WCHAR* ENCFS_MOUNT_POINT = L"O:";
+static const char* ENCFS_PASSWORD = "TEST";
+static const WCHAR* ENCFS_CONFIG_FILE = L"F:\\work\\encfs\\.encfs6.xml";
+
+//=============================================================================
+// Helper: Check if drive is mounted
+//=============================================================================
+static bool IsDriveMounted(const WCHAR* mountPoint)
+{
+    WCHAR rootPath[8];
+    wsprintfW(rootPath, L"%s\\", mountPoint);
+    return GetDriveTypeW(rootPath) != DRIVE_NO_ROOT_DIR;
+}
+
+//=============================================================================
+// Helper: Wait for drive to be mounted/unmounted
+//=============================================================================
+static bool WaitForDriveState(const WCHAR* mountPoint, bool shouldBeMounted, int timeoutSeconds)
+{
+    for (int i = 0; i < timeoutSeconds * 10; i++) {
+        if (IsDriveMounted(mountPoint) == shouldBeMounted) {
+            return true;
+        }
+        Sleep(100);
+    }
+    return false;
+}
+
+//=============================================================================
+// Helper: Check if EncFS config file exists
+//=============================================================================
+static bool IsEncFSInitialized()
+{
+    return GetFileAttributesW(ENCFS_CONFIG_FILE) != INVALID_FILE_ATTRIBUTES;
+}
+
+//=============================================================================
+// Initialize EncFS volume (create .encfs6.xml)
+//=============================================================================
+static bool InitializeEncFS()
+{
+    printf("================================================================================\n");
+    printf("Initializing EncFS volume (creating .encfs6.xml)...\n");
+    wprintf(L"  Root Dir: %s\n", ENCFS_ROOT_DIR);
+    printf("  Password: %s\n", ENCFS_PASSWORD);
+    printf("================================================================================\n");
+
+    // Create root directory if it doesn't exist
+    if (GetFileAttributesW(ENCFS_ROOT_DIR) == INVALID_FILE_ATTRIBUTES) {
+        printf("Creating root directory...\n");
+        if (!CreateDirectoryW(ENCFS_ROOT_DIR, NULL)) {
+            DWORD err = GetLastError();
+            if (err != ERROR_ALREADY_EXISTS) {
+                printf("ERROR: Failed to create root directory (error=%lu)\n", static_cast<unsigned long>(err));
+                return false;
+            }
+        }
+    }
+
+    // Create a pipe to send password to encfs.exe
+    SECURITY_ATTRIBUTES sa;
+    sa.nLength = sizeof(SECURITY_ATTRIBUTES);
+    sa.bInheritHandle = TRUE;
+    sa.lpSecurityDescriptor = NULL;
+
+    HANDLE hReadPipe, hWritePipe;
+    if (!CreatePipe(&hReadPipe, &hWritePipe, &sa, 0)) {
+        printf("ERROR: Failed to create pipe\n");
+        return false;
+    }
+
+    // Ensure the write handle is not inherited
+    SetHandleInformation(hWritePipe, HANDLE_FLAG_INHERIT, 0);
+
+    // Start encfs.exe to initialize (it will prompt for password twice for new volume)
+    // Use a temporary mount point that we'll immediately unmount
+    WCHAR initCmdLine[1024];
+    wsprintfW(initCmdLine, L"\"%s\" \"%s\" %s --dokan-mount-manager --alt-stream --case-insensitive",
+              ENCFS_EXE, ENCFS_ROOT_DIR, ENCFS_MOUNT_POINT);
+
+    STARTUPINFOW si = { sizeof(si) };
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput = hReadPipe;
+    si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+    si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+
+    PROCESS_INFORMATION pi = {};
+
+    wprintf(L"Executing: %s\n", initCmdLine);
+    printf("(This will create a new EncFS volume with standard security settings)\n");
+
+    if (!CreateProcessW(NULL, initCmdLine, NULL, NULL, TRUE,
+                         CREATE_NEW_CONSOLE, NULL, NULL, &si, &pi)) {
+        DWORD err = GetLastError();
+        printf("ERROR: Failed to start encfs.exe (error=%lu)\n", static_cast<unsigned long>(err));
+        CloseHandle(hReadPipe);
+        CloseHandle(hWritePipe);
+        return false;
+    }
+
+    // For new volume initialization, encfs.exe prompts:
+    // 1. "Enter password:" (first time)
+    // 2. "Confirm password:" (second time)
+    // We need to send the password twice
+    
+    Sleep(2000);  // Wait for encfs to start and show initial prompts
+    
+    char passwordWithNewline[64];
+    sprintf_s(passwordWithNewline, "%s\r\n", ENCFS_PASSWORD);
+    DWORD written;
+    
+    // Send password first time
+    printf("Sending password (1/2)...\n");
+    WriteFile(hWritePipe, passwordWithNewline, static_cast<DWORD>(strlen(passwordWithNewline)), &written, NULL);
+    FlushFileBuffers(hWritePipe);
+    
+    Sleep(500);  // Wait for confirmation prompt
+    
+    // Send password second time (confirmation)
+    printf("Sending password confirmation (2/2)...\n");
+    WriteFile(hWritePipe, passwordWithNewline, static_cast<DWORD>(strlen(passwordWithNewline)), &written, NULL);
+    FlushFileBuffers(hWritePipe);
+    
+    CloseHandle(hWritePipe);
+    CloseHandle(hReadPipe);
+
+    // Wait for volume to be mounted (indicates successful initialization)
+    printf("Waiting for initialization to complete...\n");
+    if (!WaitForDriveState(ENCFS_MOUNT_POINT, true, 30)) {
+        printf("ERROR: Timeout waiting for initialization\n");
+        TerminateProcess(pi.hProcess, 1);
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+        return false;
+    }
+
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+
+    // Verify config file was created
+    if (!IsEncFSInitialized()) {
+        printf("ERROR: Config file was not created\n");
+        return false;
+    }
+
+    printf("EncFS volume initialized successfully!\n");
+    wprintf(L"Config file created: %s\n", ENCFS_CONFIG_FILE);
+    printf("================================================================================\n\n");
+
+    // Unmount the volume (we'll remount it properly in MountEncFS)
+    printf("Unmounting after initialization...\n");
+    
+    WCHAR unmountCmd[256];
+    wsprintfW(unmountCmd, L"\"%s\" -u %s", ENCFS_EXE, ENCFS_MOUNT_POINT);
+    
+    STARTUPINFOW siUnmount = { sizeof(siUnmount) };
+    PROCESS_INFORMATION piUnmount = {};
+    
+    if (CreateProcessW(NULL, unmountCmd, NULL, NULL, FALSE, 0, NULL, NULL, &siUnmount, &piUnmount)) {
+        WaitForSingleObject(piUnmount.hProcess, 10000);
+        CloseHandle(piUnmount.hProcess);
+        CloseHandle(piUnmount.hThread);
+    }
+    
+    WaitForDriveState(ENCFS_MOUNT_POINT, false, 10);
+    
+    return true;
+}
+
+//=============================================================================
+// Mount EncFS volume
+//=============================================================================
+static bool MountEncFS()
+{
+    printf("================================================================================\n");
+    printf("Mounting EncFS volume...\n");
+    wprintf(L"  Root Dir: %s\n", ENCFS_ROOT_DIR);
+    wprintf(L"  Mount Point: %s\n", ENCFS_MOUNT_POINT);
+    printf("  Password: %s\n", ENCFS_PASSWORD);
+    printf("================================================================================\n");
+
+    // Check if already mounted
+    if (IsDriveMounted(ENCFS_MOUNT_POINT)) {
+        wprintf(L"Drive %s is already mounted.\n", ENCFS_MOUNT_POINT);
+        return true;
+    }
+
+    // Check if root directory exists, create if not
+    if (GetFileAttributesW(ENCFS_ROOT_DIR) == INVALID_FILE_ATTRIBUTES) {
+        printf("Creating root directory...\n");
+        if (!CreateDirectoryW(ENCFS_ROOT_DIR, NULL)) {
+            DWORD err = GetLastError();
+            if (err != ERROR_ALREADY_EXISTS) {
+                wprintf(L"ERROR: Failed to create root directory: %s (error=%lu)\n", 
+                        ENCFS_ROOT_DIR, static_cast<unsigned long>(err));
+                return false;
+            }
+        }
+    }
+
+    // Check if EncFS is initialized, initialize if not
+    if (!IsEncFSInitialized()) {
+        printf("EncFS config file not found. Initializing new volume...\n\n");
+        if (!InitializeEncFS()) {
+            printf("ERROR: Failed to initialize EncFS volume\n");
+            return false;
+        }
+    }
+
+    // Create a pipe to send password to encfs.exe
+    SECURITY_ATTRIBUTES sa;
+    sa.nLength = sizeof(SECURITY_ATTRIBUTES);
+    sa.bInheritHandle = TRUE;
+    sa.lpSecurityDescriptor = NULL;
+
+    HANDLE hReadPipe, hWritePipe;
+    if (!CreatePipe(&hReadPipe, &hWritePipe, &sa, 0)) {
+        printf("ERROR: Failed to create pipe\n");
+        return false;
+    }
+
+    // Ensure the write handle is not inherited
+    SetHandleInformation(hWritePipe, HANDLE_FLAG_INHERIT, 0);
+
+    // Start encfs.exe to mount existing volume
+    WCHAR mountCmdLine[1024];
+    wsprintfW(mountCmdLine, L"\"%s\" \"%s\" %s --dokan-mount-manager --alt-stream --case-insensitive",
+              ENCFS_EXE, ENCFS_ROOT_DIR, ENCFS_MOUNT_POINT);
+
+    STARTUPINFOW si = { sizeof(si) };
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput = hReadPipe;
+    si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+    si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+
+    PROCESS_INFORMATION pi = {};
+
+    wprintf(L"Executing: %s\n", mountCmdLine);
+
+    if (!CreateProcessW(NULL, mountCmdLine, NULL, NULL, TRUE,
+                         CREATE_NEW_CONSOLE, NULL, NULL, &si, &pi)) {
+        DWORD err = GetLastError();
+        printf("ERROR: Failed to start encfs.exe (error=%lu)\n", static_cast<unsigned long>(err));
+        CloseHandle(hReadPipe);
+        CloseHandle(hWritePipe);
+        return false;
+    }
+
+    // Write password to pipe
+    Sleep(1000);  // Wait for encfs to start and prompt for password
+    
+    char passwordWithNewline[64];
+    sprintf_s(passwordWithNewline, "%s\r\n", ENCFS_PASSWORD);
+    DWORD written;
+    WriteFile(hWritePipe, passwordWithNewline, static_cast<DWORD>(strlen(passwordWithNewline)), &written, NULL);
+    FlushFileBuffers(hWritePipe);
+    
+    CloseHandle(hWritePipe);
+    CloseHandle(hReadPipe);
+
+    // Wait for mount (encfs.exe stays running, so we just wait for the drive)
+    printf("Waiting for drive to be mounted...\n");
+    if (!WaitForDriveState(ENCFS_MOUNT_POINT, true, 30)) {
+        printf("ERROR: Timeout waiting for drive to mount\n");
+        TerminateProcess(pi.hProcess, 1);
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+        return false;
+    }
+
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+
+    wprintf(L"EncFS mounted successfully at %s\n", ENCFS_MOUNT_POINT);
+    printf("================================================================================\n\n");
+    return true;
+}
+
+//=============================================================================
+// Unmount EncFS volume
+//=============================================================================
+static bool UnmountEncFS()
+{
+    printf("\n================================================================================\n");
+    printf("Unmounting EncFS volume...\n");
+    printf("================================================================================\n");
+
+    if (!IsDriveMounted(ENCFS_MOUNT_POINT)) {
+        wprintf(L"Drive %s is not mounted.\n", ENCFS_MOUNT_POINT);
+        return true;
+    }
+
+    // Build unmount command
+    WCHAR cmdLine[256];
+    wsprintfW(cmdLine, L"\"%s\" -u %s", ENCFS_EXE, ENCFS_MOUNT_POINT);
+
+    STARTUPINFOW si = { sizeof(si) };
+    PROCESS_INFORMATION pi = {};
+
+    wprintf(L"Executing: %s\n", cmdLine);
+
+    if (!CreateProcessW(NULL, cmdLine, NULL, NULL, FALSE,
+                         0, NULL, NULL, &si, &pi)) {
+        DWORD err = GetLastError();
+        printf("ERROR: Failed to start encfs.exe for unmount (error=%lu)\n", static_cast<unsigned long>(err));
+        return false;
+    }
+
+    // Wait for unmount process to complete
+    WaitForSingleObject(pi.hProcess, 10000);
+    
+    DWORD exitCode = 0;
+    GetExitCodeProcess(pi.hProcess, &exitCode);
+    
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+
+    // Wait for drive to be unmounted
+    if (!WaitForDriveState(ENCFS_MOUNT_POINT, false, 10)) {
+        printf("WARNING: Drive may still be mounted\n");
+    } else {
+        wprintf(L"EncFS unmounted successfully from %s\n", ENCFS_MOUNT_POINT);
+    }
+
+    printf("================================================================================\n");
+    return true;
+}
+
+//=============================================================================
+// Main Entry Point
+//=============================================================================
 int main(int argc, char* argv[])
 {
     // Parse command line arguments
@@ -17,6 +382,22 @@ int main(int argc, char* argv[])
     if (config.showHelp) {
         PrintUsage(argv[0]);
         return 0;
+    }
+
+    // Auto-mount EncFS if not in raw filesystem mode
+    bool autoMounted = false;
+    if (!config.isRawFilesystem) {
+        // Override test directory to use the mounted EncFS
+        config.testDir = L"O:\\";
+        config.testFile = config.testDir + L"TEST_FILE.txt";
+        config.nestedLower = config.testDir + L"path\\case\\test_file.txt";
+        config.nestedUpper = config.testDir + L"PATH\\CASE\\TEST_FILE.txt";
+
+        if (!MountEncFS()) {
+            printf("ERROR: Failed to mount EncFS. Aborting tests.\n");
+            return -1;
+        }
+        autoMounted = true;
     }
     
     const WCHAR* drive = config.testDir.c_str();
@@ -46,6 +427,7 @@ int main(int argc, char* argv[])
     if (!PathExists(rootDir)) {
         wprintf(L"ERROR: Test directory does not exist: %s\n", rootDir);
         printf("Please create the directory or specify a different one with -d option.\n");
+        if (autoMounted) UnmountEncFS();
         return -1;
     }
 
@@ -101,7 +483,6 @@ int main(int argc, char* argv[])
     runner.runTest("Buffered IO (seek, read, write)", Test_BufferedIO, file);
     runner.runTest("Append-only write", Test_AppendWrite, file);
     runner.runTest("No-buffering IO (sector aligned)", Test_NoBufferingIO, file, drive);
-    runner.runTest("Alternate Data Streams", Test_AlternateDataStreams, file);
     runner.runTest("File attributes and times", Test_FileAttributesAndTimes, file);
     runner.runTest("Sharing and byte-range locks", Test_SharingAndLocks, file);
     runner.runTest("Sparse file", Test_SparseFile, file);
@@ -200,6 +581,47 @@ int main(int argc, char* argv[])
     runner.runTest("Performance at high offsets", Test_PerformanceAtHighOffsets, file);
 
     //=========================================================================
+    // Windows-Specific Filesystem Tests
+    //=========================================================================
+    printf("\n--- WINDOWS FILESYSTEM TESTS (Alternate Data Streams) ---\n");
+    
+    runner.runTest("Alternate Data Streams", Test_AlternateDataStreams, file);
+    runner.runTest("Multiple Alternate Streams", Test_MultipleAlternateStreams, file);
+    runner.runTest("Large Alternate Stream (1MB)", Test_LargeAlternateStream, file);
+    runner.runTest("ADS survives file rename", Test_ADSSurvivesRename, rootDir);
+
+    printf("\n--- WINDOWS FILESYSTEM TESTS (Links) ---\n");
+    
+    runner.runTest("Symbolic link to file", Test_SymbolicLinkFile, rootDir);
+    runner.runTest("Symbolic link to directory", Test_SymbolicLinkDirectory, rootDir);
+    runner.runTest("Hard link", Test_HardLink, rootDir);
+    runner.runTest("Multiple hard links", Test_MultipleHardLinks, rootDir);
+
+    printf("\n--- WINDOWS FILESYSTEM TESTS (Memory-Mapped Files) ---\n");
+    
+    runner.runTest("Memory-mapped file (read)", Test_MemoryMappedFileRead, file);
+    runner.runTest("Memory-mapped file (write)", Test_MemoryMappedFileWrite, file);
+
+    printf("\n--- WINDOWS FILESYSTEM TESTS (Notifications & Special Names) ---\n");
+    
+    runner.runTest("File change notification", Test_FileChangeNotification, rootDir);
+    runner.runTest("Reserved filenames", Test_ReservedFilenames, rootDir);
+    runner.runTest("Trailing spaces and dots", Test_TrailingSpacesAndDots, rootDir);
+    runner.runTest("Long filenames (255 char)", Test_LongFilenames, rootDir);
+    runner.runTest("Unicode filenames", Test_UnicodeFilenames, rootDir);
+
+    printf("\n--- WINDOWS FILESYSTEM TESTS (Shortcuts) ---\n");
+    
+    runner.runTest("Shortcut to file (.lnk)", Test_ShortcutFile, rootDir);
+    runner.runTest("Shortcut to directory (.lnk)", Test_ShortcutToDirectory, rootDir);
+    runner.runTest("Shortcut mmap read (.lnk)", Test_ShortcutMemoryMappedRead, rootDir);
+
+    printf("\n--- WINDOWS FILESYSTEM TESTS (Volume Information) ---\n");
+    
+    runner.runTest("Volume information", Test_VolumeInformation, rootDir);
+    runner.runTest("Disk free space", Test_DiskFreeSpace, rootDir);
+
+    //=========================================================================
     // Performance Tests
     //=========================================================================
     printf("\n--- PERFORMANCE TESTS ---\n");
@@ -230,6 +652,11 @@ int main(int argc, char* argv[])
             printf("Please fix the failing tests before testing EncFS.\n");
             printf("================================================================================\n");
         }
+    }
+
+    // Auto-unmount EncFS if we mounted it
+    if (autoMounted) {
+        UnmountEncFS();
     }
 
     return runner.allPassed() ? 0 : -1;

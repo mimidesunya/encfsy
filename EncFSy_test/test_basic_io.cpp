@@ -173,32 +173,6 @@ bool Test_NoBufferingIO(const WCHAR* file, const WCHAR* drive)
 }
 
 //=============================================================================
-// Test: Alternate Data Streams
-//=============================================================================
-bool Test_AlternateDataStreams(const WCHAR* baseFile)
-{
-    HANDLE base = OpenTestFile(baseFile, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL);
-    if (base == INVALID_HANDLE_VALUE) return false;
-    CloseHandle(base);
-
-    WCHAR streamPath[260];
-    wsprintfW(streamPath, L"%s:metadata", baseFile);
-    HANDLE h = OpenTestFile(streamPath, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL);
-    if (h == INVALID_HANDLE_VALUE) return false;
-    const char payload[] = "stream-data";
-    DWORD ioLen = 0;
-    if (!WriteFile(h, payload, static_cast<DWORD>(sizeof(payload) - 1), &ioLen, NULL)) { PrintLastError("WriteFile"); CloseHandle(h); return false; }
-
-    SetFilePointer(h, 0, NULL, FILE_BEGIN);
-    char buf[32] = {0};
-    ioLen = 0;
-    if (!ReadFile(h, buf, sizeof(buf), &ioLen, NULL)) { PrintLastError("ReadFile"); CloseHandle(h); return false; }
-    printf("ADS read: %lu bytes, '%.*s'\n", static_cast<unsigned long>(ioLen), static_cast<int>(ioLen), buf);
-    CloseHandle(h);
-    return true;
-}
-
-//=============================================================================
 // Test: File attributes and times
 //=============================================================================
 bool Test_FileAttributesAndTimes(const WCHAR* file)

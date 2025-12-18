@@ -502,9 +502,14 @@ NTSTATUS DOKAN_CALLBACK EncFSGetVolumeInformation(
 
     if (MaximumComponentLength) *MaximumComponentLength = 255;
     if (FileSystemFlags) {
-        // Default FS capabilities
-        *FileSystemFlags = FILE_CASE_SENSITIVE_SEARCH | FILE_CASE_PRESERVED_NAMES |
-            FILE_SUPPORTS_REMOTE_STORAGE | FILE_UNICODE_ON_DISK | FILE_PERSISTENT_ACLS;
+        // Base capabilities similar to Dokan mirror sample
+        *FileSystemFlags = FILE_SUPPORTS_REMOTE_STORAGE | FILE_UNICODE_ON_DISK | FILE_PERSISTENT_ACLS;
+        if (!g_efo.CaseInsensitive) {
+            *FileSystemFlags |= FILE_CASE_SENSITIVE_SEARCH | FILE_CASE_PRESERVED_NAMES;
+        }
+        else {
+            *FileSystemFlags |= FILE_CASE_PRESERVED_NAMES; // Preserve case, but search is case-insensitive
+        }
         if (encfs.altStream) *FileSystemFlags |= FILE_NAMED_STREAMS;
     }
 
@@ -524,6 +529,10 @@ NTSTATUS DOKAN_CALLBACK EncFSGetVolumeInformation(
             *FileSystemFlags &= fsFlags;
             if (!encfs.altStream) {
                 *FileSystemFlags &= ~FILE_NAMED_STREAMS;
+            }
+            // Ensure CASE_SENSITIVE_SEARCH is only advertised when allowed
+            if (g_efo.CaseInsensitive) {
+                *FileSystemFlags &= ~FILE_CASE_SENSITIVE_SEARCH;
             }
         }
         DbgPrintV(L"  [INFO] Underlying FS: '%s', flags=0x%08X\n", FileSystemNameBuffer, fsFlags);

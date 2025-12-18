@@ -142,6 +142,7 @@
     <ClCompile Include="test_multithread.cpp" />
     <ClCompile Include="test_performance.cpp" />
     <ClCompile Include="test_vs_build.cpp" />
+    <ClCompile Include="test_windows_fs.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="test_common.h" />

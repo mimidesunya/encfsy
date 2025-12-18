@@ -518,26 +518,36 @@ NTSTATUS DOKAN_CALLBACK EncFSReadFile(LPCWSTR FileName, LPVOID Buffer,
 
     // Use size_t for offset to handle >4GB files correctly on 64-bit systems
     size_t offset = static_cast<size_t>(Offset);
-    EncFS::EncFSFile* encfsFile;
+    EncFS::EncFSFile* encfsFile = nullptr;
     std::unique_ptr<EncFS::EncFSFile> tempEncFSFile;
+    WCHAR filePath[DOKAN_MAX_PATH];
+    bool hasFilePath = false;
 
     DbgPrintV(L"ReadFile: '%s' offset=%I64d len=%lu\n", FileName, Offset, BufferLength);
 
-    // Open temporary handle if context is unavailable
-    if (!DokanFileInfo->Context) {
-        WCHAR filePath[DOKAN_MAX_PATH];
+    auto ensureFilePath = [&]() -> bool {
+        if (hasFilePath) return true;
         try {
             GetFilePath(filePath, FileName, false);
+            hasFilePath = true;
+            return true;
         }
         catch (const std::exception& ex) {
             ErrorPrint(L"ReadFile: Path conversion failed for '%s': %S\n", FileName, ex.what());
-            return STATUS_OBJECT_NAME_INVALID;
+            return false;
         }
         catch (...) {
             ErrorPrint(L"ReadFile: Unknown exception during path conversion for '%s'\n", FileName);
+            return false;
+        }
+    };
+
+    // Open temporary handle if context is unavailable
+    if (!DokanFileInfo->Context) {
+        if (!ensureFilePath()) {
             return STATUS_OBJECT_NAME_INVALID;
         }
-        
+
         DbgPrintV(L"ReadFile: '%s' - Context NULL, opening temp handle\n", FileName);
         HANDLE handle = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, NULL,
             OPEN_EXISTING, 0, NULL);
@@ -551,6 +561,23 @@ NTSTATUS DOKAN_CALLBACK EncFSReadFile(LPCWSTR FileName, LPVOID Buffer,
     }
     else {
         encfsFile = ToEncFSFile(DokanFileInfo->Context);
+
+        // If the stored handle is invalid (e.g., closed during cleanup), reopen a temp read handle
+        if (!encfsFile->getHandle() || encfsFile->getHandle() == INVALID_HANDLE_VALUE) {
+            if (!ensureFilePath()) {
+                return STATUS_OBJECT_NAME_INVALID;
+            }
+            DbgPrintV(L"ReadFile: '%s' - Context handle invalid, reopening temp handle\n", FileName);
+            HANDLE handle = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, NULL,
+                OPEN_EXISTING, 0, NULL);
+            if (handle == INVALID_HANDLE_VALUE) {
+                DWORD error = GetLastError();
+                ErrorPrint(L"ReadFile: Reopen CreateFile '%s' FAILED (error=%lu)\n", FileName, error);
+                return DokanNtStatusFromWin32(error);
+            }
+            tempEncFSFile = std::make_unique<EncFS::EncFSFile>(handle, true);
+            encfsFile = tempEncFSFile.get();
+        }
     }
 
     // Acquire file-level lock AFTER getting context to prevent data corruption
@@ -574,12 +601,8 @@ NTSTATUS DOKAN_CALLBACK EncFSReadFile(LPCWSTR FileName, LPVOID Buffer,
     if (!plain) {
         if (encfs.isReverse()) {
             // Reverse mode: encrypt plaintext for output
-            WCHAR filePath[DOKAN_MAX_PATH];
-            try {
-                GetFilePath(filePath, FileName, false);
-            }
-            catch (...) {
-                plain = true;
+            if (!hasFilePath && !ensureFilePath()) {
+                plain = true; // fallback to plain error path
             }
             if (!plain) {
                 size_t len = wcslen(filePath);
