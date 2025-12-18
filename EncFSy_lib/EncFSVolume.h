@@ -32,6 +32,13 @@ namespace EncFS
 	 */
 	class EncFSVolume {
 	public:
+		/**
+		 * @brief Callback function type for checking if encoded file exists
+		 * @param encodedPath Full encoded file path to check
+		 * @return true if file exists, false otherwise
+		 */
+		using FileExistsCallback = bool(*)(const std::string& encodedPath);
+
 		/** File IV header size in bytes */
 		static const int32_t HEADER_SIZE = 8;
 
@@ -235,6 +242,19 @@ namespace EncFS
 		void encodeFilePath(const std::string &plainFilePath, std::string &encodedFilePath);
 		
 		/**
+		 * @brief Encrypts a file path with conflict suffix support
+		 * @param plainFilePath Plain file path
+		 * @param encodedFilePath Output parameter receiving encrypted path
+		 * @param fileExists Callback to check if encoded file exists (for conflict handling)
+		 * 
+		 * When the plain filename has a conflict suffix (e.g., "file (conflict).txt"),
+		 * this method first tries normal encoding. If the file doesn't exist,
+		 * it extracts the conflict suffix, encodes the core filename, and appends
+		 * the suffix to the encoded result.
+		 */
+		void encodeFilePath(const std::string &plainFilePath, std::string &encodedFilePath, FileExistsCallback fileExists);
+		
+		/**
 		 * @brief Decrypts a file path (all path components)
 		 * @param plainFilePath Encrypted file path
 		 * @param encodedFilePath Output parameter receiving plain path
@@ -325,8 +345,9 @@ namespace EncFS
 		 * @param srcFilePath Source file path
 		 * @param destFilePath Output parameter receiving processed path
 		 * @param encode True for encryption, false for decryption
+		 * @param fileExists Callback to check if encoded file exists (for conflict handling, may be nullptr)
 		 */
-		void codeFilePath(const std::string &srcFilePath, std::string &destFilePath, bool encode);
+		void codeFilePath(const std::string &srcFilePath, std::string &destFilePath, bool encode, FileExistsCallback fileExists);
 	};
 
 	/**

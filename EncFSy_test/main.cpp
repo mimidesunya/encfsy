@@ -405,7 +405,8 @@ static void RunAllTests(TestRunner& runner,
                         const WCHAR* file,
                         const WCHAR* fileLowerNested,
                         const WCHAR* fileCaseVariant,
-                        const std::vector<std::string>& selectedCategories)
+                        const std::vector<std::string>& selectedCategories,
+                        bool isRawFilesystem = false)
 {
     (void)drive; // currently unused but kept for clarity
 
@@ -581,6 +582,29 @@ static void RunAllTests(TestRunner& runner,
     }
 
     //=====================================================================
+    // Cloud Conflict Tests
+    //=====================================================================
+    if (ShouldRunCategory(selectedCategories, "conflict")) {
+        // Conflict tests require EncFS encryption - skip in raw filesystem mode
+        if (isRawFilesystem) {
+            printf("\n--- CLOUD CONFLICT TESTS (skipped; requires EncFS mount, not raw filesystem) ---\n");
+        } else {
+            printf("\n--- CLOUD CONFLICT TESTS ---\n");
+            runner.runTest("Shadow copy conflict detection", Test_ConflictShadowCopy, rootDir);
+            runner.runTest("Automatic merge resolution", Test_ConflictAutoMerge, rootDir);
+            runner.runTest("Manual resolution prompt", Test_ConflictManualResolution, rootDir);
+            runner.runTest("Conflict file copy", Test_ConflictCopy, rootDir);
+            runner.runTest("Normal file with conflict-like name", Test_ConflictLikeNormalFile, rootDir);
+            runner.runTest("Conflict file without extension", Test_ConflictNoExtension, rootDir);
+            runner.runTest("Multiple conflict files", Test_ConflictMultiple, rootDir);
+            runner.runTest("Nested parentheses conflict", Test_ConflictNestedParentheses, rootDir);
+            runner.runTest("Google Drive conflict pattern", Test_ConflictGoogleDrive, rootDir);
+        }
+    } else {
+        printf("\n--- CLOUD CONFLICT TESTS (skipped; include with -c conflict) ---\n");
+    }
+
+    //=====================================================================
     // Large File Tests (potential overflow issues)
     //=====================================================================
     if (ShouldRunCategory(selectedCategories, "large")) {
@@ -704,7 +728,7 @@ int main(int argc, char* argv[])
         }
 
         TestRunner runner(drive, rootDir, file, true, config.stopOnFailure);
-        RunAllTests(runner, true, drive, rootDir, file, fileLowerNested, fileCaseVariant, config.selectedCategories);
+        RunAllTests(runner, true, drive, rootDir, file, fileLowerNested, fileCaseVariant, config.selectedCategories, true);
         runner.printSummary();
 
         if (runner.allPassed()) {

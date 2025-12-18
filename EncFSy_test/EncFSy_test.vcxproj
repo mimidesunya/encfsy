@@ -136,6 +136,7 @@
     <ClCompile Include="main.cpp" />
     <ClCompile Include="test_advanced.cpp" />
     <ClCompile Include="test_basic_io.cpp" />
+    <ClCompile Include="test_conflict.cpp" />
     <ClCompile Include="test_edge_cases.cpp" />
     <ClCompile Include="test_file_size.cpp" />
     <ClCompile Include="test_large_file.cpp" />

@@ -1,5 +1,6 @@
 ﻿#include "EncFSVolume.h"
 #include "EncFSUtils.hpp"
+#include "EncFSCloudConflict.hpp"
 
 #include "rapidxml.hpp"
 
@@ -8,6 +9,7 @@
 #include <sstream> // For ostringstream
 #include <algorithm> // For std::all_of
 #include <vector>
+#include <regex>
 
 #if defined(WIN32) || defined(_WIN32)
 #include <windows.h> // For SecureZeroMemory
@@ -496,67 +498,92 @@ namespace EncFS {
             return;
         }
 
-        // Decode from Base64
-        string binFileName;
-        decodeBase64FileName(this->base64Lookup, encodedFileName, binFileName);
-        if (binFileName.size() < MAC_16_SIZE + this->aesCbcDec.MandatoryBlockSize()) {
-            throw EncFSInvalidBlockException();
+        auto tryDecode = [&](const string& target, string& decoded) -> bool {
+            decoded.clear();
+
+            string binFileName;
+            if (!decodeBase64FileName(this->base64Lookup, target, binFileName)) {
+                return false;
+            }
+            if (binFileName.size() < MAC_16_SIZE + this->aesCbcDec.MandatoryBlockSize()) {
+                return false;
+            }
+
+            char chainIv[CHAIN_IV_SIZE];
+            getChainIv(this->volumeHmac, this->hmacLock, this->chainedNameIV, plainDirPath, chainIv);
+
+            string fileIv(CHAIN_IV_SIZE, '\0');
+            memcpy(&fileIv[0], chainIv, CHAIN_IV_SIZE);
+            fileIv[6] ^= binFileName[0];
+            fileIv[7] ^= binFileName[1];
+
+            char iv1[MAC_16_SIZE];
+            iv1[0] = binFileName[0];
+            iv1[1] = binFileName[1];
+            binFileName.erase(0, MAC_16_SIZE);
+
+            string plainCandidate;
+            this->processFileName(
+                this->aesCbcDec,
+                this->aesCbcDecLock,
+                fileIv,
+                binFileName,
+                plainCandidate
+            );
+
+            char iv2[MAC_16_SIZE];
+            if (this->chainedNameIV) {
+                mac16withIv(this->volumeHmac, this->hmacLock, plainCandidate.data(), plainCandidate.size(), chainIv, iv2);
+            }
+            else {
+                mac16(this->volumeHmac, this->hmacLock, plainCandidate.data(), plainCandidate.size(), iv2);
+            }
+            if (!CryptoPP::VerifyBufsEqual((const byte*)iv1, (const byte*)iv2, MAC_16_SIZE)) {
+                return false;
+            }
+
+            if (plainCandidate.empty()) {
+                return false;
+            }
+            const size_t padLen = (unsigned char)plainCandidate.back();
+            if (padLen == 0 || padLen > IV_SPEC_SIZE || padLen > plainCandidate.size()) {
+                return false;
+            }
+            for (size_t i = 0; i < padLen; ++i) {
+                if ((unsigned char)plainCandidate[plainCandidate.size() - padLen + i] != padLen) {
+                    return false;
+                }
+            }
+            plainCandidate.erase(plainCandidate.size() - padLen);
+            decoded.assign(plainCandidate);
+            return true;
+        };
+
+        string decoded;
+        if (tryDecode(encodedFileName, decoded)) {
+            plainFileName.append(decoded);
+            return;
         }
 
-        // Compute chain IV if enabled
-        char chainIv[CHAIN_IV_SIZE];
-        getChainIv(this->volumeHmac, this->hmacLock, this->chainedNameIV, plainDirPath, chainIv);
-
-        // Reconstruct file IV from stored MAC and chain IV
-        string fileIv(CHAIN_IV_SIZE, '\0');
-        memcpy(&fileIv[0], chainIv, CHAIN_IV_SIZE);
-        fileIv[6] ^= binFileName[0];
-        fileIv[7] ^= binFileName[1];
-
-        // Extract and remove MAC from encrypted data
-        char iv1[MAC_16_SIZE];
-        iv1[0] = binFileName[0];
-        iv1[1] = binFileName[1];
-        binFileName.erase(0, MAC_16_SIZE);
-
-        // Decrypt filename
-        size_t pos = plainFileName.size();
-        this->processFileName(
-            this->aesCbcDec,
-            this->aesCbcDecLock,
-            fileIv,
-            binFileName,
-            plainFileName
-        );
-
-        // Verify MAC
-        char iv2[MAC_16_SIZE];
-        const char* decryptedPart = plainFileName.data() + pos;
-        const size_t decryptedPartLen = plainFileName.size() - pos;
-        if (this->chainedNameIV) {
-            mac16withIv(this->volumeHmac, this->hmacLock, decryptedPart, decryptedPartLen, chainIv, iv2);
-        }
-        else {
-            mac16(this->volumeHmac, this->hmacLock, decryptedPart, decryptedPartLen, iv2);
-        }
-        if (!CryptoPP::VerifyBufsEqual((const byte*)iv1, (const byte*)iv2, MAC_16_SIZE)) {
-            throw EncFSInvalidBlockException();
-        }
-
-        // Verify and remove PKCS#7 padding
-        if (plainFileName.empty()) {
-            throw EncFSInvalidBlockException();
-        }
-        const size_t padLen = (unsigned char)plainFileName.back();
-        if (padLen == 0 || padLen > IV_SPEC_SIZE || padLen > plainFileName.size()) {
-            throw EncFSInvalidBlockException();
-        }
-        for (size_t i = 0; i < padLen; ++i) {
-            if ((unsigned char)plainFileName[plainFileName.size() - padLen + i] != padLen) {
-                throw EncFSInvalidBlockException();
+        // Try cloud conflict suffix detection (only when chainedNameIV is disabled)
+        if (!this->chainedNameIV) {
+            // Try to extract cloud conflict suffix from the encoded filename
+            // Supports: Dropbox, Google Drive, OneDrive patterns
+            ConflictSuffixResult conflict = tryExtractCloudConflictSuffix(encodedFileName);
+            
+            if (conflict.found) {
+                decoded.clear();
+                if (tryDecode(conflict.core, decoded)) {
+                    // Successfully decoded the core filename
+                    // Insert the conflict suffix in the correct position
+                    string conflictName = insertConflictSuffix(decoded, conflict.suffix);
+                    plainFileName.append(conflictName);
+                    return;
+                }
             }
         }
-        plainFileName.erase(plainFileName.size() - padLen);
+
+        throw EncFSInvalidBlockException();
     }
 
     /**
@@ -564,14 +591,26 @@ namespace EncFS {
      * @param srcFilePath Source file path
      * @param destFilePath Output parameter receiving processed path
      * @param encode True for encryption, false for decryption
+     * @param fileExists Callback to check if encoded file exists (for conflict handling)
      * 
      * Processes each path component separately while maintaining hierarchy.
      * Handles alternate data streams if enabled.
+     * 
+     * For conflict suffix handling (encode only, when fileExists is provided):
+     * If the leaf filename has a conflict suffix (e.g., "file (conflict).txt"),
+     * first try normal encoding. If the resulting encoded file doesn't exist,
+     * encode the core filename and append the conflict suffix to the encoded result.
+     * 
+     * Supported cloud conflict formats:
+     * - Dropbox: "filename (COMPUTER conflict DATE).ext"
+     * - Google Drive: "filename_conf(N).ext"
+     * - OneDrive: "filename-COMPUTER.ext"
      */
     void EncFSVolume::codeFilePath(
         const string& srcFilePath,
         string& destFilePath,
-        bool encode
+        bool encode,
+        FileExistsCallback fileExists
     ) {
         string dirPath;
         string::size_type pos1 = 0;
@@ -600,14 +639,36 @@ namespace EncFS {
             }
             
             if (pos2 > pos1) {
-                string destName = srcFilePath.substr(pos1, pos2 - pos1);
+                string srcName = srcFilePath.substr(pos1, pos2 - pos1);
                 string encodedPart;
+                bool isLeaf = (pos2 == srcFilePath.size() || (alt && pos2 + (srcFilePath.size() - pos2) == srcFilePath.size()));
 
                 if (encode) {
-                    this->encodeFileName(destName, dirPath, encodedPart);
+                    this->encodeFileName(srcName, dirPath, encodedPart);
+                    
+                    // Conflict suffix handling for leaf filename only
+                    // Only applies when fileExists callback is provided and chainedNameIV is disabled
+                    if (isLeaf && fileExists != nullptr && !this->chainedNameIV) {
+                        // Try to extract cloud conflict suffix from the plain filename
+                        ConflictSuffixResult conflict = tryExtractCloudConflictSuffix(srcName);
+                        
+                        if (conflict.found) {
+                            // Build full encoded path to check existence
+                            string testPath = destFilePath + g_pathSeparator + encodedPart;
+                            
+                            // If encoded file doesn't exist, try conflict suffix approach
+                            if (!fileExists(testPath)) {
+                                // Re-encode without conflict suffix
+                                string encodedCore;
+                                this->encodeFileName(conflict.core, dirPath, encodedCore);
+                                // Append conflict suffix to encoded name
+                                encodedPart = encodedCore + conflict.suffix;
+                            }
+                        }
+                    }
                 }
                 else {
-                    this->decodeFileName(destName, dirPath, encodedPart);
+                    this->decodeFileName(srcName, dirPath, encodedPart);
                 }
                 destFilePath += g_pathSeparator;
                 destFilePath += encodedPart;
@@ -642,7 +703,21 @@ namespace EncFS {
         const string& plainFilePath,
         string& encodedFilePath
     ) {
-        this->codeFilePath(plainFilePath, encodedFilePath, true);
+        this->codeFilePath(plainFilePath, encodedFilePath, true, nullptr);
+    }
+
+    /**
+     * @brief Encrypts a file path with conflict suffix support
+     * @param plainFilePath Plain file path
+     * @param encodedFilePath Output parameter receiving encrypted path
+     * @param fileExists Callback to check if encoded file exists
+     */
+    void EncFSVolume::encodeFilePath(
+        const string& plainFilePath,
+        string& encodedFilePath,
+        FileExistsCallback fileExists
+    ) {
+        this->codeFilePath(plainFilePath, encodedFilePath, true, fileExists);
     }
 
     /**
@@ -655,7 +730,7 @@ namespace EncFS {
         const string& encodedFilePath,
         string& plainFilePath
     ) {
-        this->codeFilePath(encodedFilePath, plainFilePath, false);
+        this->codeFilePath(encodedFilePath, plainFilePath, false, nullptr);
     }
 
     /**

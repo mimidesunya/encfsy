@@ -47,6 +47,19 @@ bool Test_RapidRenameCycle(const WCHAR* rootDir);
 bool Test_RenameWithConcurrentAccess(const WCHAR* rootDir);
 
 //=============================================================================
+// Cloud Conflict Tests (test_conflict.cpp)
+//=============================================================================
+bool Test_ConflictShadowCopy(const WCHAR* rootDir);
+bool Test_ConflictAutoMerge(const WCHAR* rootDir);
+bool Test_ConflictManualResolution(const WCHAR* rootDir);
+bool Test_ConflictCopy(const WCHAR* rootDir);
+bool Test_ConflictLikeNormalFile(const WCHAR* rootDir);
+bool Test_ConflictNoExtension(const WCHAR* rootDir);
+bool Test_ConflictMultiple(const WCHAR* rootDir);
+bool Test_ConflictNestedParentheses(const WCHAR* rootDir);
+bool Test_ConflictGoogleDrive(const WCHAR* rootDir);
+
+//=============================================================================
 // VS Build-like Tests (test_vs_build.cpp)
 //=============================================================================
 bool Test_CreateAlwaysThenWrite(const WCHAR* file);

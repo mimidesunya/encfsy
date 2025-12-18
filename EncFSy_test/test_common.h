@@ -46,6 +46,7 @@ inline const std::vector<TestCategoryInfo>& GetAvailableCategories()
         {"aapt2",       "Android aapt2 pattern tests"},
         {"advanced",    "Advanced tests"},
         {"rename",      "File rename pattern tests"},
+        {"conflict",    "Cloud sync conflict tests"},
         {"large",       "Large file tests"},
         {"windows",     "Windows filesystem feature tests"},
         {"performance", "Performance tests"}
@@ -265,7 +266,7 @@ private:
 
 //=============================================================================
 // Helper Functions
-//=============================================================================
+//=============================================================================;
 
 // Simple helper to print Windows API errors consistently
 inline void PrintLastError(const char* api)

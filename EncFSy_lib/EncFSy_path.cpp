@@ -5,18 +5,73 @@
 #include "EncFSUtils.hpp"
 #include <memory>
 
+// Forward declaration for file exists callback
+static std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>>* g_strConvPtr = nullptr;
+
+/**
+ * @brief Callback function for checking if encoded file exists
+ * @param encodedPath UTF-8 encoded path to check
+ * @return true if file exists, false otherwise
+ * 
+ * Used by encodeFilePath for conflict suffix handling.
+ */
+static bool EncodedFileExistsCallback(const std::string& encodedPath) {
+	if (g_strConvPtr == nullptr) {
+		return false;
+	}
+	
+	std::wstring wPath = g_strConvPtr->from_bytes(encodedPath);
+	std::wstring fullPath = L"\\\\?\\";
+	fullPath += g_efo.RootDirectory;
+	fullPath += wPath;
+	
+	DWORD attrs = GetFileAttributesW(fullPath.c_str());
+	if (attrs != INVALID_FILE_ATTRIBUTES) {
+		return true;
+	}
+	DWORD err = GetLastError();
+	return (err != ERROR_FILE_NOT_FOUND && err != ERROR_PATH_NOT_FOUND);
+}
+
+/**
+ * @brief Detect whether a wide path is already absolute (drive-rooted or UNC/NT prefix)
+ * @param p The path to check
+ * @return true if the path is absolute, false if relative
+ * 
+ * Absolute paths include those with:
+ * - NT prefix (\\?\)
+ * - UNC prefix (//server/share)
+ * - Drive letter root (C:\ or C:/)
+ */
+static bool IsAbsoluteWindowsPath(const std::wstring& p) {
+	if (p.empty()) return false;
+	// NT path prefix
+	if (p.rfind(L"\\\\?\\", 0) == 0) return true;
+	// UNC path
+	if (p.rfind(L"\\\\", 0) == 0) return true;
+	// Drive rooted: "C:\\..."
+	return (p.size() >= 3 && p[1] == L':' && (p[2] == L'\\' || p[2] == L'/'));
+}
+
 /**
  * @brief Internal implementation: Converts UTF-8 encoded filename to Windows path with NT prefix
  * @param strConv UTF-8/UTF-16 string converter
  * @param cEncodedFileName UTF-8 encoded filename
  * @param encodedFilePath Output buffer for wide-character path
  * 
- * Constructs: \\?\<RootDirectory>\<filename>
+ * Constructs: \\?\<RootDirectory><filename>
  * Handles UNC path prefixes by stripping the UNC name if present.
  */
 static void ToWFilePathImpl(std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>>& strConv,
 	std::string& cEncodedFileName, PWCHAR encodedFilePath) {
 	std::wstring wFilePath = strConv.from_bytes(cEncodedFileName);
+	
+	// If the encoded path is already absolute (shouldn't normally happen, but can in case-insensitive
+	// re-encoding paths), do not prepend \\?\ + RootDirectory again.
+	if (IsAbsoluteWindowsPath(wFilePath)) {
+		wcsncpy_s(encodedFilePath, DOKAN_MAX_PATH, wFilePath.c_str(), _TRUNCATE);
+		return;
+	}
 	
 	auto filePath = std::make_unique<WCHAR[]>(DOKAN_MAX_PATH);
 	wcscpy_s(filePath.get(), DOKAN_MAX_PATH, wFilePath.c_str());
@@ -198,7 +253,15 @@ void GetFilePath(PWCHAR encodedFilePath, LPCWSTR plainFilePath, bool createNew) 
 	}
 	else {
 		// Normal mode: Encrypt filename
-		encfs.encodeFilePath(cFilePath, cEncodedFileName);
+		// Only use conflict suffix callback when NOT creating a new file
+		// For new files, we want normal encryption without conflict handling
+		if (createNew) {
+			encfs.encodeFilePath(cFilePath, cEncodedFileName);
+		} else {
+			g_strConvPtr = &strConv;
+			encfs.encodeFilePath(cFilePath, cEncodedFileName, EncodedFileExistsCallback);
+			g_strConvPtr = nullptr;
+		}
 		ToWFilePathImpl(strConv, cEncodedFileName, encodedFilePath);
 
 		// Perform case-insensitive lookup if enabled
@@ -242,6 +305,7 @@ void GetFilePath(PWCHAR encodedFilePath, LPCWSTR plainFilePath, bool createNew) 
 				}
 				
 				currentEncPath.clear();
+				// Don't use conflict callback in case-insensitive lookup - just encode normally
 				encfs.encodeFilePath(currentPlainPath, currentEncPath);
 				ToWFilePathImpl(strConv, currentEncPath, filePath);
 				
@@ -338,7 +402,14 @@ void GetFilePath(PWCHAR encodedFilePath, LPCWSTR plainFilePath, bool createNew) 
 			// Re-encode path if case was corrected
 			if (pathChanged) {
 				cEncodedFileName.clear();
-				encfs.encodeFilePath(cFilePath, cEncodedFileName);
+				// For re-encoding after case correction, use conflict callback only for existing files
+				if (createNew) {
+					encfs.encodeFilePath(cFilePath, cEncodedFileName);
+				} else {
+					g_strConvPtr = &strConv;
+					encfs.encodeFilePath(cFilePath, cEncodedFileName, EncodedFileExistsCallback);
+					g_strConvPtr = nullptr;
+				}
 				ToWFilePathImpl(strConv, cEncodedFileName, encodedFilePath);
 				DbgPrint(L"GetFilePath: Case-corrected path for '%s'\n", plainFilePath);
 			}

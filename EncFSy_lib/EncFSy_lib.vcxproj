@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -156,6 +156,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="CredentialManager.h" />
+    <ClInclude Include="EncFSCloudConflict.hpp" />
     <ClInclude Include="EncFSFile.h" />
     <ClInclude Include="EncFSUtils.hpp" />
     <ClInclude Include="EncFSVolume.h" />
@@ -171,6 +172,7 @@
     <ClInclude Include="rapidxml_utils.hpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="EncFSCloudConflict.cpp" />
     <ClCompile Include="EncFSFile.cpp" />
     <ClCompile Include="EncFSVolume.cpp" />
     <ClCompile Include="EncFSy.cpp" />
