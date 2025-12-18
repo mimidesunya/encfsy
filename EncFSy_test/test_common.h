@@ -7,6 +7,8 @@
 #include <string.h>
 #include <vector>
 #include <string>
+#include <algorithm>
+#include <cctype>
 
 //=============================================================================
 // Command Line Configuration
@@ -20,24 +22,58 @@ struct TestConfig {
     bool showHelp;
     bool isRawFilesystem;      // True if testing on raw filesystem (not EncFS)
     bool stopOnFailure;        // True to stop immediately when a test fails
+    std::vector<std::string> selectedCategories; // Categories to run (empty = all)
     
     TestConfig() : showHelp(false), isRawFilesystem(false), stopOnFailure(false) {}
 };
+
+struct TestCategoryInfo {
+    const char* key;          // Option key (e.g., "edge")
+    const char* description;  // Human-readable description
+};
+
+inline const std::vector<TestCategoryInfo>& GetAvailableCategories()
+{
+    static const std::vector<TestCategoryInfo> categories = {
+        {"edge",        "Edge case tests (bug regression)"},
+        {"thread",      "Thread safety tests"},
+        {"multi",       "Multi-handle concurrent access tests"},
+        {"basic",       "Basic I/O tests"},
+        {"filesize",    "File size tests"},
+        {"vsproject",   "VS project-like tests"},
+        {"vsbuild",     "VS build pattern tests"},
+        {"zip",         "ZIP/archive pattern tests"},
+        {"aapt2",       "Android aapt2 pattern tests"},
+        {"advanced",    "Advanced tests"},
+        {"rename",      "File rename pattern tests"},
+        {"large",       "Large file tests"},
+        {"windows",     "Windows filesystem feature tests"},
+        {"performance", "Performance tests"}
+    };
+    return categories;
+}
 
 inline void PrintUsage(const char* programName) {
     printf("Usage: %s [options]\n", programName);
     printf("\n");
     printf("Options:\n");
-    printf("  -d, --dir <path>     Test directory (default: O:\\)\n");
-    printf("  -r, --raw            Test on raw filesystem (F:\\work\\encfs_raw\\)\n");
-    printf("  -s, --stop-on-failure  Stop immediately when a test fails\n");
-    printf("  -h, --help           Show this help message\n");
+    printf("  -d, --dir <path>          Test directory (default: O:\\)\n");
+    printf("  -r, --raw                 Test on raw filesystem (F:\\work\\encfs_raw\\)\n");
+    printf("  -s, --stop-on-failure     Stop immediately when a test fails\n");
+    printf("  -c, --category <name>[,<name>...]  Run only specified categories\n");
+    printf("  -h, --help                Show this help message and category list\n");
+    printf("\n");
+    printf("Categories:\n");
+    for (const auto& cat : GetAvailableCategories()) {
+        printf("  %-12s %s\n", cat.key, cat.description);
+    }
     printf("\n");
     printf("Examples:\n");
-    printf("  %s                   # Test on EncFS mount at O:\\\n", programName);
-    printf("  %s -r                # Test on raw filesystem at F:\\work\\encfs_raw\\\n", programName);
-    printf("  %s -d C:\\temp\\test # Test in custom directory\n", programName);
-    printf("  %s -s                # Stop on first failure\n", programName);
+    printf("  %s                      # Test on EncFS mount at O:\\ (all categories)\n", programName);
+    printf("  %s -r                   # Test on raw filesystem at F:\\work\\encfs_raw\\\n", programName);
+    printf("  %s -d C:\\temp\\test  # Test in custom directory\n", programName);
+    printf("  %s -s                   # Stop on first failure\n", programName);
+    printf("  %s -c edge,basic        # Run only edge and basic categories\n", programName);
     printf("\n");
     printf("Note: Run with -r first to verify tests work correctly on a raw filesystem,\n");
     printf("      then run without -r to test the EncFS implementation.\n");
@@ -49,6 +85,25 @@ inline bool ParseCommandLine(int argc, char* argv[], TestConfig& config) {
     config.showHelp = false;
     config.isRawFilesystem = false;
     config.stopOnFailure = false;
+    config.selectedCategories.clear();
+    
+    auto toLower = [](std::string s) {
+        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char ch) { return static_cast<char>(tolower(ch)); });
+        return s;
+    };
+
+    auto addCategories = [&](const std::string& value) {
+        size_t start = 0;
+        while (start <= value.size()) {
+            size_t pos = value.find(',', start);
+            std::string token = value.substr(start, pos == std::string::npos ? std::string::npos : pos - start);
+            if (!token.empty()) {
+                config.selectedCategories.push_back(toLower(token));
+            }
+            if (pos == std::string::npos) break;
+            start = pos + 1;
+        }
+    };
     
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
@@ -74,6 +129,10 @@ inline bool ParseCommandLine(int argc, char* argv[], TestConfig& config) {
             if (!config.testDir.empty() && config.testDir.back() != L'\\') {
                 config.testDir += L'\\';
             }
+        }
+        else if ((arg == "-c" || arg == "--category") && i + 1 < argc) {
+            i++;
+            addCategories(argv[i]);
         }
         else {
             printf("Unknown option: %s\n", argv[i]);

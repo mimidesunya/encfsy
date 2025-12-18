@@ -47,6 +47,16 @@ static bool LoadVolumeConfig(const EncFSOptions& efo, char* password) {
     return false;
 }
 
+static void ReportInvalid(const std::wstring& physicalPath, const std::string& plainDirPath, std::vector<std::wstring>& invalidPaths) {
+    invalidPaths.push_back(physicalPath);
+
+    std::string utf8Path;
+    bool converted = WideToUtf8(physicalPath, utf8Path);
+    printf("Invalid filename (decryption failed): %s\n", converted ? utf8Path.c_str() : "<failed to convert path>");
+    printf("  parent (decoded): %s\n", plainDirPath.empty() ? "<root>" : plainDirPath.c_str());
+    fflush(stdout);
+}
+
 // Recursive scan for filenames that cannot be decrypted
 static void ScanInvalidNames(const std::wstring& physicalDir, const std::string& plainDirPath, std::vector<std::wstring>& invalidPaths) {
     WIN32_FIND_DATAW findData;
@@ -67,8 +77,14 @@ static void ScanInvalidNames(const std::wstring& physicalDir, const std::string&
 
         std::wstring encNameW(findData.cFileName);
         std::string encNameUtf8;
+        std::wstring physicalPath = physicalDir;
+        if (!physicalPath.empty() && physicalPath.back() != L'\\') {
+            physicalPath.push_back(L'\\');
+        }
+        physicalPath += encNameW;
+
         if (!WideToUtf8(encNameW, encNameUtf8)) {
-            invalidPaths.push_back(physicalDir + L"\\" + encNameW);
+            ReportInvalid(physicalPath, plainDirPath, invalidPaths);
             continue;
         }
 
@@ -77,13 +93,13 @@ static void ScanInvalidNames(const std::wstring& physicalDir, const std::string&
             encfs.decodeFileName(encNameUtf8, plainDirPath, plainName);
         }
         catch (...) {
-            invalidPaths.push_back(physicalDir + L"\\" + encNameW);
+            ReportInvalid(physicalPath, plainDirPath, invalidPaths);
             continue;
         }
 
         bool isDir = (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
         if (isDir) {
-            std::wstring childPhysical = physicalDir + L"\\" + encNameW;
+            std::wstring childPhysical = physicalPath;
             std::string childPlainPath = plainDirPath;
             if (!childPlainPath.empty()) childPlainPath += "\\";
             childPlainPath += plainName;
@@ -104,13 +120,7 @@ int RunScanInvalid(const EncFSOptions& efo, char* password) {
     if (invalidPaths.empty()) {
         printf("No invalid filenames detected.\n");
     } else {
-        printf("Invalid filenames (decryption failed):\n");
-        std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> conv;
-        for (const auto& p : invalidPaths) {
-            std::string utf8 = conv.to_bytes(p);
-            printf("%s\n", utf8.c_str());
-        }
-        printf("Total: %zu\n", invalidPaths.size());
+        printf("Scan complete. Invalid filenames detected: %zu\n", invalidPaths.size());
     }
     return EXIT_SUCCESS;
 }

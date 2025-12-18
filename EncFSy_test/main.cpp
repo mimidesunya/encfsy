@@ -9,16 +9,17 @@
 //      - Encrypted Root Dir: F:\work\encfs
 //      - Mount Point: O:
 //      - Password: TEST
-//      - Options: --dokan-mount-manager --alt-stream --case-insensitive
+//      - Options: --dokan-mount-manager --alt-stream (case-insensitive tested both off/on)
 // ./encfs.exe F:\work\encfs O: --dokan-mount-manager --alt-stream --case-insensitive
 //
 // =============================================================================
 // USAGE:
 // =============================================================================
-//   test.exe           - Run tests on EncFS (auto mount/unmount)
-//   test.exe -r        - Run tests on raw filesystem (baseline verification)
-//   test.exe -s        - Stop on first failure
-//   test.exe -h        - Show help
+//   test.exe                  - Run tests on EncFS (auto mount/unmount)
+//   test.exe -r               - Run tests on raw filesystem (baseline verification)
+//   test.exe -s               - Stop on first failure
+//   test.exe -c edge,basic    - Run only specified categories
+//   test.exe -h               - Show help
 //
 // =============================================================================
 // AUTOMATIC BEHAVIOR:
@@ -33,6 +34,8 @@
 #include <process.h>
 #include <thread>
 #include <chrono>
+#include <algorithm>
+#include <cctype>
 
 //=============================================================================
 // EncFS Mount/Unmount Configuration
@@ -78,7 +81,7 @@ static bool IsEncFSInitialized()
 //=============================================================================
 // Initialize EncFS volume (create .encfs6.xml)
 //=============================================================================
-static bool InitializeEncFS()
+static bool InitializeEncFS(bool caseInsensitive)
 {
     printf("================================================================================\n");
     printf("Initializing EncFS volume (creating .encfs6.xml)...\n");
@@ -116,8 +119,9 @@ static bool InitializeEncFS()
     // Start encfs.exe to initialize (it will prompt for password twice for new volume)
     // Use a temporary mount point that we'll immediately unmount
     WCHAR initCmdLine[1024];
-    wsprintfW(initCmdLine, L"\"%s\" \"%s\" %s --dokan-mount-manager --alt-stream --case-insensitive",
-              ENCFS_EXE, ENCFS_ROOT_DIR, ENCFS_MOUNT_POINT);
+    wsprintfW(initCmdLine, L"\"%s\" \"%s\" %s --dokan-mount-manager --alt-stream%s",
+              ENCFS_EXE, ENCFS_ROOT_DIR, ENCFS_MOUNT_POINT,
+              caseInsensitive ? L" --case-insensitive" : L"");
 
     STARTUPINFOW si = { sizeof(si) };
     si.dwFlags = STARTF_USESTDHANDLES;
@@ -211,13 +215,14 @@ static bool InitializeEncFS()
 //=============================================================================
 // Mount EncFS volume
 //=============================================================================
-static bool MountEncFS()
+static bool MountEncFS(bool caseInsensitive)
 {
     printf("================================================================================\n");
     printf("Mounting EncFS volume...\n");
     wprintf(L"  Root Dir: %s\n", ENCFS_ROOT_DIR);
     wprintf(L"  Mount Point: %s\n", ENCFS_MOUNT_POINT);
     printf("  Password: %s\n", ENCFS_PASSWORD);
+    printf("  Case-insensitive: %s\n", caseInsensitive ? "YES" : "NO");
     printf("================================================================================\n");
 
     // Check if already mounted
@@ -242,7 +247,7 @@ static bool MountEncFS()
     // Check if EncFS is initialized, initialize if not
     if (!IsEncFSInitialized()) {
         printf("EncFS config file not found. Initializing new volume...\n\n");
-        if (!InitializeEncFS()) {
+        if (!InitializeEncFS(caseInsensitive)) {
             printf("ERROR: Failed to initialize EncFS volume\n");
             return false;
         }
@@ -265,8 +270,9 @@ static bool MountEncFS()
 
     // Start encfs.exe to mount existing volume
     WCHAR mountCmdLine[1024];
-    wsprintfW(mountCmdLine, L"\"%s\" \"%s\" %s --dokan-mount-manager --alt-stream --case-insensitive",
-              ENCFS_EXE, ENCFS_ROOT_DIR, ENCFS_MOUNT_POINT);
+    wsprintfW(mountCmdLine, L"\"%s\" \"%s\" %s --dokan-mount-manager --alt-stream%s",
+              ENCFS_EXE, ENCFS_ROOT_DIR, ENCFS_MOUNT_POINT,
+              caseInsensitive ? L" --case-insensitive" : L"");
 
     STARTUPINFOW si = { sizeof(si) };
     si.dwFlags = STARTF_USESTDHANDLES;
@@ -368,278 +374,339 @@ static bool UnmountEncFS()
 }
 
 //=============================================================================
+// Helper: Decide whether a category should run based on selection
+//=============================================================================
+static bool ShouldRunCategory(const std::vector<std::string>& selectedCategories, const char* key)
+{
+    if (selectedCategories.empty()) {
+        return true; // No filter specified => run all
+    }
+
+    std::string loweredKey(key);
+    std::transform(loweredKey.begin(), loweredKey.end(), loweredKey.begin(), [](unsigned char ch) {
+        return static_cast<char>(tolower(ch));
+    });
+
+    for (const auto& cat : selectedCategories) {
+        if (cat == loweredKey) {
+            return true;
+        }
+    }
+    return false;
+}
+
+//=============================================================================
+// Test Suite Runner
+//=============================================================================
+static void RunAllTests(TestRunner& runner,
+                        bool caseInsensitiveMode,
+                        const WCHAR* drive,
+                        const WCHAR* rootDir,
+                        const WCHAR* file,
+                        const WCHAR* fileLowerNested,
+                        const WCHAR* fileCaseVariant,
+                        const std::vector<std::string>& selectedCategories)
+{
+    (void)drive; // currently unused but kept for clarity
+
+    //=====================================================================
+    // Edge Case Tests (for previously fixed bugs)
+    //=====================================================================
+    if (ShouldRunCategory(selectedCategories, "edge")) {
+        printf("\n--- EDGE CASE TESTS (Bug Regression) ---\n");
+        runner.runTest("Zero-length read request", Test_ZeroLengthRead, file);
+        runner.runTest("Zero-length write request", Test_ZeroLengthWrite, file);
+        runner.runTest("SetEndOfFile boundary block", Test_SetEndOfFileBoundaryBlock, file);
+        runner.runTest("File expansion partial block", Test_FileExpansionPartialBlock, file);
+        runner.runTest("Rapid truncate and write", Test_RapidTruncateWrite, file);
+        runner.runTest("Read at block boundaries", Test_ReadAtBlockBoundaries, file);
+        runner.runTest("Write at block boundaries", Test_WriteAtBlockBoundaries, file);
+        runner.runTest("Truncate zero immediate rewrite (ZIP pattern)", Test_TruncateZeroImmediateRewrite, file);
+        runner.runTest("Write/read with separate handles", Test_WriteReadSeparateHandles, file);
+        runner.runTest("Concurrent read while writing", Test_ConcurrentReadWhileWrite, file);
+        runner.runTest("Read beyond EOF", Test_ReadBeyondEOF, file);
+        runner.runTest("Empty file operations", Test_EmptyFileOperations, file);
+    } else {
+        printf("\n--- EDGE CASE TESTS (skipped; include with -c edge) ---\n");
+    }
+
+    //=====================================================================
+    // Thread Safety and Race Condition Tests
+    //=====================================================================
+    if (ShouldRunCategory(selectedCategories, "thread")) {
+        printf("\n--- THREAD SAFETY TESTS ---\n");
+        runner.runTest("High concurrency file access", Test_HighConcurrencyAccess, file);
+        runner.runTest("File IV persistence across reopens", Test_FileIVPersistence, file);
+        runner.runTest("Rapid file operation cycle", Test_RapidFileOperationCycle, file);
+        runner.runTest("Write then immediate read at offset 0", Test_WriteImmediateReadOffset0, file);
+    } else {
+        printf("\n--- THREAD SAFETY TESTS (skipped; include with -c thread) ---\n");
+    }
+
+    //=====================================================================
+    // Multi-Handle Concurrent Access Tests (aapt2 block corruption regression)
+    //=====================================================================
+    if (ShouldRunCategory(selectedCategories, "multi")) {
+        printf("\n--- MULTI-HANDLE CONCURRENT ACCESS TESTS (aapt2 regression) ---\n");
+        runner.runTest("Multi-handle concurrent write", Test_MultiHandleConcurrentWrite, file);
+        runner.runTest("Multi-handle write then read", Test_MultiHandleWriteThenRead, file);
+        runner.runTest("aapt2-like multi-file access", Test_Aapt2LikeMultiFileAccess, file);
+        runner.runTest("Concurrent multi-offset write", Test_ConcurrentMultiOffsetWrite, file);
+        runner.runTest("Stress multi-handle read/write", Test_StressMultiHandleReadWrite, file);
+    } else {
+        printf("\n--- MULTI-HANDLE CONCURRENT ACCESS TESTS (skipped; include with -c multi) ---\n");
+    }
+
+    //=====================================================================
+    // Basic I/O Tests
+    //=====================================================================
+    if (ShouldRunCategory(selectedCategories, "basic")) {
+        printf("\n--- BASIC I/O TESTS ---\n");
+        runner.runTest("Directory operations", Test_DirectoryOps, rootDir);
+        runner.runTest("Create and print final path", Test_CreateAndPrintPath, file);
+        if (caseInsensitiveMode) {
+            runner.runTest("Case-insensitive open", Test_CaseInsensitiveOpen, fileLowerNested, fileCaseVariant);
+        } else {
+            printf("Skipping case-insensitive-only test: Case-insensitive open (requires --case-insensitive)\n");
+        }
+        runner.runTest("Buffered IO (seek, read, write)", Test_BufferedIO, file);
+        runner.runTest("Append-only write", Test_AppendWrite, file);
+        runner.runTest("No-buffering IO (sector aligned)", Test_NoBufferingIO, file, drive);
+        runner.runTest("File attributes and times", Test_FileAttributesAndTimes, file);
+        runner.runTest("Sharing and byte-range locks", Test_SharingAndLocks, file);
+        runner.runTest("Sparse file", Test_SparseFile, file);
+        runner.runTest("Block boundary IO (512)", Test_BlockBoundaryIO, file, (DWORD)512);
+        runner.runTest("Block boundary IO (4096)", Test_BlockBoundaryIO, file, (DWORD)4096);
+    } else {
+        printf("\n--- BASIC I/O TESTS (skipped; include with -c basic) ---\n");
+    }
+
+    //=====================================================================
+    // File Size Tests
+    //=====================================================================
+    if (ShouldRunCategory(selectedCategories, "filesize")) {
+        printf("\n--- FILE SIZE TESTS ---\n");
+        runner.runTest("Expand and shrink file size", Test_ExpandShrink, file);
+        runner.runTest("SetEndOfFile then write (cache test)", Test_SetEndOfFileThenWrite, file);
+        runner.runTest("Truncate then partial write", Test_TruncateThenPartialWrite, file);
+        runner.runTest("Expand then write beyond", Test_ExpandThenWriteBeyond, file);
+        runner.runTest("Multiple SetEndOfFile operations", Test_MultipleSetEndOfFile, file);
+        runner.runTest("Truncate at block boundary", Test_TruncateAtBlockBoundary, file);
+        runner.runTest("Truncate to zero then rewrite", Test_TruncateToZeroThenRewrite, file);
+        runner.runTest("Write immediately after SetEndOfFile", Test_WriteImmediatelyAfterSetEndOfFile, file);
+    } else {
+        printf("\n--- FILE SIZE TESTS (skipped; include with -c filesize) ---\n");
+    }
+
+    //=====================================================================
+    // VS Project-like Tests (from debug log analysis)
+    //=====================================================================
+    if (ShouldRunCategory(selectedCategories, "vsproject")) {
+        printf("\n--- VS PROJECT-LIKE TESTS ---\n");
+        runner.runTest("SetEndOfFile(0) + SetAllocationSize(0) + Write", Test_TruncateZeroAllocWrite, file);
+        runner.runTest("Large write after truncate to zero", Test_LargeWriteAfterTruncateZero, file);
+        runner.runTest("Rapid open-close-reopen cycle", Test_RapidOpenCloseReopen, file);
+        runner.runTest("Multiple concurrent file handles", Test_MultipleConcurrentHandles, file);
+    } else {
+        printf("\n--- VS PROJECT-LIKE TESTS (skipped; include with -c vsproject) ---\n");
+    }
+
+    //=====================================================================
+    // VS Build Pattern Tests (based on actual failure analysis)
+    //=====================================================================
+    if (ShouldRunCategory(selectedCategories, "vsbuild")) {
+        printf("\n--- VS BUILD PATTERN TESTS ---\n");
+        runner.runTest("CREATE_ALWAYS then write (json pattern)", Test_CreateAlwaysThenWrite, file);
+        runner.runTest("TRUNCATE_EXISTING then write", Test_TruncateExistingThenWrite, file);
+        runner.runTest("Empty file partial block write", Test_EmptyFilePartialBlockWrite, file);
+        runner.runTest("Write/read from different handles", Test_WriteReadDifferentHandles, file);
+        runner.runTest("JSON file truncate/rewrite cycles", Test_JsonFileTruncateRewrite, file);
+        runner.runTest("Cache file pattern", Test_CacheFilePattern, file);
+        runner.runTest("Parallel write and read", Test_ParallelWriteRead, file);
+        runner.runTest("Create-write-close-reopen-read cycle", Test_CreateWriteCloseReopenRead, file);
+    } else {
+        printf("\n--- VS BUILD PATTERN TESTS (skipped; include with -c vsbuild) ---\n");
+    }
+
+    //=====================================================================
+    // ZIP/Archive Pattern Tests (based on ziparchive failure)
+    //=====================================================================
+    if (ShouldRunCategory(selectedCategories, "zip")) {
+        printf("\n--- ZIP/ARCHIVE PATTERN TESTS ---\n");
+        runner.runTest("ZIP-like read pattern (seek end, start)", Test_ZipLikeReadPattern, file);
+        runner.runTest("Simultaneous multi-offset read", Test_SimultaneousMultiOffsetRead, file);
+        runner.runTest("GetFileSize then read at offset 0", Test_GetFileSizeThenReadOffset0, file);
+        runner.runTest("Read after truncate and write", Test_ReadAfterTruncateAndWrite, file);
+        runner.runTest("Rapid seek-read cycles (overlay parsing)", Test_RapidSeekReadCycles, file);
+    } else {
+        printf("\n--- ZIP/ARCHIVE PATTERN TESTS (skipped; include with -c zip) ---\n");
+    }
+
+    //=====================================================================
+    // Android aapt2 Pattern Tests (large reads from middle of file)
+    //=====================================================================
+    if (ShouldRunCategory(selectedCategories, "aapt2")) {
+        printf("\n--- ANDROID AAPT2 PATTERN TESTS ---\n");
+        runner.runTest("Large read from middle of file", Test_LargeReadFromMiddle, file);
+        runner.runTest("Multi-block spanning read", Test_MultiBlockSpanningRead, file);
+    } else {
+        printf("\n--- ANDROID AAPT2 PATTERN TESTS (skipped; include with -c aapt2) ---\n");
+    }
+
+    //=====================================================================
+    // Advanced Tests
+    //=====================================================================
+    if (ShouldRunCategory(selectedCategories, "advanced")) {
+        printf("\n--- ADVANCED TESTS ---\n");
+        runner.runTest("Word-like save pattern", Test_WordLikeSavePattern, rootDir);
+        runner.runTest("Interleaved read-write with resize", Test_InterleavedReadWriteWithResize, file);
+        runner.runTest("Overwrite then truncate", Test_OverwriteThenTruncate, file);
+    } else {
+        printf("\n--- ADVANCED TESTS (skipped; include with -c advanced) ---\n");
+    }
+
+    //=====================================================================
+    // File Rename Pattern Tests (Adobe Reader regression)
+    //=====================================================================
+    if (ShouldRunCategory(selectedCategories, "rename")) {
+        printf("\n--- FILE RENAME PATTERN TESTS (Adobe Reader regression) ---\n");
+        runner.runTest("Adobe Reader-like save pattern", Test_AdobeReaderSavePattern, rootDir);
+        runner.runTest("Rapid rename to same target", Test_RapidRenameToSameTarget, rootDir);
+        runner.runTest("Rename chain cycle (A->B->C->A)", Test_RenameChainCycle, rootDir);
+        runner.runTest("Write-rename-read immediate", Test_WriteRenameReadImmediate, rootDir);
+        runner.runTest("Rapid rename cycle", Test_RapidRenameCycle, rootDir);
+        runner.runTest("Rename with concurrent access", Test_RenameWithConcurrentAccess, rootDir);
+    } else {
+        printf("\n--- FILE RENAME PATTERN TESTS (skipped; include with -c rename) ---\n");
+    }
+
+    //=====================================================================
+    // Large File Tests (potential overflow issues)
+    //=====================================================================
+    if (ShouldRunCategory(selectedCategories, "large")) {
+        printf("\n--- LARGE FILE TESTS (overflow prevention) ---\n");
+        runner.runTest("Large file offset (>2GB)", Test_LargeFileOffset, file);
+        runner.runTest("Block number overflow prevention", Test_BlockNumberOverflow, file);
+        runner.runTest("Return value overflow handling", Test_ReturnValueOverflow, file);
+        runner.runTest("Sparse file with large gaps", Test_SparseFileWithLargeGaps, file);
+        runner.runTest("Type consistency in file ops", Test_ReverseReadTypeConsistency, file);
+        runner.runTest("Random access to 5GB file", Test_RandomAccessLargeFile, file);
+        runner.runTest("Performance at high offsets", Test_PerformanceAtHighOffsets, file);
+    } else {
+        printf("\n--- LARGE FILE TESTS (skipped; include with -c large) ---\n");
+    }
+
+    //=====================================================================
+    // Windows-Specific Filesystem Tests
+    //=====================================================================
+    if (ShouldRunCategory(selectedCategories, "windows")) {
+        printf("\n--- WINDOWS FILESYSTEM TESTS (Alternate Data Streams) ---\n");
+        runner.runTest("Alternate Data Streams", Test_AlternateDataStreams, file);
+        runner.runTest("Multiple Alternate Streams", Test_MultipleAlternateStreams, file);
+        runner.runTest("Large Alternate Stream (1MB)", Test_LargeAlternateStream, file);
+        runner.runTest("ADS survives file rename", Test_ADSSurvivesRename, rootDir);
+
+        printf("\n--- WINDOWS FILESYSTEM TESTS (Links) ---\n");
+        runner.runTest("Symbolic link to file", Test_SymbolicLinkFile, rootDir);
+        runner.runTest("Symbolic link to directory", Test_SymbolicLinkDirectory, rootDir);
+        runner.runTest("Hard link", Test_HardLink, rootDir);
+        runner.runTest("Multiple hard links", Test_MultipleHardLinks, rootDir);
+
+        printf("\n--- WINDOWS FILESYSTEM TESTS (Memory-Mapped Files) ---\n");
+        runner.runTest("Memory-mapped file (read)", Test_MemoryMappedFileRead, file);
+        runner.runTest("Memory-mapped file (write)", Test_MemoryMappedFileWrite, file);
+
+        printf("\n--- WINDOWS FILESYSTEM TESTS (Notifications & Special Names) ---\n");
+        runner.runTest("File change notification", Test_FileChangeNotification, rootDir);
+        runner.runTest("Reserved filenames", Test_ReservedFilenames, rootDir);
+        runner.runTest("Trailing spaces and dots", Test_TrailingSpacesAndDots, rootDir);
+        runner.runTest("Long filenames (255 char)", Test_LongFilenames, rootDir);
+        runner.runTest("Unicode filenames", Test_UnicodeFilenames, rootDir);
+
+        printf("\n--- WINDOWS FILESYSTEM TESTS (Shortcuts) ---\n");
+        runner.runTest("Shortcut to file (.lnk)", Test_ShortcutFile, rootDir);
+        runner.runTest("Shortcut to directory (.lnk)", Test_ShortcutToDirectory, rootDir);
+        runner.runTest("Shortcut mmap read (.lnk)", Test_ShortcutMemoryMappedRead, rootDir);
+
+        printf("\n--- WINDOWS FILESYSTEM TESTS (Volume Information) ---\n");
+        runner.runTest("Volume information", Test_VolumeInformation, rootDir);
+        runner.runTest("Disk free space", Test_DiskFreeSpace, rootDir);
+    } else {
+        printf("\n--- WINDOWS FILESYSTEM TESTS (skipped; include with -c windows) ---\n");
+    }
+
+    //=====================================================================
+    // Performance Tests
+    //=====================================================================
+    if (ShouldRunCategory(selectedCategories, "performance")) {
+        printf("\n--- PERFORMANCE TESTS ---\n");
+        runner.runTest("Sequential write performance", Test_SequentialWritePerformance, file);
+        runner.runTest("Sequential read performance", Test_SequentialReadPerformance, file);
+        runner.runTest("Random access read performance", Test_RandomReadPerformance, file);
+        runner.runTest("Large single read performance", Test_LargeSingleReadPerformance, file);
+        runner.runTest("File resize performance", Test_FileResizePerformance, file);
+        runner.runTest("Memory allocation impact", Test_MemoryAllocationImpact, file);
+        runner.runTest("Concurrent I/O performance", Test_ConcurrentIOPerformance, file);
+    } else {
+        printf("\n--- PERFORMANCE TESTS (skipped; include with -c performance) ---\n");
+    }
+}
+
+//=============================================================================
 // Main Entry Point
 //=============================================================================
 int main(int argc, char* argv[])
 {
+    auto updateTestPaths = [](TestConfig& cfg)
+    {
+        cfg.testFile = cfg.testDir + L"TEST_FILE.txt";
+        cfg.nestedLower = cfg.testDir + L"path\\case\\test_file.txt";
+        cfg.nestedUpper = cfg.testDir + L"PATH\\CASE\\TEST_FILE.txt";
+    };
+
     // Parse command line arguments
     TestConfig config;
     if (!ParseCommandLine(argc, argv, config)) {
         PrintUsage(argv[0]);
         return -1;
     }
-    
+
     if (config.showHelp) {
         PrintUsage(argv[0]);
         return 0;
     }
 
-    // Auto-mount EncFS if not in raw filesystem mode
-    bool autoMounted = false;
-    if (!config.isRawFilesystem) {
-        // Override test directory to use the mounted EncFS
-        config.testDir = L"O:\\";
-        config.testFile = config.testDir + L"TEST_FILE.txt";
-        config.nestedLower = config.testDir + L"path\\case\\test_file.txt";
-        config.nestedUpper = config.testDir + L"PATH\\CASE\\TEST_FILE.txt";
+    updateTestPaths(config);
 
-        if (!MountEncFS()) {
-            printf("ERROR: Failed to mount EncFS. Aborting tests.\n");
+    // Raw filesystem path: run once
+    if (config.isRawFilesystem) {
+        const WCHAR* drive = config.testDir.c_str();
+        const WCHAR* rootDir = config.testDir.c_str();
+        const WCHAR* file = config.testFile.c_str();
+        const WCHAR* fileLowerNested = config.nestedLower.c_str();
+        const WCHAR* fileCaseVariant = config.nestedUpper.c_str();
+
+        printf("================================================================================\n");
+        printf("                        EncFSy File System Test Suite\n");
+        printf("================================================================================\n");
+        wprintf(L"Test Directory: %s\n", drive);
+        wprintf(L"Test File: %s\n", file);
+        printf("Mode: RAW FILESYSTEM (baseline verification)\n");
+        printf("Stop on failure: %s\n", config.stopOnFailure ? "YES" : "NO");
+        printf("================================================================================\n\n");
+
+        printf("*** RUNNING ON RAW FILESYSTEM FOR BASELINE VERIFICATION ***\n\n");
+
+        if (!PathExists(rootDir)) {
+            wprintf(L"ERROR: Test directory does not exist: %s\n", rootDir);
+            printf("Please create the directory or specify a different one with -d option.\n");
             return -1;
         }
-        autoMounted = true;
-    }
-    
-    const WCHAR* drive = config.testDir.c_str();
-    const WCHAR* rootDir = config.testDir.c_str();
-    const WCHAR* file = config.testFile.c_str();
-    const WCHAR* fileLowerNested = config.nestedLower.c_str();
-    const WCHAR* fileCaseVariant = config.nestedUpper.c_str();
 
-    printf("================================================================================\n");
-    printf("                        EncFSy File System Test Suite\n");
-    printf("================================================================================\n");
-    wprintf(L"Test Directory: %s\n", drive);
-    wprintf(L"Test File: %s\n", file);
-    printf("Mode: %s\n", config.isRawFilesystem ? "RAW FILESYSTEM (baseline verification)" : "EncFS");
-    printf("Stop on failure: %s\n", config.stopOnFailure ? "YES" : "NO");
-    printf("================================================================================\n");
-    
-    if (config.isRawFilesystem) {
-        printf("\n");
-        printf("*** RUNNING ON RAW FILESYSTEM FOR BASELINE VERIFICATION ***\n");
-        printf("*** All tests should pass on raw filesystem. If they fail here,\n");
-        printf("*** the test itself has a bug, not the EncFS implementation.\n");
-        printf("\n");
-    }
+        TestRunner runner(drive, rootDir, file, true, config.stopOnFailure);
+        RunAllTests(runner, true, drive, rootDir, file, fileLowerNested, fileCaseVariant, config.selectedCategories);
+        runner.printSummary();
 
-    // Verify test directory exists
-    if (!PathExists(rootDir)) {
-        wprintf(L"ERROR: Test directory does not exist: %s\n", rootDir);
-        printf("Please create the directory or specify a different one with -d option.\n");
-        if (autoMounted) UnmountEncFS();
-        return -1;
-    }
-
-    TestRunner runner(drive, rootDir, file, config.isRawFilesystem, config.stopOnFailure);
-
-    //=========================================================================
-    // Edge Case Tests (for previously fixed bugs)
-    //=========================================================================
-    printf("\n--- EDGE CASE TESTS (Bug Regression) ---\n");
-    
-    runner.runTest("Zero-length read request", Test_ZeroLengthRead, file);
-    runner.runTest("Zero-length write request", Test_ZeroLengthWrite, file);
-    runner.runTest("SetEndOfFile boundary block", Test_SetEndOfFileBoundaryBlock, file);
-    runner.runTest("File expansion partial block", Test_FileExpansionPartialBlock, file);
-    runner.runTest("Rapid truncate and write", Test_RapidTruncateWrite, file);
-    runner.runTest("Read at block boundaries", Test_ReadAtBlockBoundaries, file);
-    runner.runTest("Write at block boundaries", Test_WriteAtBlockBoundaries, file);
-    runner.runTest("Truncate zero immediate rewrite (ZIP pattern)", Test_TruncateZeroImmediateRewrite, file);
-    runner.runTest("Write/read with separate handles", Test_WriteReadSeparateHandles, file);
-    runner.runTest("Concurrent read while writing", Test_ConcurrentReadWhileWrite, file);
-    runner.runTest("Read beyond EOF", Test_ReadBeyondEOF, file);
-    runner.runTest("Empty file operations", Test_EmptyFileOperations, file);
-
-    //=========================================================================
-    // Thread Safety and Race Condition Tests
-    //=========================================================================
-    printf("\n--- THREAD SAFETY TESTS ---\n");
-    
-    runner.runTest("High concurrency file access", Test_HighConcurrencyAccess, file);
-    runner.runTest("File IV persistence across reopens", Test_FileIVPersistence, file);
-    runner.runTest("Rapid file operation cycle", Test_RapidFileOperationCycle, file);
-    runner.runTest("Write then immediate read at offset 0", Test_WriteImmediateReadOffset0, file);
-
-    //=========================================================================
-    // Multi-Handle Concurrent Access Tests (aapt2 block corruption regression)
-    //=========================================================================
-    printf("\n--- MULTI-HANDLE CONCURRENT ACCESS TESTS (aapt2 regression) ---\n");
-    
-    runner.runTest("Multi-handle concurrent write", Test_MultiHandleConcurrentWrite, file);
-    runner.runTest("Multi-handle write then read", Test_MultiHandleWriteThenRead, file);
-    runner.runTest("aapt2-like multi-file access", Test_Aapt2LikeMultiFileAccess, file);
-    runner.runTest("Concurrent multi-offset write", Test_ConcurrentMultiOffsetWrite, file);
-    runner.runTest("Stress multi-handle read/write", Test_StressMultiHandleReadWrite, file);
-
-    //=========================================================================
-    // Basic I/O Tests
-    //=========================================================================
-    printf("\n--- BASIC I/O TESTS ---\n");
-    
-    runner.runTest("Directory operations", Test_DirectoryOps, rootDir);
-    runner.runTest("Create and print final path", Test_CreateAndPrintPath, file);
-    runner.runTest("Case-insensitive open", Test_CaseInsensitiveOpen, fileLowerNested, fileCaseVariant);
-    runner.runTest("Buffered IO (seek, read, write)", Test_BufferedIO, file);
-    runner.runTest("Append-only write", Test_AppendWrite, file);
-    runner.runTest("No-buffering IO (sector aligned)", Test_NoBufferingIO, file, drive);
-    runner.runTest("File attributes and times", Test_FileAttributesAndTimes, file);
-    runner.runTest("Sharing and byte-range locks", Test_SharingAndLocks, file);
-    runner.runTest("Sparse file", Test_SparseFile, file);
-    runner.runTest("Block boundary IO (512)", Test_BlockBoundaryIO, file, (DWORD)512);
-    runner.runTest("Block boundary IO (4096)", Test_BlockBoundaryIO, file, (DWORD)4096);
-
-    //=========================================================================
-    // File Size Tests
-    //=========================================================================
-    printf("\n--- FILE SIZE TESTS ---\n");
-    
-    runner.runTest("Expand and shrink file size", Test_ExpandShrink, file);
-    runner.runTest("SetEndOfFile then write (cache test)", Test_SetEndOfFileThenWrite, file);
-    runner.runTest("Truncate then partial write", Test_TruncateThenPartialWrite, file);
-    runner.runTest("Expand then write beyond", Test_ExpandThenWriteBeyond, file);
-    runner.runTest("Multiple SetEndOfFile operations", Test_MultipleSetEndOfFile, file);
-    runner.runTest("Truncate at block boundary", Test_TruncateAtBlockBoundary, file);
-    runner.runTest("Truncate to zero then rewrite", Test_TruncateToZeroThenRewrite, file);
-    runner.runTest("Write immediately after SetEndOfFile", Test_WriteImmediatelyAfterSetEndOfFile, file);
-
-    //=========================================================================
-    // VS Project-like Tests (from debug log analysis)
-    //=========================================================================
-    printf("\n--- VS PROJECT-LIKE TESTS ---\n");
-    
-    runner.runTest("SetEndOfFile(0) + SetAllocationSize(0) + Write", Test_TruncateZeroAllocWrite, file);
-    runner.runTest("Large write after truncate to zero", Test_LargeWriteAfterTruncateZero, file);
-    runner.runTest("Rapid open-close-reopen cycle", Test_RapidOpenCloseReopen, file);
-    runner.runTest("Multiple concurrent file handles", Test_MultipleConcurrentHandles, file);
-
-    //=========================================================================
-    // VS Build Pattern Tests (based on actual failure analysis)
-    //=========================================================================
-    printf("\n--- VS BUILD PATTERN TESTS ---\n");
-    
-    runner.runTest("CREATE_ALWAYS then write (json pattern)", Test_CreateAlwaysThenWrite, file);
-    runner.runTest("TRUNCATE_EXISTING then write", Test_TruncateExistingThenWrite, file);
-    runner.runTest("Empty file partial block write", Test_EmptyFilePartialBlockWrite, file);
-    runner.runTest("Write/read from different handles", Test_WriteReadDifferentHandles, file);
-    runner.runTest("JSON file truncate/rewrite cycles", Test_JsonFileTruncateRewrite, file);
-    runner.runTest("Cache file pattern", Test_CacheFilePattern, file);
-    runner.runTest("Parallel write and read", Test_ParallelWriteRead, file);
-    runner.runTest("Create-write-close-reopen-read cycle", Test_CreateWriteCloseReopenRead, file);
-
-    //=========================================================================
-    // ZIP/Archive Pattern Tests (based on ziparchive failure)
-    //=========================================================================
-    printf("\n--- ZIP/ARCHIVE PATTERN TESTS ---\n");
-    
-    runner.runTest("ZIP-like read pattern (seek end, start)", Test_ZipLikeReadPattern, file);
-    runner.runTest("Simultaneous multi-offset read", Test_SimultaneousMultiOffsetRead, file);
-    runner.runTest("GetFileSize then read at offset 0", Test_GetFileSizeThenReadOffset0, file);
-    runner.runTest("Read after truncate and write", Test_ReadAfterTruncateAndWrite, file);
-    runner.runTest("Rapid seek-read cycles (overlay parsing)", Test_RapidSeekReadCycles, file);
-
-    //=========================================================================
-    // Android aapt2 Pattern Tests (large reads from middle of file)
-    //=========================================================================
-    printf("\n--- ANDROID AAPT2 PATTERN TESTS ---\n");
-    
-    runner.runTest("Large read from middle of file", Test_LargeReadFromMiddle, file);
-    runner.runTest("Multi-block spanning read", Test_MultiBlockSpanningRead, file);
-
-    //=========================================================================
-    // Advanced Tests
-    //=========================================================================
-    printf("\n--- ADVANCED TESTS ---\n");
-    
-    runner.runTest("Word-like save pattern", Test_WordLikeSavePattern, rootDir);
-    runner.runTest("Interleaved read-write with resize", Test_InterleavedReadWriteWithResize, file);
-    runner.runTest("Overwrite then truncate", Test_OverwriteThenTruncate, file);
-
-    //=========================================================================
-    // File Rename Pattern Tests (Adobe Reader regression)
-    //=========================================================================
-    printf("\n--- FILE RENAME PATTERN TESTS (Adobe Reader regression) ---\n");
-    
-    runner.runTest("Adobe Reader-like save pattern", Test_AdobeReaderSavePattern, rootDir);
-    runner.runTest("Rapid rename to same target", Test_RapidRenameToSameTarget, rootDir);
-    runner.runTest("Rename chain cycle (A->B->C->A)", Test_RenameChainCycle, rootDir);
-    runner.runTest("Write-rename-read immediate", Test_WriteRenameReadImmediate, rootDir);
-    runner.runTest("Rapid rename cycle", Test_RapidRenameCycle, rootDir);
-    runner.runTest("Rename with concurrent access", Test_RenameWithConcurrentAccess, rootDir);
-
-    //=========================================================================
-    // Large File Tests (potential overflow issues)
-    //=========================================================================
-    printf("\n--- LARGE FILE TESTS (overflow prevention) ---\n");
-    
-    runner.runTest("Large file offset (>2GB)", Test_LargeFileOffset, file);
-    runner.runTest("Block number overflow prevention", Test_BlockNumberOverflow, file);
-    runner.runTest("Return value overflow handling", Test_ReturnValueOverflow, file);
-    runner.runTest("Sparse file with large gaps", Test_SparseFileWithLargeGaps, file);
-    runner.runTest("Type consistency in file ops", Test_ReverseReadTypeConsistency, file);
-    runner.runTest("Random access to 5GB file", Test_RandomAccessLargeFile, file);
-    runner.runTest("Performance at high offsets", Test_PerformanceAtHighOffsets, file);
-
-    //=========================================================================
-    // Windows-Specific Filesystem Tests
-    //=========================================================================
-    printf("\n--- WINDOWS FILESYSTEM TESTS (Alternate Data Streams) ---\n");
-    
-    runner.runTest("Alternate Data Streams", Test_AlternateDataStreams, file);
-    runner.runTest("Multiple Alternate Streams", Test_MultipleAlternateStreams, file);
-    runner.runTest("Large Alternate Stream (1MB)", Test_LargeAlternateStream, file);
-    runner.runTest("ADS survives file rename", Test_ADSSurvivesRename, rootDir);
-
-    printf("\n--- WINDOWS FILESYSTEM TESTS (Links) ---\n");
-    
-    runner.runTest("Symbolic link to file", Test_SymbolicLinkFile, rootDir);
-    runner.runTest("Symbolic link to directory", Test_SymbolicLinkDirectory, rootDir);
-    runner.runTest("Hard link", Test_HardLink, rootDir);
-    runner.runTest("Multiple hard links", Test_MultipleHardLinks, rootDir);
-
-    printf("\n--- WINDOWS FILESYSTEM TESTS (Memory-Mapped Files) ---\n");
-    
-    runner.runTest("Memory-mapped file (read)", Test_MemoryMappedFileRead, file);
-    runner.runTest("Memory-mapped file (write)", Test_MemoryMappedFileWrite, file);
-
-    printf("\n--- WINDOWS FILESYSTEM TESTS (Notifications & Special Names) ---\n");
-    
-    runner.runTest("File change notification", Test_FileChangeNotification, rootDir);
-    runner.runTest("Reserved filenames", Test_ReservedFilenames, rootDir);
-    runner.runTest("Trailing spaces and dots", Test_TrailingSpacesAndDots, rootDir);
-    runner.runTest("Long filenames (255 char)", Test_LongFilenames, rootDir);
-    runner.runTest("Unicode filenames", Test_UnicodeFilenames, rootDir);
-
-    printf("\n--- WINDOWS FILESYSTEM TESTS (Shortcuts) ---\n");
-    
-    runner.runTest("Shortcut to file (.lnk)", Test_ShortcutFile, rootDir);
-    runner.runTest("Shortcut to directory (.lnk)", Test_ShortcutToDirectory, rootDir);
-    runner.runTest("Shortcut mmap read (.lnk)", Test_ShortcutMemoryMappedRead, rootDir);
-
-    printf("\n--- WINDOWS FILESYSTEM TESTS (Volume Information) ---\n");
-    
-    runner.runTest("Volume information", Test_VolumeInformation, rootDir);
-    runner.runTest("Disk free space", Test_DiskFreeSpace, rootDir);
-
-    //=========================================================================
-    // Performance Tests
-    //=========================================================================
-    printf("\n--- PERFORMANCE TESTS ---\n");
-    
-    runner.runTest("Sequential write performance", Test_SequentialWritePerformance, file);
-    runner.runTest("Sequential read performance", Test_SequentialReadPerformance, file);
-    runner.runTest("Random access read performance", Test_RandomReadPerformance, file);
-    runner.runTest("Large single read performance", Test_LargeSingleReadPerformance, file);
-    runner.runTest("File resize performance", Test_FileResizePerformance, file);
-    runner.runTest("Memory allocation impact", Test_MemoryAllocationImpact, file);
-    runner.runTest("Concurrent I/O performance", Test_ConcurrentIOPerformance, file);
-
-    //=========================================================================
-    // Summary
-    //=========================================================================
-    runner.printSummary();
-    
-    if (config.isRawFilesystem) {
         if (runner.allPassed()) {
             printf("================================================================================\n");
             printf("Raw filesystem baseline verification PASSED.\n");
@@ -652,12 +719,65 @@ int main(int argc, char* argv[])
             printf("Please fix the failing tests before testing EncFS.\n");
             printf("================================================================================\n");
         }
+
+        return runner.allPassed() ? 0 : -1;
     }
 
-    // Auto-unmount EncFS if we mounted it
-    if (autoMounted) {
+    // EncFS mode: run filename-related tests in both case-sensitive and case-insensitive mounts
+    struct TestPass {
+        bool caseInsensitive;
+        const char* label;
+    } passes[] = {
+        { false, "Case-sensitive mount (no --case-insensitive)" },
+        { true,  "Case-insensitive mount (--case-insensitive)" }
+    };
+
+    bool overallPass = true;
+
+    for (const auto& pass : passes) {
+        config.testDir = L"O:\\";
+        updateTestPaths(config);
+
+        const WCHAR* drive = config.testDir.c_str();
+        const WCHAR* rootDir = config.testDir.c_str();
+        const WCHAR* file = config.testFile.c_str();
+        const WCHAR* fileLowerNested = config.nestedLower.c_str();
+        const WCHAR* fileCaseVariant = config.nestedUpper.c_str();
+
+        printf("\n================================================================================\n");
+        printf("Running tests: %s\n", pass.label);
+        printf("================================================================================\n");
+
+        if (!MountEncFS(pass.caseInsensitive)) {
+            printf("ERROR: Failed to mount EncFS for pass: %s\n", pass.label);
+            overallPass = false;
+            continue;
+        }
+
+        if (!PathExists(rootDir)) {
+            wprintf(L"ERROR: Test directory does not exist after mount: %s\n", rootDir);
+            printf("Aborting this pass.\n");
+            UnmountEncFS();
+            overallPass = false;
+            continue;
+        }
+
+        TestRunner runner(drive, rootDir, file, false, config.stopOnFailure);
+
+        printf("Test Directory: %S\n", drive);
+        printf("Test File: %S\n", file);
+        printf("Stop on failure: %s\n", config.stopOnFailure ? "YES" : "NO");
+        printf("Case-insensitive option: %s\n\n", pass.caseInsensitive ? "ENABLED" : "DISABLED");
+
+        RunAllTests(runner, pass.caseInsensitive, drive, rootDir, file, fileLowerNested, fileCaseVariant, config.selectedCategories);
+        runner.printSummary();
+
+        if (!runner.allPassed()) {
+            overallPass = false;
+        }
+
         UnmountEncFS();
     }
 
-    return runner.allPassed() ? 0 : -1;
+    return overallPass ? 0 : -1;
 }
