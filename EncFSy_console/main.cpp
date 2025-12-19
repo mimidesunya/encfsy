@@ -117,6 +117,7 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
     efo.AltStream = FALSE;
     efo.CaseInsensitive = FALSE;
     efo.Reverse = FALSE;
+    efo.CloudConflict = FALSE;
     efo.Timeout = 120000;        // 2 minutes default timeout
 
     // Parse command-line arguments
@@ -268,6 +269,10 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
                 else if (wcscmp(argv[command], L"--case-insensitive") == 0) {
                     // Enable case-insensitive filename matching
                     efo.CaseInsensitive = TRUE;
+                }
+                else if (wcscmp(argv[command], L"--cloud-conflict") == 0) {
+                    // Enable cloud conflict file handling (Dropbox, Google Drive, OneDrive)
+                    efo.CloudConflict = TRUE;
                 }
                 else if (wcscmp(argv[command], L"--reverse") == 0) {
                     // Enable reverse encryption mode

@@ -17,6 +17,45 @@ encfsy هو تطبيق EncFS لنظام Windows يعمل بواسطة **Dokany**
 - في سيناريوهات المزامنة ثنائية الاتجاه (Dropbox/OneDrive/Google Drive وغيرها)، **لا تفعّل `--paranoia`**.
 - إذا اضطررت لاستخدامه، فاقصره على النسخ الاحتياطي أحادي الاتجاه حيث لا تتغير أسماء الملفات.
 
+## معالجة ملفات تعارض السحابة
+
+عند استخدام خدمات التخزين السحابي (Dropbox، Google Drive، OneDrive)، قد تنشئ تعارضات المزامنة ملفات بلاحقات خاصة لا يمكن فك تشفيرها بالطريقة العادية. خيار `--cloud-conflict` يمكّن اكتشاف ومعالجة ملفات التعارض هذه.
+
+**أنماط التعارض المدعومة:**
+- Dropbox: `اسم_الملف (نسخة متعارضة من الكمبيوتر 2024-01-01).ext`
+- Google Drive: `اسم_الملف_conf(1).ext`
+
+**الاستخدام:**
+```bash
+encfs.exe C:\Data M: --cloud-conflict
+```
+
+**ملاحظة:** هذا الخيار معطل افتراضياً لأن اكتشاف التعارض قد يكون له تأثير طفيف على الأداء ولا يُحتاج إليه إلا عند استخدام خدمات المزامنة السحابية.
+
+## فحص أسماء الملفات غير الصالحة
+
+خيار `--scan-invalid` يفحص الدليل المشفر ويبلغ عن أسماء الملفات التي لا يمكن فك تشفيرها. يتم إخراج النتائج بتنسيق JSON.
+
+**الاستخدام:**
+```bash
+encfs.exe C:\encrypted --scan-invalid
+encfs.exe C:\encrypted --scan-invalid --cloud-conflict  # فحص مع اكتشاف تعارض السحابة
+```
+
+**تنسيق إخراج JSON:**
+```json
+{
+  "invalidFiles": [
+    {
+      "fileName": "اسم_الملف_المشفر",
+      "encodedParentPath": "encDir1\\encDir2",
+      "decodedParentPath": "dir1\\dir2"
+    }
+  ],
+  "totalCount": 1
+}
+```
+
 ## ميزات الأمان
 يستخدم encfsy **مدير بيانات اعتماد Windows** لإدارة كلمات المرور بشكل آمن.
 
@@ -79,6 +118,8 @@ encfs.exe C:\Data M: --use-credential
                                                مع تحديد "Remember Password"
   --use-credential-once                        قراءة كلمة المرور من مدير بيانات الاعتماد
                                                (حذفها بعد القراءة، استخدام لمرة واحدة)
+  --scan-invalid                               فحص الدليل المشفر والإبلاغ عن أسماء الملفات
+                                               التي لا يمكن فك تشفيرها. الإخراج بتنسيق JSON
   --dokan-debug                                تمكين مخرجات تصحيح Dokan
   --dokan-network <UNC>                        مسار UNC لوحدة تخزين الشبكة (مثال: \\host\myfs)
   --dokan-removable                            عرض وحدة التخزين كوسائط قابلة للإزالة
@@ -96,11 +137,13 @@ encfs.exe C:\Data M: --use-credential
                                                في CreateFile. يتطلب صلاحيات المسؤول
   --allocation-unit-size <بايت>                حجم وحدة التخصيص التي تبلغ عنها وحدة التخزين
   --sector-size <بايت>                         حجم القطاع الذي تبلغ عنه وحدة التخزين
-  --volume-name <اسم>                          اسم وحدة التخزين المعروض في المست explorer (افتراضي: EncFS)
+  --volume-name <اسم>                          اسم وحدة التخزين المعروض في المستكشف (افتراضي: EncFS)
   --volume-serial <hex>                        الرقم التسلسلي لوحدة التخزين بالست عشري (افتراضي: من الأساس)
   --paranoia                                   تمكين تشفير AES-256 وإعادة تسمية IVs وتسلسل IV الخارجي
   --alt-stream                                 تمكين تدفقات البيانات البديلة NTFS
   --case-insensitive                           إجراء مطابقة أسماء الملفات بدون تمييز حالة الأحرف
+  --cloud-conflict                             تمكين معالجة ملفات تعارض السحابة
+                                               (Dropbox، Google Drive، OneDrive). معطل افتراضياً
   --reverse                                    الوضع العكسي: عرض rootDir النص العادي مشفراً
                                                في mountPoint
 
@@ -110,6 +153,8 @@ encfs.exe C:\Data M: --use-credential
   encfs.exe C:\Users M: --dokan-network \\myfs\share       # كمحرك شبكة مع UNC \\myfs\share
   encfs.exe C:\Data M: --volume-name "محرك آمن"            # تركيب باسم وحدة تخزين مخصص
   encfs.exe C:\Data M: --use-credential                    # استخدام كلمة المرور المحفوظة من المدير
+  encfs.exe C:\Data M: --cloud-conflict                    # التركيب مع دعم تعارض السحابة
+  encfs.exe C:\encrypted --scan-invalid                    # فحص أسماء الملفات غير الصالحة (إخراج JSON)
 
 لإلغاء التركيب، اضغط Ctrl+C في هذه الوحدة الطرفية أو نفذ:
   encfs.exe -u <mountPoint>

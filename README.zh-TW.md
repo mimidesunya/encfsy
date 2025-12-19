@@ -17,6 +17,45 @@ encfsy 是基於 **Dokany** 和 **Crypto++** 的 Windows 版 EncFS 實作。
 - 在 Dropbox/OneDrive/Google Drive 等雙向同步情境，請 **不要啟用 `--paranoia`**。
 - 若必須使用，請限定在檔名不會變更的單向備份用途。
 
+## 雲端衝突檔案處理
+
+使用雲端儲存服務（Dropbox、Google Drive、OneDrive）時，同步衝突可能會建立帶有特殊後綴的檔案，這些檔案無法正常解密。`--cloud-conflict` 選項可啟用這些衝突檔案的偵測和處理。
+
+**支援的衝突模式：**
+- Dropbox：`檔名 (電腦的衝突副本 2024-01-01).ext`
+- Google Drive：`檔名_conf(1).ext`
+
+**使用方法：**
+```bash
+encfs.exe C:\Data M: --cloud-conflict
+```
+
+**注意：** 此選項預設為停用，因為衝突偵測可能會對效能產生輕微影響，且僅在使用雲端同步服務時才需要。
+
+## 掃描無效檔名
+
+`--scan-invalid` 選項可掃描加密目錄並報告無法解密的檔名。結果以 JSON 格式輸出。
+
+**使用方法：**
+```bash
+encfs.exe C:\encrypted --scan-invalid
+encfs.exe C:\encrypted --scan-invalid --cloud-conflict  # 啟用雲端衝突偵測進行掃描
+```
+
+**JSON 輸出格式：**
+```json
+{
+  "invalidFiles": [
+    {
+      "fileName": "加密的檔名",
+      "encodedParentPath": "encDir1\\encDir2",
+      "decodedParentPath": "dir1\\dir2"
+    }
+  ],
+  "totalCount": 1
+}
+```
+
 ## 安全功能
 encfsy 使用 **Windows 認證管理員** 進行安全的密碼管理。
 
@@ -79,6 +118,8 @@ encfsy 使用現代的*長路徑* API，因此完整路徑不受傳統的 260 �
                                                儲存密碼
   --use-credential-once                        從 Windows 認證管理員讀取密碼
                                                （讀取後刪除，一次性使用）
+  --scan-invalid                               掃描加密目錄並報告無法解密的檔名
+                                               結果以 JSON 格式輸出
   --dokan-debug                                啟用 Dokan 除錯輸出
   --dokan-network <UNC>                        網路磁碟區的 UNC 路徑 (例: \\host\myfs)
   --dokan-removable                            將磁碟區顯示為卸除式媒體
@@ -100,6 +141,8 @@ encfsy 使用現代的*長路徑* API，因此完整路徑不受傳統的 260 �
   --paranoia                                   啟用 AES-256 加密、重新命名 IV 和外部 IV 鏈
   --alt-stream                                 啟用 NTFS 替代資料流
   --case-insensitive                           執行不區分大小寫的檔案名稱比對
+  --cloud-conflict                             啟用雲端衝突檔案處理
+                                               （Dropbox、Google Drive、OneDrive）。預設為停用
   --reverse                                    反向模式: 將明文 rootDir 加密顯示在 mountPoint
 
 範例:
@@ -108,6 +151,8 @@ encfsy 使用現代的*長路徑* API，因此完整路徑不受傳統的 260 �
   encfs.exe C:\Users M: --dokan-network \\myfs\share       # 以 UNC \\myfs\share 掛載為網路磁碟機
   encfs.exe C:\Data M: --volume-name "安全磁碟機"          # 使用自訂磁碟區名稱掛載
   encfs.exe C:\Data M: --use-credential                    # 使用認證管理員中儲存的密碼
+  encfs.exe C:\Data M: --cloud-conflict                    # 啟用雲端衝突支援進行掛載
+  encfs.exe C:\encrypted --scan-invalid                    # 掃描無效檔名（JSON 輸出）
 
 要卸載，請在此主控台按 Ctrl+C 或執行:
   encfs.exe -u <mountPoint>

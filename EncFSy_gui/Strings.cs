@@ -146,6 +146,7 @@ namespace EncFSy_gui
         public static string FileLockUserMode { get { return L("User-mode FileLock", "ユーザーモード FileLock", "사용자 모드 FileLock", "用户模式 FileLock", "使用者模式 FileLock", "FileLock в пользовательском режиме", "FileLock في وضع المستخدم", "FileLock (Benutzermodus)"); } }
         public static string EnableUnmountNetwork { get { return L("Explorer Unmount", "エクスプローラーでアンマウント", "탐색기에서 언마운트", "在资源管理器中卸载", "在檔案總管中卸載", "Размонтировать через проводник", "إلغاء التركيب عبر المستكشف", "Über Explorer aushängen"); } }
         public static string AllowIpcBatching { get { return L("IPC Batching", "IPC バッチング", "IPC 배칭", "IPC 批处理", "IPC 批次處理", "IPC пакетная обработка", "تجميع IPC", "IPC-Batching"); } }
+        public static string CloudConflict { get { return L("Cloud Conflict", "クラウドコンフリクト", "클라우드 충돌", "云冲突", "雲端衝突", "Облачный конфликт", "تعارض السحابة", "Cloud-Konflikt"); } }
 
         // Labels
         public static string Language { get { return L("Language:", "言語:", "언어:", "语言:", "語言:", "Язык:", "اللغة:", "Sprache:"); } }
@@ -174,5 +175,6 @@ namespace EncFSy_gui
         public static string TooltipMountManager { get { return L("Register with Windows Mount Manager (enables Recycle Bin)", "Windows Mount Manager に登録（ごみ箱を有効化）", "Windows Mount Manager에 등록 (휴지통 활성화)", "向 Windows Mount Manager 注册（启用回收站）", "向 Windows Mount Manager 註冊（啟用資源回收筒）", "Зарегистрировать в диспетчере (корзина)", "التسجيل مع مدير التركيب (سلة المحذوفات)", "Beim Mount-Manager registrieren (Papierkorb)"); } }
         public static string TooltipParanoia { get { return L("AES-256, renamed IVs, external IV chaining", "AES-256、リネーム IV、外部 IV チェーン", "AES-256, 이름 변경 IV, 외부 IV 체인", "AES-256、重命名 IV、外部 IV 链", "AES-256、重新命名 IV、外部 IV 鏈", "AES-256, переименование IV", "AES-256، إعادة تسمية IV، سلسلة IV", "AES-256, umbenannte IVs, ext. IV-Verkettung"); } }
         public static string TooltipLanguage { get { return L("Select display language", "表示言語を選択", "표시 언어 선택", "选择显示语言", "選擇顯示語言", "Выберите язык интерфейса", "اختر لغة العرض", "Anzeigesprache auswählen"); } }
+        public static string TooltipCloudConflict { get { return L("Enable cloud conflict file handling (Dropbox, Google Drive, OneDrive)", "クラウドコンフリクトファイル対応を有効化（Dropbox、Google Drive、OneDrive）", "클라우드 충돌 파일 처리 활성화 (Dropbox, Google Drive, OneDrive)", "启用云冲突文件处理（Dropbox、Google Drive、OneDrive）", "啟用雲端衝突檔案處理（Dropbox、Google Drive、OneDrive）", "Включить обработку конфликтных файлов облака (Dropbox, Google Drive, OneDrive)", "تمكين معالجة ملفات التعارض السحابية (Dropbox, Google Drive, OneDrive)", "Cloud-Konfliktdatei-Behandlung aktivieren (Dropbox, Google Drive, OneDrive)"); } }
     }
 }

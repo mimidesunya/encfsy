@@ -41,6 +41,45 @@ When `--paranoia` mode (external IV chaining) is enabled, any filename changes m
 - For bidirectional cloud sync (Dropbox/OneDrive/Google Drive, etc.), **do not use `--paranoia`**.
 - If you must use it, limit usage to one-way backup scenarios where filenames never change.
 
+## Cloud Conflict File Handling
+
+When using cloud storage services (Dropbox, Google Drive, OneDrive), sync conflicts may create files with special suffixes that cannot be decrypted normally. The `--cloud-conflict` option enables detection and handling of these conflict files.
+
+**Supported conflict patterns:**
+- Dropbox: `filename (Computer's conflicted copy 2024-01-01).ext`
+- Google Drive: `filename_conf(1).ext`
+
+**Usage:**
+```bash
+encfs.exe C:\Data M: --cloud-conflict
+```
+
+**Note:** This option is disabled by default because conflict detection may have a minor performance impact and is only needed when using cloud sync services.
+
+## Scanning for Invalid Filenames
+
+The `--scan-invalid` option scans the encrypted directory and reports any filenames that cannot be decrypted. Results are output in JSON format.
+
+**Usage:**
+```bash
+encfs.exe C:\encrypted --scan-invalid
+encfs.exe C:\encrypted --scan-invalid --cloud-conflict  # With cloud conflict detection
+```
+
+**JSON Output Format:**
+```json
+{
+  "invalidFiles": [
+    {
+      "fileName": "encodedFilename",
+      "encodedParentPath": "encDir1\\encDir2",
+      "decodedParentPath": "dir1\\dir2"
+    }
+  ],
+  "totalCount": 1
+}
+```
+
 ## Security Features
 encfsy uses **Windows Credential Manager** for secure password management.
 
@@ -107,6 +146,8 @@ Options:
                                                with "Remember Password" checked.
   --use-credential-once                        Read password from Windows Credential Manager
                                                and delete it after reading (one-time use).
+  --scan-invalid                               Scan encrypted directory for filenames that
+                                               cannot be decrypted. Output is in JSON format.
   --dokan-debug                                Enable Dokan debug output.
   --dokan-network <UNC>                        UNC path for a network volume (e.g., \\host\myfs).
   --dokan-removable                            Present the volume as removable media.
@@ -130,6 +171,8 @@ Options:
                                                IV chaining.
   --alt-stream                                 Enable NTFS alternate data streams.
   --case-insensitive                           Perform case-insensitive filename matching.
+  --cloud-conflict                             Enable cloud conflict file handling (Dropbox,
+                                               Google Drive, OneDrive). Disabled by default.
   --reverse                                    Reverse mode: show plaintext rootDir as encrypted
                                                at mountPoint.
 
@@ -139,6 +182,8 @@ Examples:
   encfs.exe C:\Users M: --dokan-network \\myfs\share       # Mount as network drive with UNC \\myfs\share
   encfs.exe C:\Data M: --volume-name "My Secure Drive"     # Mount with custom volume name
   encfs.exe C:\Data M: --use-credential                    # Use stored password from Credential Manager
+  encfs.exe C:\Data M: --cloud-conflict                    # Mount with cloud conflict file support
+  encfs.exe C:\encrypted --scan-invalid                    # Scan for invalid filenames (JSON output)
 
 To unmount, press Ctrl+C in this console or run:
   encfs.exe -u <mountPoint>

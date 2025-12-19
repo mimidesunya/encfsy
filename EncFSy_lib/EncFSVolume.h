@@ -45,6 +45,9 @@ namespace EncFS
 		/** Enable NTFS alternate data stream support */
 		bool altStream = false;
 
+		/** Enable cloud conflict file handling (Dropbox, Google Drive, OneDrive) */
+		bool cloudConflict = false;
+
 	private:
 		/** Reverse encryption mode flag */
 		bool reverse = false;

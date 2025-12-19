@@ -9,8 +9,8 @@
 //      - Encrypted Root Dir: F:\work\encfs
 //      - Mount Point: O:
 //      - Password: TEST
-//      - Options: --dokan-mount-manager --alt-stream (case-insensitive tested both off/on)
-// ./encfs.exe F:\work\encfs O: --dokan-mount-manager --alt-stream --case-insensitive
+//      - Options: --dokan-mount-manager --alt-stream -cloud-conflict (case-insensitive tested both off/on)
+// ./encfs.exe F:\work\encfs O: --dokan-mount-manager --alt-stream -cloud-conflict --case-insensitive
 //
 // =============================================================================
 // USAGE:

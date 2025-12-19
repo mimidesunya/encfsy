@@ -17,6 +17,45 @@ encfsy 是基于 **Dokany** 和 **Crypto++** 的 Windows 版 EncFS 实现。
 - 在 Dropbox/OneDrive/Google Drive 等双向同步场景中，请 **不要启用 `--paranoia`**。
 - 如必须使用，请将其限制在文件名不变化的单向备份场景。
 
+## 云冲突文件处理
+
+使用云存储服务（Dropbox、Google Drive、OneDrive）时，同步冲突可能会创建带有特殊后缀的文件，这些文件无法正常解密。`--cloud-conflict` 选项可启用这些冲突文件的检测和处理。
+
+**支持的冲突模式：**
+- Dropbox：`文件名 (电脑的冲突副本 2024-01-01).ext`
+- Google Drive：`文件名_conf(1).ext`
+
+**使用方法：**
+```bash
+encfs.exe C:\Data M: --cloud-conflict
+```
+
+**注意：** 此选项默认禁用，因为冲突检测可能会对性能产生轻微影响，且仅在使用云同步服务时才需要。
+
+## 扫描无效文件名
+
+`--scan-invalid` 选项可扫描加密目录并报告无法解密的文件名。结果以 JSON 格式输出。
+
+**使用方法：**
+```bash
+encfs.exe C:\encrypted --scan-invalid
+encfs.exe C:\encrypted --scan-invalid --cloud-conflict  # 启用云冲突检测进行扫描
+```
+
+**JSON 输出格式：**
+```json
+{
+  "invalidFiles": [
+    {
+      "fileName": "加密的文件名",
+      "encodedParentPath": "encDir1\\encDir2",
+      "decodedParentPath": "dir1\\dir2"
+    }
+  ],
+  "totalCount": 1
+}
+```
+
 ## 安全功能
 encfsy 使用 **Windows 凭据管理器** 进行安全的密码管理。
 
@@ -79,6 +118,8 @@ encfsy 使用现代的*长路径* API，因此完整路径不受传统的 260 �
                                                保存密码
   --use-credential-once                        从 Windows 凭据管理器读取密码
                                                （读取后删除，一次性使用）
+  --scan-invalid                               扫描加密目录并报告无法解密的文件名
+                                               结果以 JSON 格式输出
   --dokan-debug                                启用 Dokan 调试输出
   --dokan-network <UNC>                        网络卷的 UNC 路径 (例: \\host\myfs)
   --dokan-removable                            将卷显示为可移动媒体
@@ -100,6 +141,8 @@ encfsy 使用现代的*长路径* API，因此完整路径不受传统的 260 �
   --paranoia                                   启用 AES-256 加密、重命名 IV 和外部 IV 链
   --alt-stream                                 启用 NTFS 备用数据流
   --case-insensitive                           执行不区分大小写的文件名匹配
+  --cloud-conflict                             启用云冲突文件处理
+                                               （Dropbox、Google Drive、OneDrive）。默认禁用
   --reverse                                    反向模式: 将明文 rootDir 加密显示在 mountPoint
 
 示例:
@@ -108,6 +151,8 @@ encfsy 使用现代的*长路径* API，因此完整路径不受传统的 260 �
   encfs.exe C:\Users M: --dokan-network \\myfs\share       # 以 UNC \\myfs\share 挂载为网络驱动器
   encfs.exe C:\Data M: --volume-name "安全驱动器"          # 使用自定义卷名挂载
   encfs.exe C:\Data M: --use-credential                    # 使用凭据管理器中存储的密码
+  encfs.exe C:\Data M: --cloud-conflict                    # 启用云冲突支持进行挂载
+  encfs.exe C:\encrypted --scan-invalid                    # 扫描无效文件名（JSON 输出）
 
 要卸载，请在此控制台按 Ctrl+C 或运行:
   encfs.exe -u <mountPoint>

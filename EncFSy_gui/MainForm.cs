@@ -45,6 +45,7 @@ namespace EncFSy_gui
             public bool FileLockUserMode { get; set; } = false;
             public bool EnableUnmountNetwork { get; set; } = false;
             public bool AllowIpcBatching { get; set; } = false;
+            public bool CloudConflict { get; set; } = false;
 
             // Advanced settings
             public int Timeout { get; set; } = 120000;
@@ -69,6 +70,7 @@ namespace EncFSy_gui
                     FileLockUserMode ? "1" : "0",
                     EnableUnmountNetwork ? "1" : "0",
                     AllowIpcBatching ? "1" : "0",
+                    CloudConflict ? "1" : "0",
                     Timeout.ToString(),
                     VolumeName ?? string.Empty,
                     VolumeSerial ?? string.Empty,
@@ -97,10 +99,11 @@ namespace EncFSy_gui
                 options.FileLockUserMode = GetBool(parts, 8);
                 options.EnableUnmountNetwork = GetBool(parts, 9);
                 options.AllowIpcBatching = GetBool(parts, 10);
+                options.CloudConflict = GetBool(parts, 11);
 
-                bool hasLegacyDebugFlags = parts.Length >= 19 && IsBinaryFlag(parts, 11) && IsBinaryFlag(parts, 12);
-                int boolCountNew = 11;
-                int timeoutIndex = hasLegacyDebugFlags ? 13 : boolCountNew;
+                bool hasLegacyDebugFlags = parts.Length >= 20 && IsBinaryFlag(parts, 12) && IsBinaryFlag(parts, 13);
+                int boolCountNew = 12;
+                int timeoutIndex = hasLegacyDebugFlags ? 14 : boolCountNew;
                 int volumeNameIndex = timeoutIndex + 1;
                 int volumeSerialIndex = timeoutIndex + 2;
                 int networkIndex = timeoutIndex + 3;
@@ -232,6 +235,7 @@ namespace EncFSy_gui
             fileLockUserModeCheckBox.Text = Strings.FileLockUserMode;
             enableUnmountNetworkCheckBox.Text = Strings.EnableUnmountNetwork;
             allowIpcBatchingCheckBox.Text = Strings.AllowIpcBatching;
+            cloudConflictCheckBox.Text = Strings.CloudConflict;
 
             // Labels
             timeoutLabel.Text = Strings.Timeout;
@@ -253,6 +257,7 @@ namespace EncFSy_gui
             toolTip.SetToolTip(mountManagerCheckBox, Strings.TooltipMountManager);
             toolTip.SetToolTip(paranoiaCheckBox, Strings.TooltipParanoia);
             toolTip.SetToolTip(languageComboBox, Strings.TooltipLanguage);
+            toolTip.SetToolTip(cloudConflictCheckBox, Strings.TooltipCloudConflict);
         }
 
         /// <summary>
@@ -376,6 +381,7 @@ namespace EncFSy_gui
                 FileLockUserMode = fileLockUserModeCheckBox.Checked,
                 EnableUnmountNetwork = enableUnmountNetworkCheckBox.Checked,
                 AllowIpcBatching = allowIpcBatchingCheckBox.Checked,
+                CloudConflict = cloudConflictCheckBox.Checked,
 
                 // Advanced settings
                 Timeout = (int)timeoutNumeric.Value,
@@ -409,6 +415,7 @@ namespace EncFSy_gui
                 fileLockUserModeCheckBox.Checked = options.FileLockUserMode;
                 enableUnmountNetworkCheckBox.Checked = options.EnableUnmountNetwork;
                 allowIpcBatchingCheckBox.Checked = options.AllowIpcBatching;
+                cloudConflictCheckBox.Checked = options.CloudConflict;
 
                 // Advanced settings
                 timeoutNumeric.Value = Math.Max(timeoutNumeric.Minimum, Math.Min(timeoutNumeric.Maximum, options.Timeout));
@@ -693,6 +700,8 @@ namespace EncFSy_gui
                     args.Append(" --dokan-allow-ipc-batching");
                 if (reverseCheckBox.Checked)
                     args.Append(" --reverse");
+                if (cloudConflictCheckBox.Checked)
+                    args.Append(" --cloud-conflict");
                 if (timeoutNumeric.Value != 120000)
                     args.Append($" -i {(int)timeoutNumeric.Value}");
 

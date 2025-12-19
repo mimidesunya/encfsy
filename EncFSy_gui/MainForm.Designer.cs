@@ -78,6 +78,7 @@ namespace EncFSy_gui
             this.enableUnmountNetworkCheckBox = new System.Windows.Forms.CheckBox();
             this.allowIpcBatchingCheckBox = new System.Windows.Forms.CheckBox();
             this.reverseCheckBox = new System.Windows.Forms.CheckBox();
+            this.cloudConflictCheckBox = new System.Windows.Forms.CheckBox();
             
             // Advanced settings group
             this.advancedSettingsGroup = new System.Windows.Forms.GroupBox();
@@ -407,9 +408,10 @@ namespace EncFSy_gui
             this.advancedOptionsGroup.Controls.Add(this.enableUnmountNetworkCheckBox);
             this.advancedOptionsGroup.Controls.Add(this.allowIpcBatchingCheckBox);
             this.advancedOptionsGroup.Controls.Add(this.reverseCheckBox);
+            this.advancedOptionsGroup.Controls.Add(this.cloudConflictCheckBox);
             this.advancedOptionsGroup.Margin = new System.Windows.Forms.Padding(5);
             this.advancedOptionsGroup.Name = "advancedOptionsGroup";
-            this.advancedOptionsGroup.Size = new System.Drawing.Size(440, 70);
+            this.advancedOptionsGroup.Size = new System.Drawing.Size(440, 95);
             this.advancedOptionsGroup.TabIndex = 6;
             this.advancedOptionsGroup.TabStop = false;
             this.advancedOptionsGroup.Text = "Advanced Options";
@@ -505,6 +507,19 @@ namespace EncFSy_gui
             this.reverseCheckBox.UseVisualStyleBackColor = true;
             this.reverseCheckBox.CheckedChanged += new System.EventHandler(this.anyOption_Changed);
             this.toolTip.SetToolTip(this.reverseCheckBox, "Reverse mode: show plaintext as encrypted");
+            
+            // 
+            // cloudConflictCheckBox
+            // 
+            this.cloudConflictCheckBox.AutoSize = true;
+            this.cloudConflictCheckBox.Location = new System.Drawing.Point(10, 70);
+            this.cloudConflictCheckBox.Name = "cloudConflictCheckBox";
+            this.cloudConflictCheckBox.Size = new System.Drawing.Size(91, 17);
+            this.cloudConflictCheckBox.TabIndex = 7;
+            this.cloudConflictCheckBox.Text = "Cloud Conflict";
+            this.cloudConflictCheckBox.UseVisualStyleBackColor = true;
+            this.cloudConflictCheckBox.CheckedChanged += new System.EventHandler(this.anyOption_Changed);
+            this.toolTip.SetToolTip(this.cloudConflictCheckBox, "Enable cloud conflict detection and handling");
             
             // 
             // advancedSettingsGroup
@@ -789,6 +804,7 @@ namespace EncFSy_gui
         private System.Windows.Forms.CheckBox enableUnmountNetworkCheckBox;
         private System.Windows.Forms.CheckBox allowIpcBatchingCheckBox;
         private System.Windows.Forms.CheckBox reverseCheckBox;
+        private System.Windows.Forms.CheckBox cloudConflictCheckBox;
         
         // Advanced settings
         private System.Windows.Forms.Label timeoutLabel;

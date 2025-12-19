@@ -61,7 +61,7 @@ namespace EncFS {
     /**
      * @brief Constructor - initializes Base64 decoder lookup table and members
      */
-    EncFSVolume::EncFSVolume() : altStream(false), reverse(false), keySize(0), blockSize(0), uniqueIV(false),
+    EncFSVolume::EncFSVolume() : altStream(false), cloudConflict(false), reverse(false), keySize(0), blockSize(0), uniqueIV(false),
                                  chainedNameIV(false), externalIVChaining(false), blockMACBytes(0),
                                  blockMACRandBytes(0), allowHoles(false), encodedKeySize(0), saltLen(0),
                                  kdfIterations(0), desiredKDFDuration(0)
@@ -565,8 +565,8 @@ namespace EncFS {
             return;
         }
 
-        // Try cloud conflict suffix detection (only when chainedNameIV is disabled)
-        if (!this->chainedNameIV) {
+        // Try cloud conflict suffix detection (only when cloudConflict is enabled and chainedNameIV is disabled)
+        if (this->cloudConflict && !this->chainedNameIV) {
             // Try to extract cloud conflict suffix from the encoded filename
             // Supports: Dropbox, Google Drive, OneDrive patterns
             ConflictSuffixResult conflict = tryExtractCloudConflictSuffix(encodedFileName);
@@ -596,7 +596,7 @@ namespace EncFS {
      * Processes each path component separately while maintaining hierarchy.
      * Handles alternate data streams if enabled.
      * 
-     * For conflict suffix handling (encode only, when fileExists is provided):
+     * For conflict suffix handling (encode only, when cloudConflict is enabled and fileExists is provided):
      * If the leaf filename has a conflict suffix (e.g., "file (conflict).txt"),
      * first try normal encoding. If the resulting encoded file doesn't exist,
      * encode the core filename and append the conflict suffix to the encoded result.
@@ -647,8 +647,8 @@ namespace EncFS {
                     this->encodeFileName(srcName, dirPath, encodedPart);
                     
                     // Conflict suffix handling for leaf filename only
-                    // Only applies when fileExists callback is provided and chainedNameIV is disabled
-                    if (isLeaf && fileExists != nullptr && !this->chainedNameIV) {
+                    // Only applies when cloudConflict is enabled, fileExists callback is provided, and chainedNameIV is disabled
+                    if (isLeaf && this->cloudConflict && fileExists != nullptr && !this->chainedNameIV) {
                         // Try to extract cloud conflict suffix from the plain filename
                         ConflictSuffixResult conflict = tryExtractCloudConflictSuffix(srcName);
                         

@@ -15,6 +15,45 @@ encfsy は **Dokany** と **Crypto++** をバックエンドに採用した Wind
 - Dropbox/OneDrive/Google Drive などの双方向同期では **`--paranoia` を無効**にしてください。
 - どうしても使う場合は、ファイル名が変わらない片方向バックアップ運用に限定してください。
 
+## クラウドコンフリクトファイルの対応
+
+クラウドストレージ（Dropbox、Google Drive、OneDrive）を使用する際、同期コンフリクトにより特殊なサフィックスが付いたファイルが作成されることがあります。これらのファイルは通常の方法では復号できません。`--cloud-conflict` オプションを有効にすると、これらのコンフリクトファイルを検出・処理できます。
+
+**対応しているコンフリクトパターン:**
+- Dropbox: `ファイル名 (コンピュータ名の競合コピー 2024-01-01).ext`
+- Google Drive: `ファイル名_conf(1).ext`
+
+**使い方:**
+```bash
+encfs.exe C:\Data M: --cloud-conflict
+```
+
+**注意:** このオプションはデフォルトで無効です。コンフリクト検出は若干のパフォーマンス影響があり、クラウド同期サービスを使用する場合にのみ必要なためです。
+
+## 無効なファイル名のスキャン
+
+`--scan-invalid` オプションで暗号化ディレクトリをスキャンし、復号できないファイル名をレポートします。結果は JSON 形式で出力されます。
+
+**使い方:**
+```bash
+encfs.exe C:\encrypted --scan-invalid
+encfs.exe C:\encrypted --scan-invalid --cloud-conflict  # クラウドコンフリクト検出を有効にしてスキャン
+```
+
+**JSON 出力形式:**
+```json
+{
+  "invalidFiles": [
+    {
+      "fileName": "暗号化されたファイル名",
+      "encodedParentPath": "encDir1\\encDir2",
+      "decodedParentPath": "dir1\\dir2"
+    }
+  ],
+  "totalCount": 1
+}
+```
+
 ## セキュリティ機能
 encfsy は **Windows Credential Manager** を使用してパスワードを安全に管理します。
 
@@ -75,6 +114,8 @@ Usage: encfs.exe [options] <rootDir> <mountPoint>
                                                パスワードを保存しておく必要があります
   --use-credential-once                        Windows Credential Manager からパスワードを取得
                                                （読み取り後に削除、一回限りの使用）
+  --scan-invalid                               暗号化ディレクトリをスキャンし、復号できない
+                                               ファイル名をレポート。結果は JSON 形式で出力
   --dokan-debug                                Dokan のデバッグ出力を有効化
   --dokan-network <UNC>                        ネットワークボリュームの UNC パス (例: \\host\myfs)
   --dokan-removable                            リムーバブルメディアとしてマウント
@@ -93,6 +134,8 @@ Usage: encfs.exe [options] <rootDir> <mountPoint>
   --paranoia                                   AES-256、リネーム IV、外部 IV チェーンを有効化
   --alt-stream                                 NTFS 代替データストリームを有効化
   --case-insensitive                           大文字小文字を区別しない名前照合
+  --cloud-conflict                             クラウドコンフリクトファイル対応を有効化
+                                               （Dropbox、Google Drive、OneDrive）。既定では無効
   --reverse                                    逆モード: 平文の rootDir を暗号化して mountPoint に表示
 
 例:
@@ -101,6 +144,8 @@ Usage: encfs.exe [options] <rootDir> <mountPoint>
   encfs.exe C:\Users M: --dokan-network \\myfs\share      # UNC \\myfs\share でネットワークドライブ
   encfs.exe C:\Data M: --volume-name "セキュアドライブ"   # カスタムボリューム名でマウント
   encfs.exe C:\Data M: --use-credential                   # Credential Manager から保存済みパスワードを使用
+  encfs.exe C:\Data M: --cloud-conflict                   # クラウドコンフリクト対応でマウント
+  encfs.exe C:\encrypted --scan-invalid                   # 無効なファイル名をスキャン（JSON出力）
 
 アンマウントするには Ctrl+C（このコンソール）または:
   encfs.exe -u <mountPoint>

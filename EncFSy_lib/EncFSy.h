@@ -31,6 +31,7 @@ struct EncFSOptions {
 	BOOLEAN AltStream;
 	BOOLEAN CaseInsensitive;
 	BOOLEAN Reverse;
+	BOOLEAN CloudConflict;        // Enable cloud conflict file handling (disabled by default)
 	PWCHAR ConfigFile;
 };
 

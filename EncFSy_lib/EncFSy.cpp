@@ -176,6 +176,7 @@ int StartEncFS(EncFSOptions& efo, char* password) {
     DOKAN_OPTIONS dokanOptions{};
 
     encfs.altStream = efo.AltStream;
+    encfs.cloudConflict = efo.CloudConflict;
     string configFile;
     wstring_convert<codecvt_utf8_utf16<wchar_t>> strConv;
 

@@ -17,6 +17,45 @@ encfsy는 **Dokany**와 **Crypto++**를 백엔드로 사용하는 Windows용 Enc
 - Dropbox/OneDrive/Google Drive 등 양방향 동기화에서는 **`--paranoia`를 끄십시오**.
 - 꼭 써야 한다면 파일 이름이 변하지 않는 단방향 백업 용도로만 사용하세요.
 
+## 클라우드 충돌 파일 처리
+
+클라우드 저장소(Dropbox, Google Drive, OneDrive)를 사용할 때, 동기화 충돌로 인해 특수 접미사가 붙은 파일이 생성될 수 있으며, 이러한 파일은 일반적인 방법으로 복호화할 수 없습니다. `--cloud-conflict` 옵션을 사용하면 이러한 충돌 파일을 감지하고 처리할 수 있습니다.
+
+**지원되는 충돌 패턴:**
+- Dropbox: `파일명 (컴퓨터의 충돌 복사본 2024-01-01).ext`
+- Google Drive: `파일명_conf(1).ext`
+
+**사용법:**
+```bash
+encfs.exe C:\Data M: --cloud-conflict
+```
+
+**참고:** 이 옵션은 기본적으로 비활성화되어 있습니다. 충돌 감지가 약간의 성능 영향을 미칠 수 있으며, 클라우드 동기화 서비스를 사용할 때만 필요하기 때문입니다.
+
+## 잘못된 파일 이름 스캔
+
+`--scan-invalid` 옵션은 암호화된 디렉토리를 스캔하고 복호화할 수 없는 파일 이름을 보고합니다. 결과는 JSON 형식으로 출력됩니다.
+
+**사용법:**
+```bash
+encfs.exe C:\encrypted --scan-invalid
+encfs.exe C:\encrypted --scan-invalid --cloud-conflict  # 클라우드 충돌 감지를 활성화하여 스캔
+```
+
+**JSON 출력 형식:**
+```json
+{
+  "invalidFiles": [
+    {
+      "fileName": "암호화된파일명",
+      "encodedParentPath": "encDir1\\encDir2",
+      "decodedParentPath": "dir1\\dir2"
+    }
+  ],
+  "totalCount": 1
+}
+```
+
 ## 보안 기능
 encfsy는 안전한 비밀번호 관리를 위해 **Windows Credential Manager**를 사용합니다.
 
@@ -80,6 +119,8 @@ Usage: encfs.exe [options] <rootDir> <mountPoint>
                                                먼저 비밀번호를 저장해야 합니다
   --use-credential-once                        Windows Credential Manager에서 비밀번호를 읽고
                                                읽은 후 삭제 (일회용)
+  --scan-invalid                               암호화 디렉토리를 스캔하고 복호화할 수 없는
+                                               파일 이름을 보고. 결과는 JSON 형식으로 출력
   --dokan-debug                                Dokan 디버그 출력 활성화
   --dokan-network <UNC>                        네트워크 볼륨의 UNC 경로 (예: \\host\myfs)
   --dokan-removable                            이동식 미디어로 볼륨 표시
@@ -102,6 +143,8 @@ Usage: encfs.exe [options] <rootDir> <mountPoint>
   --paranoia                                   AES-256 암호화, 이름 변경 IV 및 외부 IV 체이닝 활성화
   --alt-stream                                 NTFS 대체 데이터 스트림 활성화
   --case-insensitive                           대소문자를 구분하지 않는 파일 이름 매칭 수행
+  --cloud-conflict                             클라우드 충돌 파일 처리 활성화
+                                               (Dropbox, Google Drive, OneDrive). 기본값 비활성화
   --reverse                                    역방향 모드: 평문 rootDir을 mountPoint에
                                                암호화하여 표시
 
@@ -111,6 +154,8 @@ Usage: encfs.exe [options] <rootDir> <mountPoint>
   encfs.exe C:\Users M: --dokan-network \\myfs\share       # UNC \\myfs\share로 네트워크 드라이브 마운트
   encfs.exe C:\Data M: --volume-name "보안 드라이브"        # 사용자 정의 볼륨 이름으로 마운트
   encfs.exe C:\Data M: --use-credential                    # Credential Manager에서 저장된 비밀번호 사용
+  encfs.exe C:\Data M: --cloud-conflict                    # 클라우드 충돌 지원으로 마운트
+  encfs.exe C:\encrypted --scan-invalid                    # 잘못된 파일 이름 스캔 (JSON 출력)
 
 언마운트하려면 이 콘솔에서 Ctrl+C를 누르거나 다음을 실행하세요:
   encfs.exe -u <mountPoint>

@@ -17,6 +17,45 @@ Im Modus `--paranoia` (externe IV-Verkettung) führen Umbenennungen durch Sync-T
 - Für bidirektionale Syncs (Dropbox/OneDrive/Google Drive usw.) **`--paranoia` deaktivieren**.
 - Wenn unbedingt nötig, nur für einseitige Backups einsetzen, bei denen sich Dateinamen nie ändern.
 
+## Cloud-Konfliktdatei-Behandlung
+
+Bei der Verwendung von Cloud-Speicherdiensten (Dropbox, Google Drive, OneDrive) können Synchronisierungskonflikte Dateien mit speziellen Suffixen erstellen, die nicht normal entschlüsselt werden können. Die Option `--cloud-conflict` aktiviert die Erkennung und Behandlung dieser Konfliktdateien.
+
+**Unterstützte Konfliktmuster:**
+- Dropbox: `Dateiname (Konflikt-Kopie von Computer 2024-01-01).ext`
+- Google Drive: `Dateiname_conf(1).ext`
+
+**Verwendung:**
+```bash
+encfs.exe C:\Data M: --cloud-conflict
+```
+
+**Hinweis:** Diese Option ist standardmäßig deaktiviert, da die Konflikterkennung einen geringen Leistungseinfluss haben kann und nur bei Verwendung von Cloud-Sync-Diensten benötigt wird.
+
+## Ungültige Dateinamen scannen
+
+Die Option `--scan-invalid` durchsucht das verschlüsselte Verzeichnis und meldet Dateinamen, die nicht entschlüsselt werden können. Die Ergebnisse werden im JSON-Format ausgegeben.
+
+**Verwendung:**
+```bash
+encfs.exe C:\encrypted --scan-invalid
+encfs.exe C:\encrypted --scan-invalid --cloud-conflict  # Mit Cloud-Konflikterkennung scannen
+```
+
+**JSON-Ausgabeformat:**
+```json
+{
+  "invalidFiles": [
+    {
+      "fileName": "verschlüsselterDateiname",
+      "encodedParentPath": "encDir1\\encDir2",
+      "decodedParentPath": "dir1\\dir2"
+    }
+  ],
+  "totalCount": 1
+}
+```
+
 ## Sicherheitsfunktionen
 encfsy verwendet die **Windows-Anmeldeinformationsverwaltung** für sichere Passwortverwaltung.
 
@@ -80,6 +119,8 @@ Optionen:
                                                Option „Remember Password" gespeichert werden
   --use-credential-once                        Passwort aus Windows-Anmeldeinformationsverwaltung lesen
                                                (nach dem Lesen löschen, einmalige Verwendung)
+  --scan-invalid                               Verschlüsseltes Verzeichnis scannen und ungültige
+                                               Dateinamen melden. Ausgabe im JSON-Format
   --dokan-debug                                Dokan-Debug-Ausgabe aktivieren
   --dokan-network <UNC>                        UNC-Pfad für Netzwerk-Volume (z.B. \\host\myfs)
   --dokan-removable                            Volume als Wechselmedium anzeigen
@@ -103,6 +144,8 @@ Optionen:
                                                externe IV-Verkettung aktivieren
   --alt-stream                                 NTFS-alternative Datenströme aktivieren
   --case-insensitive                           Dateinamenabgleich ohne Groß-/Kleinschreibung durchführen
+  --cloud-conflict                             Cloud-Konfliktdatei-Behandlung aktivieren
+                                               (Dropbox, Google Drive, OneDrive). Standard: deaktiviert
   --reverse                                    Umkehrmodus: Klartext-rootDir verschlüsselt
                                                am mountPoint anzeigen
 
@@ -112,6 +155,8 @@ Beispiele:
   encfs.exe C:\Users M: --dokan-network \\myfs\share       # Als Netzlaufwerk mit UNC \\myfs\share
   encfs.exe C:\Data M: --volume-name "Sicheres Laufwerk"   # Mit benutzerdefiniertem Volume-Namen
   encfs.exe C:\Data M: --use-credential                    # Gespeichertes Passwort aus der Verwaltung verwenden
+  encfs.exe C:\Data M: --cloud-conflict                    # Mit Cloud-Konflikt-Unterstützung einhängen
+  encfs.exe C:\encrypted --scan-invalid                    # Ungültige Dateinamen scannen (JSON-Ausgabe)
 
 Zum Aushängen drücken Sie Ctrl+C in dieser Konsole oder führen Sie aus:
   encfs.exe -u <mountPoint>

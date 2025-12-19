@@ -5,6 +5,7 @@
 #include <codecvt>
 #include <fstream>
 #include <vector>
+#include <sstream>
 
 // Helper: convert UTF-16 to UTF-8 (returns false on failure)
 static bool WideToUtf8(const std::wstring& wstr, std::string& utf8) {
@@ -15,9 +16,43 @@ static bool WideToUtf8(const std::wstring& wstr, std::string& utf8) {
     return WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, &utf8[0], sizeNeeded, NULL, NULL) > 0;
 }
 
+// Helper: escape JSON string
+static std::string EscapeJson(const std::string& s) {
+    std::ostringstream oss;
+    for (char c : s) {
+        switch (c) {
+            case '"':  oss << "\\\""; break;
+            case '\\': oss << "\\\\"; break;
+            case '\b': oss << "\\b"; break;
+            case '\f': oss << "\\f"; break;
+            case '\n': oss << "\\n"; break;
+            case '\r': oss << "\\r"; break;
+            case '\t': oss << "\\t"; break;
+            default:
+                if (static_cast<unsigned char>(c) < 0x20) {
+                    char buf[8];
+                    sprintf_s(buf, "\\u%04x", static_cast<unsigned char>(c));
+                    oss << buf;
+                } else {
+                    oss << c;
+                }
+                break;
+        }
+    }
+    return oss.str();
+}
+
+// Structure to hold invalid file information
+struct InvalidFileInfo {
+    std::string fileName;           // Encoded filename (that failed to decode)
+    std::string encodedParentPath;  // Encoded parent directory path (relative to root)
+    std::string decodedParentPath;  // Decoded parent directory path
+};
+
 // Load EncFS config (without mounting) and unlock volume
 static bool LoadVolumeConfig(const EncFSOptions& efo, char* password) {
     encfs.altStream = efo.AltStream;
+    encfs.cloudConflict = efo.CloudConflict;
     std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> strConv;
     const std::wstring wRootDir(efo.RootDirectory);
     std::string cRootDir = strConv.to_bytes(wRootDir);
@@ -47,18 +82,13 @@ static bool LoadVolumeConfig(const EncFSOptions& efo, char* password) {
     return false;
 }
 
-static void ReportInvalid(const std::wstring& physicalPath, const std::string& plainDirPath, std::vector<std::wstring>& invalidPaths) {
-    invalidPaths.push_back(physicalPath);
-
-    std::string utf8Path;
-    bool converted = WideToUtf8(physicalPath, utf8Path);
-    printf("Invalid filename (decryption failed): %s\n", converted ? utf8Path.c_str() : "<failed to convert path>");
-    printf("  parent (decoded): %s\n", plainDirPath.empty() ? "<root>" : plainDirPath.c_str());
-    fflush(stdout);
-}
-
 // Recursive scan for filenames that cannot be decrypted
-static void ScanInvalidNames(const std::wstring& physicalDir, const std::string& plainDirPath, std::vector<std::wstring>& invalidPaths) {
+static void ScanInvalidNames(
+    const std::wstring& physicalDir,
+    const std::string& encodedDirPath,  // Relative encoded path from root (e.g., "encDir1\\encDir2")
+    const std::string& plainDirPath,    // Decoded path (e.g., "dir1\\dir2")
+    std::vector<InvalidFileInfo>& invalidFiles
+) {
     WIN32_FIND_DATAW findData;
     std::wstring search = physicalDir;
     if (!search.empty() && search.back() != L'\\') {
@@ -75,6 +105,11 @@ static void ScanInvalidNames(const std::wstring& physicalDir, const std::string&
             continue;
         }
 
+        // Skip .encfs6.xml config file
+        if (_wcsicmp(findData.cFileName, L".encfs6.xml") == 0) {
+            continue;
+        }
+
         std::wstring encNameW(findData.cFileName);
         std::string encNameUtf8;
         std::wstring physicalPath = physicalDir;
@@ -84,7 +119,11 @@ static void ScanInvalidNames(const std::wstring& physicalDir, const std::string&
         physicalPath += encNameW;
 
         if (!WideToUtf8(encNameW, encNameUtf8)) {
-            ReportInvalid(physicalPath, plainDirPath, invalidPaths);
+            InvalidFileInfo info;
+            info.fileName = "<UTF-8 conversion failed>";
+            info.encodedParentPath = encodedDirPath;
+            info.decodedParentPath = plainDirPath;
+            invalidFiles.push_back(info);
             continue;
         }
 
@@ -93,34 +132,71 @@ static void ScanInvalidNames(const std::wstring& physicalDir, const std::string&
             encfs.decodeFileName(encNameUtf8, plainDirPath, plainName);
         }
         catch (...) {
-            ReportInvalid(physicalPath, plainDirPath, invalidPaths);
+            InvalidFileInfo info;
+            info.fileName = encNameUtf8;
+            info.encodedParentPath = encodedDirPath;
+            info.decodedParentPath = plainDirPath;
+            invalidFiles.push_back(info);
             continue;
         }
 
         bool isDir = (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
         if (isDir) {
             std::wstring childPhysical = physicalPath;
+            
+            // Build encoded path
+            std::string childEncodedPath = encodedDirPath;
+            if (!childEncodedPath.empty()) {
+                childEncodedPath += "\\";
+            }
+            childEncodedPath += encNameUtf8;
+            
+            // Build decoded path
             std::string childPlainPath = plainDirPath;
-            if (!childPlainPath.empty()) childPlainPath += "\\";
+            if (!childPlainPath.empty()) {
+                childPlainPath += "\\";
+            }
             childPlainPath += plainName;
-            ScanInvalidNames(childPhysical, childPlainPath, invalidPaths);
+            
+            ScanInvalidNames(childPhysical, childEncodedPath, childPlainPath, invalidFiles);
         }
     } while (FindNextFileW(hFind, &findData));
     FindClose(hFind);
 }
 
+// Output results as JSON
+static void OutputJson(const std::vector<InvalidFileInfo>& invalidFiles) {
+    printf("{\n");
+    printf("  \"invalidFiles\": [\n");
+    
+    for (size_t i = 0; i < invalidFiles.size(); ++i) {
+        const auto& info = invalidFiles[i];
+        printf("    {\n");
+        printf("      \"fileName\": \"%s\",\n", EscapeJson(info.fileName).c_str());
+        printf("      \"encodedParentPath\": \"%s\",\n", EscapeJson(info.encodedParentPath).c_str());
+        printf("      \"decodedParentPath\": \"%s\"\n", EscapeJson(info.decodedParentPath).c_str());
+        printf("    }%s\n", (i < invalidFiles.size() - 1) ? "," : "");
+    }
+    
+    printf("  ],\n");
+    printf("  \"totalCount\": %zu\n", invalidFiles.size());
+    printf("}\n");
+}
+
 int RunScanInvalid(const EncFSOptions& efo, char* password) {
     if (!LoadVolumeConfig(efo, password)) {
+        // Output error as JSON
+        printf("{\n");
+        printf("  \"error\": \"Failed to load or unlock EncFS volume\",\n");
+        printf("  \"invalidFiles\": [],\n");
+        printf("  \"totalCount\": 0\n");
+        printf("}\n");
         return EXIT_FAILURE;
     }
 
-    std::vector<std::wstring> invalidPaths;
-    ScanInvalidNames(efo.RootDirectory, std::string(), invalidPaths);
+    std::vector<InvalidFileInfo> invalidFiles;
+    ScanInvalidNames(efo.RootDirectory, std::string(), std::string(), invalidFiles);
 
-    if (invalidPaths.empty()) {
-        printf("No invalid filenames detected.\n");
-    } else {
-        printf("Scan complete. Invalid filenames detected: %zu\n", invalidPaths.size());
-    }
+    OutputJson(invalidFiles);
     return EXIT_SUCCESS;
 }
