@@ -22,9 +22,12 @@ struct TestConfig {
     bool showHelp;
     bool isRawFilesystem;      // True if testing on raw filesystem (not EncFS)
     bool stopOnFailure;        // True to stop immediately when a test fails
+    bool caseInsensitive;      // True if --case-insensitive option is enabled
+    bool cloudConflict;        // True if --cloud-conflict option is enabled
     std::vector<std::string> selectedCategories; // Categories to run (empty = all)
     
-    TestConfig() : showHelp(false), isRawFilesystem(false), stopOnFailure(false) {}
+    TestConfig() : showHelp(false), isRawFilesystem(false), stopOnFailure(false),
+                   caseInsensitive(false), cloudConflict(false) {}
 };
 
 struct TestCategoryInfo {
@@ -46,7 +49,7 @@ inline const std::vector<TestCategoryInfo>& GetAvailableCategories()
         {"aapt2",       "Android aapt2 pattern tests"},
         {"advanced",    "Advanced tests"},
         {"rename",      "File rename pattern tests"},
-        {"conflict",    "Cloud sync conflict tests"},
+        {"conflict",    "Cloud sync conflict tests (requires --cloud-conflict)"},
         {"large",       "Large file tests"},
         {"windows",     "Windows filesystem feature tests"},
         {"performance", "Performance tests"}
@@ -62,6 +65,9 @@ inline void PrintUsage(const char* programName) {
     printf("  -r, --raw                 Test on raw filesystem (F:\\work\\encfs_raw\\)\n");
     printf("  -s, --stop-on-failure     Stop immediately when a test fails\n");
     printf("  -c, --category <name>[,<name>...]  Run only specified categories\n");
+    printf("  --case-insensitive        Mount EncFS with --case-insensitive option\n");
+    printf("  --cloud-conflict          Mount EncFS with --cloud-conflict option\n");
+    printf("                            (enables conflict category tests)\n");
     printf("  -h, --help                Show this help message and category list\n");
     printf("\n");
     printf("Categories:\n");
@@ -70,14 +76,20 @@ inline void PrintUsage(const char* programName) {
     }
     printf("\n");
     printf("Examples:\n");
-    printf("  %s                      # Test on EncFS mount at O:\\ (all categories)\n", programName);
-    printf("  %s -r                   # Test on raw filesystem at F:\\work\\encfs_raw\\\n", programName);
-    printf("  %s -d C:\\temp\\test  # Test in custom directory\n", programName);
-    printf("  %s -s                   # Stop on first failure\n", programName);
-    printf("  %s -c edge,basic        # Run only edge and basic categories\n", programName);
+    printf("  %s                          # Test on EncFS mount at O:\\ (all categories except conflict)\n", programName);
+    printf("  %s -r                       # Test on raw filesystem at F:\\work\\encfs_raw\\\n", programName);
+    printf("  %s --case-insensitive       # Test with case-insensitive mode\n", programName);
+    printf("  %s --cloud-conflict         # Test with cloud conflict support\n", programName);
+    printf("  %s --cloud-conflict -c conflict  # Run only conflict tests\n", programName);
+    printf("  %s -d C:\\temp\\test      # Test in custom directory\n", programName);
+    printf("  %s -s                       # Stop on first failure\n", programName);
+    printf("  %s -c edge,basic            # Run only edge and basic categories\n", programName);
     printf("\n");
     printf("Note: Run with -r first to verify tests work correctly on a raw filesystem,\n");
     printf("      then run without -r to test the EncFS implementation.\n");
+    printf("\n");
+    printf("Note: The 'conflict' category requires --cloud-conflict option to be enabled.\n");
+    printf("      Case-insensitive specific tests in 'basic' category require --case-insensitive.\n");
 }
 
 inline bool ParseCommandLine(int argc, char* argv[], TestConfig& config) {
@@ -86,6 +98,8 @@ inline bool ParseCommandLine(int argc, char* argv[], TestConfig& config) {
     config.showHelp = false;
     config.isRawFilesystem = false;
     config.stopOnFailure = false;
+    config.caseInsensitive = false;
+    config.cloudConflict = false;
     config.selectedCategories.clear();
     
     auto toLower = [](std::string s) {
@@ -119,6 +133,12 @@ inline bool ParseCommandLine(int argc, char* argv[], TestConfig& config) {
         }
         else if (arg == "-s" || arg == "--stop-on-failure") {
             config.stopOnFailure = true;
+        }
+        else if (arg == "--case-insensitive") {
+            config.caseInsensitive = true;
+        }
+        else if (arg == "--cloud-conflict") {
+            config.cloudConflict = true;
         }
         else if ((arg == "-d" || arg == "--dir") && i + 1 < argc) {
             i++;

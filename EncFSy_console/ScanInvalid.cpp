@@ -49,6 +49,60 @@ struct InvalidFileInfo {
     std::string decodedParentPath;  // Decoded parent directory path
 };
 
+// Streaming JSON output context
+struct JsonStreamContext {
+    size_t count;           // Number of items output so far
+    bool headerPrinted;     // Whether the JSON header has been printed
+    
+    JsonStreamContext() : count(0), headerPrinted(false) {}
+    
+    // Print JSON header (called before first item)
+    void printHeader() {
+        if (!headerPrinted) {
+            printf("{\n");
+            printf("  \"invalidFiles\": [\n");
+            fflush(stdout);
+            headerPrinted = true;
+        }
+    }
+    
+    // Print a single invalid file entry (streaming)
+    void printEntry(const InvalidFileInfo& info) {
+        printHeader();
+        
+        // Print comma before this entry if not the first
+        if (count > 0) {
+            printf(",\n");
+        }
+        
+        printf("    {\n");
+        printf("      \"fileName\": \"%s\",\n", EscapeJson(info.fileName).c_str());
+        printf("      \"encodedParentPath\": \"%s\",\n", EscapeJson(info.encodedParentPath).c_str());
+        printf("      \"decodedParentPath\": \"%s\"\n", EscapeJson(info.decodedParentPath).c_str());
+        printf("    }");
+        fflush(stdout);
+        
+        count++;
+    }
+    
+    // Print JSON footer (called after scanning completes)
+    void printFooter() {
+        if (headerPrinted) {
+            printf("\n");  // Newline after last entry
+            printf("  ],\n");
+            printf("  \"totalCount\": %zu\n", count);
+            printf("}\n");
+        } else {
+            // No invalid files found - print complete JSON
+            printf("{\n");
+            printf("  \"invalidFiles\": [],\n");
+            printf("  \"totalCount\": 0\n");
+            printf("}\n");
+        }
+        fflush(stdout);
+    }
+};
+
 // Load EncFS config (without mounting) and unlock volume
 static bool LoadVolumeConfig(const EncFSOptions& efo, char* password) {
     encfs.altStream = efo.AltStream;
@@ -82,12 +136,12 @@ static bool LoadVolumeConfig(const EncFSOptions& efo, char* password) {
     return false;
 }
 
-// Recursive scan for filenames that cannot be decrypted
+// Recursive scan for filenames that cannot be decrypted (streaming output)
 static void ScanInvalidNames(
     const std::wstring& physicalDir,
     const std::string& encodedDirPath,  // Relative encoded path from root (e.g., "encDir1\\encDir2")
     const std::string& plainDirPath,    // Decoded path (e.g., "dir1\\dir2")
-    std::vector<InvalidFileInfo>& invalidFiles
+    JsonStreamContext& jsonCtx
 ) {
     WIN32_FIND_DATAW findData;
     std::wstring search = physicalDir;
@@ -123,7 +177,7 @@ static void ScanInvalidNames(
             info.fileName = "<UTF-8 conversion failed>";
             info.encodedParentPath = encodedDirPath;
             info.decodedParentPath = plainDirPath;
-            invalidFiles.push_back(info);
+            jsonCtx.printEntry(info);
             continue;
         }
 
@@ -136,7 +190,7 @@ static void ScanInvalidNames(
             info.fileName = encNameUtf8;
             info.encodedParentPath = encodedDirPath;
             info.decodedParentPath = plainDirPath;
-            invalidFiles.push_back(info);
+            jsonCtx.printEntry(info);
             continue;
         }
 
@@ -158,29 +212,10 @@ static void ScanInvalidNames(
             }
             childPlainPath += plainName;
             
-            ScanInvalidNames(childPhysical, childEncodedPath, childPlainPath, invalidFiles);
+            ScanInvalidNames(childPhysical, childEncodedPath, childPlainPath, jsonCtx);
         }
     } while (FindNextFileW(hFind, &findData));
     FindClose(hFind);
-}
-
-// Output results as JSON
-static void OutputJson(const std::vector<InvalidFileInfo>& invalidFiles) {
-    printf("{\n");
-    printf("  \"invalidFiles\": [\n");
-    
-    for (size_t i = 0; i < invalidFiles.size(); ++i) {
-        const auto& info = invalidFiles[i];
-        printf("    {\n");
-        printf("      \"fileName\": \"%s\",\n", EscapeJson(info.fileName).c_str());
-        printf("      \"encodedParentPath\": \"%s\",\n", EscapeJson(info.encodedParentPath).c_str());
-        printf("      \"decodedParentPath\": \"%s\"\n", EscapeJson(info.decodedParentPath).c_str());
-        printf("    }%s\n", (i < invalidFiles.size() - 1) ? "," : "");
-    }
-    
-    printf("  ],\n");
-    printf("  \"totalCount\": %zu\n", invalidFiles.size());
-    printf("}\n");
 }
 
 int RunScanInvalid(const EncFSOptions& efo, char* password) {
@@ -191,12 +226,13 @@ int RunScanInvalid(const EncFSOptions& efo, char* password) {
         printf("  \"invalidFiles\": [],\n");
         printf("  \"totalCount\": 0\n");
         printf("}\n");
+        fflush(stdout);
         return EXIT_FAILURE;
     }
 
-    std::vector<InvalidFileInfo> invalidFiles;
-    ScanInvalidNames(efo.RootDirectory, std::string(), std::string(), invalidFiles);
+    JsonStreamContext jsonCtx;
+    ScanInvalidNames(efo.RootDirectory, std::string(), std::string(), jsonCtx);
+    jsonCtx.printFooter();
 
-    OutputJson(invalidFiles);
     return EXIT_SUCCESS;
 }

@@ -9,8 +9,7 @@
 //      - Encrypted Root Dir: F:\work\encfs
 //      - Mount Point: O:
 //      - Password: TEST
-//      - Options: --dokan-mount-manager --alt-stream -cloud-conflict (case-insensitive tested both off/on)
-// ./encfs.exe F:\work\encfs O: --dokan-mount-manager --alt-stream -cloud-conflict --case-insensitive
+//      - Options: --dokan-mount-manager --alt-stream (+ optional --case-insensitive --cloud-conflict)
 //
 // =============================================================================
 // USAGE:
@@ -19,6 +18,8 @@
 //   test.exe -r               - Run tests on raw filesystem (baseline verification)
 //   test.exe -s               - Stop on first failure
 //   test.exe -c edge,basic    - Run only specified categories
+//   test.exe --case-insensitive  - Mount with --case-insensitive option
+//   test.exe --cloud-conflict    - Mount with --cloud-conflict option (enables conflict tests)
 //   test.exe -h               - Show help
 //
 // =============================================================================
@@ -215,7 +216,7 @@ static bool InitializeEncFS(bool caseInsensitive)
 //=============================================================================
 // Mount EncFS volume
 //=============================================================================
-static bool MountEncFS(bool caseInsensitive)
+static bool MountEncFS(bool caseInsensitive, bool cloudConflict)
 {
     printf("================================================================================\n");
     printf("Mounting EncFS volume...\n");
@@ -223,6 +224,7 @@ static bool MountEncFS(bool caseInsensitive)
     wprintf(L"  Mount Point: %s\n", ENCFS_MOUNT_POINT);
     printf("  Password: %s\n", ENCFS_PASSWORD);
     printf("  Case-insensitive: %s\n", caseInsensitive ? "YES" : "NO");
+    printf("  Cloud-conflict: %s\n", cloudConflict ? "YES" : "NO");
     printf("================================================================================\n");
 
     // Check if already mounted
@@ -268,11 +270,17 @@ static bool MountEncFS(bool caseInsensitive)
     // Ensure the write handle is not inherited
     SetHandleInformation(hWritePipe, HANDLE_FLAG_INHERIT, 0);
 
-    // Start encfs.exe to mount existing volume
+    // Build mount command line with options
     WCHAR mountCmdLine[1024];
-    wsprintfW(mountCmdLine, L"\"%s\" \"%s\" %s --dokan-mount-manager --alt-stream%s",
-              ENCFS_EXE, ENCFS_ROOT_DIR, ENCFS_MOUNT_POINT,
-              caseInsensitive ? L" --case-insensitive" : L"");
+    std::wstring options = L"--dokan-mount-manager --alt-stream";
+    if (caseInsensitive) {
+        options += L" --case-insensitive";
+    }
+    if (cloudConflict) {
+        options += L" --cloud-conflict";
+    }
+    wsprintfW(mountCmdLine, L"\"%s\" \"%s\" %s %s",
+              ENCFS_EXE, ENCFS_ROOT_DIR, ENCFS_MOUNT_POINT, options.c_str());
 
     STARTUPINFOW si = { sizeof(si) };
     si.dwFlags = STARTF_USESTDHANDLES;
@@ -400,6 +408,7 @@ static bool ShouldRunCategory(const std::vector<std::string>& selectedCategories
 //=============================================================================
 static void RunAllTests(TestRunner& runner,
                         bool caseInsensitiveMode,
+                        bool cloudConflictMode,
                         const WCHAR* drive,
                         const WCHAR* rootDir,
                         const WCHAR* file,
@@ -585,8 +594,10 @@ static void RunAllTests(TestRunner& runner,
     // Cloud Conflict Tests
     //=====================================================================
     if (ShouldRunCategory(selectedCategories, "conflict")) {
-        // Conflict tests require EncFS encryption - skip in raw filesystem mode
-        if (isRawFilesystem) {
+        // Conflict tests require --cloud-conflict option
+        if (!cloudConflictMode) {
+            printf("\n--- CLOUD CONFLICT TESTS (skipped; requires --cloud-conflict option) ---\n");
+        } else if (isRawFilesystem) {
             printf("\n--- CLOUD CONFLICT TESTS (skipped; requires EncFS mount, not raw filesystem) ---\n");
         } else {
             printf("\n--- CLOUD CONFLICT TESTS ---\n");
@@ -601,7 +612,7 @@ static void RunAllTests(TestRunner& runner,
             runner.runTest("Google Drive conflict pattern", Test_ConflictGoogleDrive, rootDir);
         }
     } else {
-        printf("\n--- CLOUD CONFLICT TESTS (skipped; include with -c conflict) ---\n");
+        printf("\n--- CLOUD CONFLICT TESTS (skipped; include with -c conflict and --cloud-conflict) ---\n");
     }
 
     //=====================================================================
@@ -728,7 +739,8 @@ int main(int argc, char* argv[])
         }
 
         TestRunner runner(drive, rootDir, file, true, config.stopOnFailure);
-        RunAllTests(runner, true, drive, rootDir, file, fileLowerNested, fileCaseVariant, config.selectedCategories, true);
+        // For raw filesystem, assume case-insensitive (NTFS default) and no cloud conflict
+        RunAllTests(runner, true, false, drive, rootDir, file, fileLowerNested, fileCaseVariant, config.selectedCategories, true);
         runner.printSummary();
 
         if (runner.allPassed()) {
@@ -747,61 +759,44 @@ int main(int argc, char* argv[])
         return runner.allPassed() ? 0 : -1;
     }
 
-    // EncFS mode: run filename-related tests in both case-sensitive and case-insensitive mounts
-    struct TestPass {
-        bool caseInsensitive;
-        const char* label;
-    } passes[] = {
-        { false, "Case-sensitive mount (no --case-insensitive)" },
-        { true,  "Case-insensitive mount (--case-insensitive)" }
-    };
+    // EncFS mode: single test pass with specified options
+    config.testDir = L"O:\\";
+    updateTestPaths(config);
 
-    bool overallPass = true;
+    const WCHAR* drive = config.testDir.c_str();
+    const WCHAR* rootDir = config.testDir.c_str();
+    const WCHAR* file = config.testFile.c_str();
+    const WCHAR* fileLowerNested = config.nestedLower.c_str();
+    const WCHAR* fileCaseVariant = config.nestedUpper.c_str();
 
-    for (const auto& pass : passes) {
-        config.testDir = L"O:\\";
-        updateTestPaths(config);
+    printf("================================================================================\n");
+    printf("                        EncFSy File System Test Suite\n");
+    printf("================================================================================\n");
+    wprintf(L"Test Directory: %s\n", drive);
+    wprintf(L"Test File: %s\n", file);
+    printf("Mode: EncFS Mount\n");
+    printf("Stop on failure: %s\n", config.stopOnFailure ? "YES" : "NO");
+    printf("Case-insensitive: %s\n", config.caseInsensitive ? "YES" : "NO");
+    printf("Cloud-conflict: %s\n", config.cloudConflict ? "YES" : "NO");
+    printf("================================================================================\n\n");
 
-        const WCHAR* drive = config.testDir.c_str();
-        const WCHAR* rootDir = config.testDir.c_str();
-        const WCHAR* file = config.testFile.c_str();
-        const WCHAR* fileLowerNested = config.nestedLower.c_str();
-        const WCHAR* fileCaseVariant = config.nestedUpper.c_str();
-
-        printf("\n================================================================================\n");
-        printf("Running tests: %s\n", pass.label);
-        printf("================================================================================\n");
-
-        if (!MountEncFS(pass.caseInsensitive)) {
-            printf("ERROR: Failed to mount EncFS for pass: %s\n", pass.label);
-            overallPass = false;
-            continue;
-        }
-
-        if (!PathExists(rootDir)) {
-            wprintf(L"ERROR: Test directory does not exist after mount: %s\n", rootDir);
-            printf("Aborting this pass.\n");
-            UnmountEncFS();
-            overallPass = false;
-            continue;
-        }
-
-        TestRunner runner(drive, rootDir, file, false, config.stopOnFailure);
-
-        printf("Test Directory: %S\n", drive);
-        printf("Test File: %S\n", file);
-        printf("Stop on failure: %s\n", config.stopOnFailure ? "YES" : "NO");
-        printf("Case-insensitive option: %s\n\n", pass.caseInsensitive ? "ENABLED" : "DISABLED");
-
-        RunAllTests(runner, pass.caseInsensitive, drive, rootDir, file, fileLowerNested, fileCaseVariant, config.selectedCategories);
-        runner.printSummary();
-
-        if (!runner.allPassed()) {
-            overallPass = false;
-        }
-
-        UnmountEncFS();
+    if (!MountEncFS(config.caseInsensitive, config.cloudConflict)) {
+        printf("ERROR: Failed to mount EncFS\n");
+        return -1;
     }
 
-    return overallPass ? 0 : -1;
+    if (!PathExists(rootDir)) {
+        wprintf(L"ERROR: Test directory does not exist after mount: %s\n", rootDir);
+        UnmountEncFS();
+        return -1;
+    }
+
+    TestRunner runner(drive, rootDir, file, false, config.stopOnFailure);
+    RunAllTests(runner, config.caseInsensitive, config.cloudConflict, drive, rootDir, file, 
+                fileLowerNested, fileCaseVariant, config.selectedCategories);
+    runner.printSummary();
+
+    UnmountEncFS();
+
+    return runner.allPassed() ? 0 : -1;
 }

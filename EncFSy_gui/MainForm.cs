@@ -88,6 +88,17 @@ namespace EncFSy_gui
                     return options;
 
                 var parts = data.Split('|');
+                
+                // Current format (12 boolean flags):
+                // 0: AltStream, 1: MountManager, 2: CaseInsensitive, 3: ReadOnly, 4: Reverse,
+                // 5: Paranoia, 6: Removable, 7: CurrentSession, 8: FileLockUserMode,
+                // 9: EnableUnmountNetwork, 10: AllowIpcBatching, 11: CloudConflict,
+                // 12: Timeout, 13: VolumeName, 14: VolumeSerial, 15: NetworkUnc,
+                // 16: AllocationUnitSize, 17: SectorSize
+                //
+                // Legacy format (14 boolean flags - had DebugMode and UseStdErr):
+                // Same as above but with 2 extra debug flags at indices 12 and 13
+
                 options.AltStream = GetBool(parts, 0);
                 options.MountManager = GetBool(parts, 1);
                 options.CaseInsensitive = GetBool(parts, 2);
@@ -101,9 +112,11 @@ namespace EncFSy_gui
                 options.AllowIpcBatching = GetBool(parts, 10);
                 options.CloudConflict = GetBool(parts, 11);
 
+                // Detect legacy format: if indices 12 and 13 are both binary flags (0 or 1),
+                // this is likely the old format with debug flags
                 bool hasLegacyDebugFlags = parts.Length >= 20 && IsBinaryFlag(parts, 12) && IsBinaryFlag(parts, 13);
-                int boolCountNew = 12;
-                int timeoutIndex = hasLegacyDebugFlags ? 14 : boolCountNew;
+                
+                int timeoutIndex = hasLegacyDebugFlags ? 14 : 12;
                 int volumeNameIndex = timeoutIndex + 1;
                 int volumeSerialIndex = timeoutIndex + 2;
                 int networkIndex = timeoutIndex + 3;
@@ -113,11 +126,19 @@ namespace EncFSy_gui
                 if (TryParseInt(parts, timeoutIndex, out int timeout))
                     options.Timeout = timeout;
                 if (volumeNameIndex < parts.Length)
-                    options.VolumeName = parts[volumeNameIndex];
+                    options.VolumeName = parts[volumeNameIndex] ?? "";
                 if (volumeSerialIndex < parts.Length)
-                    options.VolumeSerial = parts[volumeSerialIndex];
+                    options.VolumeSerial = parts[volumeSerialIndex] ?? "";
                 if (networkIndex < parts.Length)
-                    options.NetworkUnc = parts[networkIndex];
+                {
+                    string networkValue = parts[networkIndex] ?? "";
+                    // NetworkUnc should be a UNC path (e.g., \\server\share), not a number
+                    // If it's just a number (like "0"), treat it as empty
+                    if (!IsNumericOnly(networkValue))
+                    {
+                        options.NetworkUnc = networkValue;
+                    }
+                }
                 if (TryParseInt(parts, allocationIndex, out int allocUnit))
                     options.AllocationUnitSize = allocUnit;
                 if (TryParseInt(parts, sectorIndex, out int sectorSize))
@@ -134,6 +155,18 @@ namespace EncFSy_gui
             private static bool IsBinaryFlag(string[] parts, int index)
             {
                 return index < parts.Length && (parts[index] == "0" || parts[index] == "1");
+            }
+
+            private static bool IsNumericOnly(string value)
+            {
+                if (string.IsNullOrEmpty(value))
+                    return false;
+                foreach (char c in value)
+                {
+                    if (!char.IsDigit(c))
+                        return false;
+                }
+                return true;
             }
 
             private static bool TryParseInt(string[] parts, int index, out int value)
