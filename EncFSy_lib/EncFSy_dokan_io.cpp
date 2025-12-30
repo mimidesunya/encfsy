@@ -252,6 +252,22 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
             return STATUS_CANNOT_DELETE;
         }
         
+        // Cannot overwrite a hidden or system file if flag not set
+        if (fileAttr != INVALID_FILE_ATTRIBUTES &&
+            ((!(fileAttributesAndFlags & FILE_ATTRIBUTE_HIDDEN) &&
+              (fileAttr & FILE_ATTRIBUTE_HIDDEN)) ||
+             (!(fileAttributesAndFlags & FILE_ATTRIBUTE_SYSTEM) &&
+              (fileAttr & FILE_ATTRIBUTE_SYSTEM))) &&
+            (creationDisposition == TRUNCATE_EXISTING ||
+             creationDisposition == CREATE_ALWAYS)) {
+            DbgPrintV(L"  [INFO] Cannot overwrite hidden/system file without flag\n");
+            return STATUS_ACCESS_DENIED;
+        }
+        
+        // Remove FILE_FLAG_DELETE_ON_CLOSE to avoid CloseHandle triggering a deletion.
+        // The Drive will inform us through `DeletePending` when to delete it.
+        fileAttributesAndFlags &= ~FILE_FLAG_DELETE_ON_CLOSE;
+        
         // TRUNCATE_EXISTING requires write access
         if (creationDisposition == TRUNCATE_EXISTING) {
             genericDesiredAccess |= GENERIC_WRITE;
@@ -318,6 +334,12 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
                            isCreatingNewFile || isTruncating;
             
             DokanFileInfo->Context = (ULONG64)new EncFS::EncFSFile(handle, canRead);
+            
+            // Need to update FileAttributes with previous when overwriting file
+            if (fileAttr != INVALID_FILE_ATTRIBUTES &&
+                creationDisposition == TRUNCATE_EXISTING) {
+                SetFileAttributesW(filePath, fileAttributesAndFlags | fileAttr);
+            }
             
             if (creationDisposition == OPEN_ALWAYS || creationDisposition == CREATE_ALWAYS) {
                 error = GetLastError();
@@ -430,7 +452,23 @@ EncFSDeleteFile(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInfo) {
         return STATUS_ACCESS_DENIED;
     }
 
-    // This is just a pre-check; actual deletion happens in Cleanup
+    // Set FILE_DISPOSITION_INFO to mark the file for deletion
+    // This is required for proper recycle bin and delete operations
+    if (DokanFileInfo->Context) {
+        EncFS::EncFSFile* encfsFile = ToEncFSFile(DokanFileInfo->Context);
+        HANDLE handle = encfsFile->getHandle();
+        if (handle && handle != INVALID_HANDLE_VALUE) {
+            FILE_DISPOSITION_INFO fdi;
+            fdi.DeleteFile = DokanFileInfo->DeletePending ? TRUE : FALSE;
+            if (!SetFileInformationByHandle(handle, FileDispositionInfo, &fdi,
+                                            sizeof(FILE_DISPOSITION_INFO))) {
+                DWORD error = GetLastError();
+                ErrorPrint(L"DeleteFile: SetFileInformationByHandle '%s' FAILED (error=%lu)\n", FileName, error);
+                return DokanNtStatusFromWin32(error);
+            }
+        }
+    }
+
     return STATUS_SUCCESS;
 }
 

@@ -534,6 +534,7 @@ static void RunAllTests(TestRunner& runner,
         runner.runTest("Cache file pattern", Test_CacheFilePattern, file);
         runner.runTest("Parallel write and read", Test_ParallelWriteRead, file);
         runner.runTest("Create-write-close-reopen-read cycle", Test_CreateWriteCloseReopenRead, file);
+        runner.runTest("Delete on close & Attribute preservation", Test_DeleteOnCloseAttributePreservation, file);
     } else {
         printf("\n--- VS BUILD PATTERN TESTS (skipped; include with -c vsbuild) ---\n");
     }
@@ -666,6 +667,9 @@ static void RunAllTests(TestRunner& runner,
         printf("\n--- WINDOWS FILESYSTEM TESTS (Volume Information) ---\n");
         runner.runTest("Volume information", Test_VolumeInformation, rootDir);
         runner.runTest("Disk free space", Test_DiskFreeSpace, rootDir);
+        
+        printf("\n--- WINDOWS FILESYSTEM TESTS (Recycle Bin) ---\n");
+        runner.runTest("Recycle Bin disposition info", Test_RecycleBinDisposition, rootDir);
     } else {
         printf("\n--- WINDOWS FILESYSTEM TESTS (skipped; include with -c windows) ---\n");
     }

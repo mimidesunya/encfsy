@@ -1099,7 +1099,7 @@ bool Test_FileChangeNotification(const WCHAR* rootDir)
 
 //=============================================================================
 // Test: Special/Reserved filenames
-// Tests handling of Windows reserved names (CON, PRN, AUX, etc.)
+// Tests handling of Windows reserved device names (CON, PRN, AUX, etc.)
 //=============================================================================
 bool Test_ReservedFilenames(const WCHAR* rootDir)
 {
@@ -1682,7 +1682,6 @@ bool Test_ShortcutToDirectory(const WCHAR* rootDir)
     hr = CoCreateInstance(CLSID_ShellLink, NULL, CLSCTX_INPROC_SERVER,
                           IID_IShellLinkW, (LPVOID*)&psl);
     if (FAILED(hr)) {
-        printf("CoCreateInstance failed\n");
         DeleteFileW(fileInDir);
         RemoveDirectoryW(targetDir);
         CoUninitialize();
@@ -1859,4 +1858,94 @@ bool Test_ShortcutMemoryMappedRead(const WCHAR* rootDir)
     DeleteFileW(targetFile);
     CoUninitialize();
     return ok;
+}
+
+//=============================================================================
+// Test: Recycle Bin Disposition Info
+// Verifies that SetFileInformationByHandle with FileDispositionInfo works
+// This is critical for Recycle Bin operations
+//=============================================================================
+bool Test_RecycleBinDisposition(const WCHAR* rootDir)
+{
+    printf("Testing Recycle Bin disposition info\n");
+    
+    WCHAR testFile[MAX_PATH];
+    wsprintfW(testFile, L"%s\\recycle_test.txt", rootDir);
+    
+    // Cleanup
+    DeleteFileW(testFile);
+    
+    // Create test file
+    // Note: We need DELETE access right to set FileDispositionInfo even for the first test
+    HANDLE h = CreateFileW(testFile, GENERIC_READ | GENERIC_WRITE | DELETE,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) {
+        PrintLastError("CreateFileW");
+        return false;
+    }
+    
+    const char content[] = "Recycle bin test content";
+    DWORD written;
+    WriteFile(h, content, (DWORD)strlen(content), &written, NULL);
+    
+    // Mark for deletion using FileDispositionInfo (how Recycle Bin does it)
+    FILE_DISPOSITION_INFO fdi;
+    fdi.DeleteFile = TRUE;
+    
+    if (!SetFileInformationByHandle(h, FileDispositionInfo, &fdi, sizeof(fdi))) {
+        PrintLastError("SetFileInformationByHandle(Delete=TRUE)");
+        CloseHandle(h);
+        DeleteFileW(testFile);
+        return false;
+    }
+    printf("Marked file for deletion via SetFileInformationByHandle\n");
+    
+    // Unmark for deletion (cancel delete)
+    fdi.DeleteFile = FALSE;
+    if (!SetFileInformationByHandle(h, FileDispositionInfo, &fdi, sizeof(fdi))) {
+        PrintLastError("SetFileInformationByHandle(Delete=FALSE)");
+        CloseHandle(h);
+        DeleteFileW(testFile);
+        return false;
+    }
+    printf("Unmarked file for deletion\n");
+    
+    CloseHandle(h);
+    
+    // Verify file still exists (since we cancelled deletion)
+    if (GetFileAttributesW(testFile) == INVALID_FILE_ATTRIBUTES) {
+        printf("ERROR: File was deleted despite cancelling deletion!\n");
+        return false;
+    }
+    printf("File persisted as expected\n");
+    
+    // Now delete for real
+    // Note: We need DELETE access right to set FileDispositionInfo
+    h = CreateFileW(testFile, GENERIC_READ | GENERIC_WRITE | DELETE,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                    NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) {
+        PrintLastError("Reopen file");
+        return false;
+    }
+    
+    fdi.DeleteFile = TRUE;
+    if (!SetFileInformationByHandle(h, FileDispositionInfo, &fdi, sizeof(fdi))) {
+        PrintLastError("SetFileInformationByHandle(Delete=TRUE) 2");
+        CloseHandle(h);
+        return false;
+    }
+    
+    CloseHandle(h);
+    
+    // Verify file is gone
+    if (GetFileAttributesW(testFile) != INVALID_FILE_ATTRIBUTES) {
+        printf("ERROR: File was NOT deleted after marking for deletion!\n");
+        DeleteFileW(testFile);
+        return false;
+    }
+    printf("File deleted successfully via disposition info\n");
+    
+    return true;
 }

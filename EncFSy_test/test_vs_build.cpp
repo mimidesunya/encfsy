@@ -1508,3 +1508,89 @@ bool Test_MultiBlockSpanningRead(const WCHAR* file)
     printf("Multi-block spanning read test PASSED\n");
     return true;
 }
+
+//=============================================================================
+// Test: Delete On Close and Attribute Preservation
+// Simulates: Acrobat temporary file handling
+// 1. FILE_FLAG_DELETE_ON_CLOSE should work
+// 2. TRUNCATE_EXISTING should preserve attributes (e.g. Hidden)
+//=============================================================================
+bool Test_DeleteOnCloseAttributePreservation(const WCHAR* file)
+{
+    DeleteFileW(file);
+
+    // Part 1: Test FILE_FLAG_DELETE_ON_CLOSE
+    {
+        HANDLE h = CreateFileW(file, GENERIC_READ | GENERIC_WRITE, 
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 
+            NULL, CREATE_ALWAYS, 
+            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_DELETE_ON_CLOSE, NULL);
+            
+        if (h == INVALID_HANDLE_VALUE) {
+            wprintf(L"  FAIL: CreateFile with DELETE_ON_CLOSE failed: %d\n", GetLastError());
+            return false;
+        }
+        
+        const char* data = "Temp data";
+        DWORD written;
+        WriteFile(h, data, (DWORD)strlen(data), &written, NULL);
+        
+        // File should exist while handle is open
+        if (GetFileAttributesW(file) == INVALID_FILE_ATTRIBUTES) {
+            wprintf(L"  FAIL: File does not exist while handle is open\n");
+            CloseHandle(h);
+            return false;
+        }
+        
+        CloseHandle(h);
+        
+        // File should be gone now
+        if (GetFileAttributesW(file) != INVALID_FILE_ATTRIBUTES) {
+            wprintf(L"  FAIL: File was not deleted on close\n");
+            DeleteFileW(file);
+            return false;
+        }
+        printf("  DELETE_ON_CLOSE verified\n");
+    }
+
+    // Part 2: Test Attribute Preservation with TRUNCATE_EXISTING
+    {
+        // Create a hidden file
+        HANDLE h = CreateFileW(file, GENERIC_READ | GENERIC_WRITE, 
+            0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_HIDDEN, NULL);
+            
+        if (h == INVALID_HANDLE_VALUE) {
+            wprintf(L"  FAIL: Create hidden file failed: %d\n", GetLastError());
+            return false;
+        }
+        CloseHandle(h);
+        
+        // Verify it is hidden
+        DWORD attrs = GetFileAttributesW(file);
+        if ((attrs & FILE_ATTRIBUTE_HIDDEN) == 0) {
+            wprintf(L"  FAIL: File is not hidden (attrs=0x%X)\n", attrs);
+            return false;
+        }
+        
+        // Open with TRUNCATE_EXISTING
+        h = CreateFileW(file, GENERIC_READ | GENERIC_WRITE, 
+            FILE_SHARE_READ, NULL, TRUNCATE_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+            
+        if (h == INVALID_HANDLE_VALUE) {
+            wprintf(L"  FAIL: TRUNCATE_EXISTING failed: %d\n", GetLastError());
+            return false;
+        }
+        CloseHandle(h);
+        
+        // Verify it is STILL hidden
+        attrs = GetFileAttributesW(file);
+        if ((attrs & FILE_ATTRIBUTE_HIDDEN) == 0) {
+            wprintf(L"  FAIL: Hidden attribute lost after truncate (attrs=0x%X)\n", attrs);
+            return false;
+        }
+        printf("  Attribute preservation verified\n");
+    }
+
+    DeleteFileW(file);
+    return true;
+}

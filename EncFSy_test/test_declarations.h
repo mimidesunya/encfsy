@@ -70,6 +70,7 @@ bool Test_JsonFileTruncateRewrite(const WCHAR* file);
 bool Test_CacheFilePattern(const WCHAR* file);
 bool Test_ParallelWriteRead(const WCHAR* file);
 bool Test_CreateWriteCloseReopenRead(const WCHAR* file);
+bool Test_DeleteOnCloseAttributePreservation(const WCHAR* file);
 
 // ZIP/Archive pattern tests
 bool Test_ZipLikeReadPattern(const WCHAR* file);
@@ -196,3 +197,6 @@ bool Test_DiskFreeSpace(const WCHAR* rootDir);
 bool Test_ShortcutFile(const WCHAR* rootDir);
 bool Test_ShortcutToDirectory(const WCHAR* rootDir);
 bool Test_ShortcutMemoryMappedRead(const WCHAR* rootDir);
+
+// Recycle Bin / Disposition Info
+bool Test_RecycleBinDisposition(const WCHAR* rootDir);
