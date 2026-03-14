@@ -1,6 +1,7 @@
 .vs
 x64
 Debug
+Release
 local.bat
 codesign.pfx
 installer/*.exe
