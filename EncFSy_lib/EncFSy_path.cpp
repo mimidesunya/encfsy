@@ -5,8 +5,9 @@
 #include "EncFSUtils.hpp"
 #include <memory>
 
-// Forward declaration for file exists callback
-static std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>>* g_strConvPtr = nullptr;
+// Thread-local pointer to avoid data race when GetFilePath() is called concurrently
+// from multiple Dokan callback threads (each thread has its own local strConv).
+static thread_local std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>>* g_strConvPtr = nullptr;
 
 /**
  * @brief Callback function for checking if encoded file exists

@@ -1,6 +1,8 @@
 #pragma once
 #include <windows.h>
 #include <string>
+// Must be defined before <codecvt> to suppress the C++17 deprecation warning
+#define _SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING
 #include <codecvt>
 
 /**

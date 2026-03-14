@@ -17,6 +17,8 @@
 #include <vector>
 #include <memory>
 #include <mutex>
+// Must be defined before <codecvt> to suppress the C++17 deprecation warning
+#define _SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING
 #include <codecvt>
 
 #include "EncFSFile.h"
@@ -25,8 +27,6 @@
 #include "EncFSy_globals.h"
 #include "EncFSy_logging.h"
 #include "EncFSy_path.h"
-
-#define _SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING
 
 using namespace std;
 

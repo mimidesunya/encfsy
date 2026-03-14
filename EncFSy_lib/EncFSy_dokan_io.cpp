@@ -17,6 +17,8 @@
 #include <vector>
 #include <memory>
 #include <mutex>
+// Must be defined before <codecvt> to suppress the C++17 deprecation warning
+#define _SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING
 #include <codecvt>
 
 #include "EncFSFile.h"
@@ -25,8 +27,6 @@
 #include "EncFSy_globals.h"
 #include "EncFSy_logging.h"
 #include "EncFSy_path.h"
-
-#define _SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING
 
 using namespace std;
 
@@ -317,7 +317,15 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
         }
         
         DWORD finalAttributes = attrPart | flagPart;
-        
+
+        // Always allow delete-sharing on physical encrypted files.
+        // Without this, EncFSMoveFile's SetFileInformationByHandle(ReplaceIfExists=TRUE)
+        // fails with ERROR_SHARING_VIOLATION when the target file has an open EncFSy handle
+        // that lacks FILE_SHARE_DELETE (e.g., Acrobat holds original.pdf open while
+        // renaming a temp file over it — the classic "safe-save" pattern).
+        // Physical files are internal implementation details; Dokan enforces logical sharing.
+        ShareAccess |= FILE_SHARE_DELETE;
+
         handle = CreateFileW(filePath, genericDesiredAccess, ShareAccess,
             &securityAttrib, creationDisposition, finalAttributes, NULL);
         
@@ -980,7 +988,7 @@ EncFSFindFiles(LPCWSTR FileName,
  * @param cNewPlainDirPath New plaintext directory path (for IV calculation).
  * @return NTSTATUS indicating success or failure.
  */
-static NTSTATUS changeIVRecursive(LPCWSTR newFilePath, const string cOldPlainDirPath, const string cNewPlainDirPath) {
+static NTSTATUS changeIVRecursive(LPCWSTR newFilePath, const string& cOldPlainDirPath, const string& cNewPlainDirPath) {
     WCHAR findPath[DOKAN_MAX_PATH];
     WCHAR oldPath[DOKAN_MAX_PATH];
     WCHAR newPath[DOKAN_MAX_PATH];
@@ -1012,8 +1020,8 @@ static NTSTATUS changeIVRecursive(LPCWSTR newFilePath, const string cOldPlainDir
     wstring_convert<codecvt_utf8_utf16<wchar_t>> strConv;
 
     do {
-        // Skip . and .. entries
-        if (find.cFileName[0] == L'.') continue;
+        // Skip . and .. entries only (do not skip other dot-prefixed files/dirs)
+        if (wcscmp(find.cFileName, L".") == 0 || wcscmp(find.cFileName, L"..") == 0) continue;
 
         wstring wOldName(find.cFileName);
         string cOldName = strConv.to_bytes(wOldName);
@@ -1227,16 +1235,65 @@ EncFSMoveFile(LPCWSTR FileName, LPCWSTR NewFileName, BOOL ReplaceIfExisting,
 
             return changeIVRecursive(newFilePath, cOldPlainDirPath, cNewPlainDirPath);
         }
-        else {
-            // Single file IV update
-            if (encfs.isExternalIVChaining()) {
-                DbgPrintV(L"  [INFO] Updating file IV for move\n");
-                if (!encfsFile->changeFileIV(FileName, NewFileName)) {
-                    DWORD error = GetLastError();
-                    ErrorPrint(L"MoveFile: changeFileIV FAILED (error=%lu)\n", error);
-                    return DokanNtStatusFromWin32(error);
+        else if (encfs.isExternalIVChaining()) {
+            // Single file: save original IV header before modifying it.
+            // If the rename fails after changeFileIV, we restore the original header
+            // to prevent the file from becoming permanently unreadable (header would
+            // contain the IV encrypted for the new path, but the file is still at the
+            // old path, making every subsequent decodeBlock fail with MAC error).
+            string originalHeader;
+            bool headerSaved = false;
+            {
+                LARGE_INTEGER seekZero = {};
+                DWORD bytesRead = 0;
+                originalHeader.resize(EncFS::EncFSVolume::HEADER_SIZE);
+                if (SetFilePointerEx(encfsFile->getHandle(), seekZero, NULL, FILE_BEGIN) &&
+                    ReadFile(encfsFile->getHandle(), &originalHeader[0],
+                             EncFS::EncFSVolume::HEADER_SIZE, &bytesRead, NULL) &&
+                    bytesRead == EncFS::EncFSVolume::HEADER_SIZE)
+                {
+                    headerSaved = true;
                 }
             }
+
+            DbgPrintV(L"  [INFO] Updating file IV for move\n");
+            if (!encfsFile->changeFileIV(FileName, NewFileName)) {
+                DWORD error = GetLastError();
+                ErrorPrint(L"MoveFile: changeFileIV FAILED (error=%lu)\n", error);
+                return DokanNtStatusFromWin32(error);
+            }
+
+            // Perform the actual rename
+            newFilePathLen = wcslen(newFilePath);
+            DWORD bufferSize = (DWORD)(sizeof(FILE_RENAME_INFO) + newFilePathLen * sizeof(newFilePath[0]));
+            std::vector<BYTE> renameInfoBuffer(bufferSize);
+            PFILE_RENAME_INFO renameInfo = (PFILE_RENAME_INFO)renameInfoBuffer.data();
+            renameInfo->ReplaceIfExists = ReplaceIfExisting ? TRUE : FALSE;
+            renameInfo->RootDirectory = NULL;
+            renameInfo->FileNameLength = (DWORD)newFilePathLen * sizeof(newFilePath[0]);
+            wcscpy_s(renameInfo->FileName, newFilePathLen + 1, newFilePath);
+
+            result = SetFileInformationByHandle(encfsFile->getHandle(), FileRenameInfo, renameInfo, bufferSize);
+            if (result) {
+                encfsFile->invalidateFileNameCache();
+                DbgPrint(L"MoveFile: '%s' -> '%s' OK\n", FileName, NewFileName);
+                return STATUS_SUCCESS;
+            }
+
+            // Rename failed: restore original IV header to keep the file readable
+            DWORD error = GetLastError();
+            ErrorPrint(L"MoveFile: SetFileInformationByHandle FAILED (error=%lu)\n", error);
+            if (headerSaved) {
+                LARGE_INTEGER seekZero = {};
+                DWORD written = 0;
+                if (SetFilePointerEx(encfsFile->getHandle(), seekZero, NULL, FILE_BEGIN)) {
+                    WriteFile(encfsFile->getHandle(), originalHeader.data(),
+                              EncFS::EncFSVolume::HEADER_SIZE, &written, NULL);
+                }
+                encfsFile->invalidateFileNameCache(); // force re-read of restored header
+                DbgPrintV(L"MoveFile: IV header restored after rename failure\n");
+            }
+            return DokanNtStatusFromWin32(error);
         }
     }
 

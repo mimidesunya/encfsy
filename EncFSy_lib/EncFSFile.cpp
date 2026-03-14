@@ -849,10 +849,12 @@ namespace EncFS {
         // Encrypt the read data block by block
         int64_t bufferPos = 0;
         for (; i < (int32_t)len; i += blockDataLen) {
-            size_t remainInBuffer = totalRead - (size_t)(bufferPos * blockSize);
-            if (remainInBuffer <= 0) {
+            // Use signed arithmetic to safely detect exhausted buffer (size_t cannot be < 0)
+            int64_t consumedBytes = bufferPos * blockSize;
+            if (consumedBytes >= (int64_t)totalRead) {
                 break;
             }
+            size_t remainInBuffer = (size_t)((int64_t)totalRead - consumedBytes);
             
             blockDataLen = static_cast<int32_t>(std::min<int64_t>(len - i, blockSize - shift));
             blockDataLen = static_cast<int32_t>(std::min<int64_t>(blockDataLen, remainInBuffer - shift));
