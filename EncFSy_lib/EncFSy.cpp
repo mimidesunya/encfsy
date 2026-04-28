@@ -150,7 +150,7 @@ bool IsEncFSExists(LPCWSTR rootDir) {
 /**
  * @brief Creates a new EncFS filesystem configuration.
  */
-int CreateEncFS(LPCWSTR rootDir, char* password, EncFSMode mode, bool reverse) {
+int CreateEncFS(LPCWSTR rootDir, char* password, EncFSMode mode, bool reverse, bool nameIoStream) {
     const wstring wRootDir(rootDir);
     wstring_convert<codecvt_utf8_utf16<wchar_t>> strConv;
     string cRootDir = strConv.to_bytes(wRootDir);
@@ -160,6 +160,9 @@ int CreateEncFS(LPCWSTR rootDir, char* password, EncFSMode mode, bool reverse) {
     if (in.is_open()) return EXIT_FAILURE; // Already exists.
 
     encfs.create(password, (EncFS::EncFSMode)mode, reverse);
+    if (nameIoStream) {
+        encfs.setNameAlgorithm(EncFS::EncFSVolume::NameAlgorithm::Stream);
+    }
     string xml;
     encfs.save(xml);
     ofstream out(configFile);

@@ -77,6 +77,7 @@ encfs.exe C:\encrypted --scan-invalid --cloud-conflict  # فحص مع اكتشا
 4. انقر على "Mount"
 
 "Show Advanced Options" توفر الوصول إلى نفس الإعدادات التفصيلية الموجودة في إصدار سطر الأوامر.
+الخيار المتقدم "NameIO Stream" يحدد تشفير أسماء الملفات nameio/stream عند إنشاء وحدة تخزين جديدة فقط. تحتفظ وحدات التخزين الموجودة بالإعداد المحفوظ في `.encfs6.xml`.
 
 ## استخدام مدير بيانات الاعتماد من سطر الأوامر
 عندما تقوم بالتركيب مع تحديد "Remember Password" في واجهة المستخدم الرسومية، يتم حفظ كلمة المرور في مدير بيانات اعتماد Windows.
@@ -142,6 +143,8 @@ encfs.exe C:\Data M: --use-credential
   --paranoia                                   تمكين تشفير AES-256 وإعادة تسمية IVs وتسلسل IV الخارجي
   --alt-stream                                 تمكين تدفقات البيانات البديلة NTFS
   --case-insensitive                           إجراء مطابقة أسماء الملفات بدون تمييز حالة الأحرف
+  --nameio-stream                              استخدام تشفير أسماء الملفات nameio/stream عند إنشاء
+                                               وحدة جديدة (الافتراضي: nameio/block)
   --cloud-conflict                             تمكين معالجة ملفات تعارض السحابة
                                                (Dropbox، Google Drive، OneDrive). معطل افتراضياً
   --reverse                                    الوضع العكسي: عرض rootDir النص العادي مشفراً
@@ -153,6 +156,7 @@ encfs.exe C:\Data M: --use-credential
   encfs.exe C:\Users M: --dokan-network \\myfs\share       # كمحرك شبكة مع UNC \\myfs\share
   encfs.exe C:\Data M: --volume-name "محرك آمن"            # تركيب باسم وحدة تخزين مخصص
   encfs.exe C:\Data M: --use-credential                    # استخدام كلمة المرور المحفوظة من المدير
+  encfs.exe C:\Data M: --nameio-stream                     # إنشاء وحدة جديدة باستخدام nameio/stream
   encfs.exe C:\Data M: --cloud-conflict                    # التركيب مع دعم تعارض السحابة
   encfs.exe C:\encrypted --scan-invalid                    # فحص أسماء الملفات غير الصالحة (إخراج JSON)
 

@@ -77,6 +77,7 @@ Verwenden Sie **encfsw.exe**, um Volumes einfach ohne Befehlszeile ein- und ausz
 4. Klicken Sie auf „Mount"
 
 „Show Advanced Options" bietet Zugriff auf dieselben detaillierten Einstellungen wie die Befehlszeilenversion.
+Die erweiterte Option „NameIO Stream" wählt nameio/stream für Dateinamen nur beim Erstellen eines neuen Volumes. Bestehende Volumes verwenden weiterhin die in `.encfs6.xml` gespeicherte Einstellung.
 
 ## Verwendung der Anmeldeinformationsverwaltung über die Befehlszeile
 Wenn Sie mit aktivierter Option „Remember Password" in der GUI einhängen, wird das Passwort in der Windows-Anmeldeinformationsverwaltung gespeichert.
@@ -144,6 +145,8 @@ Optionen:
                                                externe IV-Verkettung aktivieren
   --alt-stream                                 NTFS-alternative Datenströme aktivieren
   --case-insensitive                           Dateinamenabgleich ohne Groß-/Kleinschreibung durchführen
+  --nameio-stream                              Beim Erstellen eines neuen Volumes nameio/stream
+                                               für Dateinamen verwenden (Standard: nameio/block)
   --cloud-conflict                             Cloud-Konfliktdatei-Behandlung aktivieren
                                                (Dropbox, Google Drive, OneDrive). Standard: deaktiviert
   --reverse                                    Umkehrmodus: Klartext-rootDir verschlüsselt
@@ -155,6 +158,7 @@ Beispiele:
   encfs.exe C:\Users M: --dokan-network \\myfs\share       # Als Netzlaufwerk mit UNC \\myfs\share
   encfs.exe C:\Data M: --volume-name "Sicheres Laufwerk"   # Mit benutzerdefiniertem Volume-Namen
   encfs.exe C:\Data M: --use-credential                    # Gespeichertes Passwort aus der Verwaltung verwenden
+  encfs.exe C:\Data M: --nameio-stream                     # Neues Volume mit nameio/stream erstellen
   encfs.exe C:\Data M: --cloud-conflict                    # Mit Cloud-Konflikt-Unterstützung einhängen
   encfs.exe C:\encrypted --scan-invalid                    # Ungültige Dateinamen scannen (JSON-Ausgabe)
 

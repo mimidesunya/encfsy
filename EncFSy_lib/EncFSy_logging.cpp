@@ -1,5 +1,5 @@
-#include "EncFSy_logging.h"
 #include "EncFSy_globals.h"
+#include "EncFSy_logging.h"
 #include <malloc.h>
 #include <stdio.h>
 

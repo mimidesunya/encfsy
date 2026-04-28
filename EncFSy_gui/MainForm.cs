@@ -25,6 +25,7 @@ namespace EncFSy_gui
         private bool isInitializing = true;
         private bool isLoadingOptions = false;
         private Dictionary<string, RootPathOptions> rootPathOptionsCache = new Dictionary<string, RootPathOptions>(StringComparer.OrdinalIgnoreCase);
+        private CheckBox nameIoStreamCheckBox;
 
         /// <summary>
         /// Stores options for a specific root path.
@@ -46,6 +47,7 @@ namespace EncFSy_gui
             public bool EnableUnmountNetwork { get; set; } = false;
             public bool AllowIpcBatching { get; set; } = false;
             public bool CloudConflict { get; set; } = false;
+            public bool NameIoStream { get; set; } = false;
 
             // Advanced settings
             public int Timeout { get; set; } = 120000;
@@ -76,7 +78,8 @@ namespace EncFSy_gui
                     VolumeSerial ?? string.Empty,
                     NetworkUnc ?? string.Empty,
                     AllocationUnitSize.ToString(),
-                    SectorSize.ToString()
+                    SectorSize.ToString(),
+                    NameIoStream ? "1" : "0"
                 };
                 return string.Join("|", parts);
             }
@@ -89,12 +92,12 @@ namespace EncFSy_gui
 
                 var parts = data.Split('|');
                 
-                // Current format (12 boolean flags):
+                // Current format:
                 // 0: AltStream, 1: MountManager, 2: CaseInsensitive, 3: ReadOnly, 4: Reverse,
                 // 5: Paranoia, 6: Removable, 7: CurrentSession, 8: FileLockUserMode,
                 // 9: EnableUnmountNetwork, 10: AllowIpcBatching, 11: CloudConflict,
                 // 12: Timeout, 13: VolumeName, 14: VolumeSerial, 15: NetworkUnc,
-                // 16: AllocationUnitSize, 17: SectorSize
+                // 16: AllocationUnitSize, 17: SectorSize, 18: NameIoStream
                 //
                 // Legacy format (14 boolean flags - had DebugMode and UseStdErr):
                 // Same as above but with 2 extra debug flags at indices 12 and 13
@@ -143,6 +146,8 @@ namespace EncFSy_gui
                     options.AllocationUnitSize = allocUnit;
                 if (TryParseInt(parts, sectorIndex, out int sectorSize))
                     options.SectorSize = sectorSize;
+                int nameIoStreamIndex = sectorIndex + 1;
+                options.NameIoStream = GetBool(parts, nameIoStreamIndex);
 
                 return options;
             }
@@ -179,12 +184,55 @@ namespace EncFSy_gui
         public MainForm()
         {
             InitializeComponent();
+            InitializeNameIoStreamOption();
             LoadSettings();
             LoadRootPathOptions();
             InitializeLanguageComboBox();
             ApplyLocalization();
             UpdateAdvancedModeVisibility();
             isInitializing = false;
+        }
+
+        private void InitializeNameIoStreamOption()
+        {
+            nameIoStreamCheckBox = new CheckBox
+            {
+                AutoSize = true,
+                Location = new Point(150, 70),
+                Name = "nameIoStreamCheckBox",
+                Size = new Size(110, 17),
+                TabIndex = 8,
+                Text = "NameIO Stream",
+                UseVisualStyleBackColor = true
+            };
+            nameIoStreamCheckBox.CheckedChanged += anyOption_Changed;
+            toolTip.SetToolTip(nameIoStreamCheckBox, "Use nameio/stream filename encoding when creating a new volume");
+
+            advancedOptionsGroup.Size = new Size(440, 120);
+            advancedOptionsGroup.Controls.Add(nameIoStreamCheckBox);
+        }
+
+        private bool IsNewVolumeRoot(string rootPath)
+        {
+            if (string.IsNullOrWhiteSpace(rootPath))
+                return false;
+
+            try
+            {
+                return !File.Exists(Path.Combine(rootPath, ".encfs6.xml"));
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        private void UpdateNameIoStreamAvailability()
+        {
+            if (nameIoStreamCheckBox == null)
+                return;
+
+            nameIoStreamCheckBox.Enabled = IsNewVolumeRoot(rootPathCombo.Text);
         }
 
         /// <summary>
@@ -269,6 +317,7 @@ namespace EncFSy_gui
             enableUnmountNetworkCheckBox.Text = Strings.EnableUnmountNetwork;
             allowIpcBatchingCheckBox.Text = Strings.AllowIpcBatching;
             cloudConflictCheckBox.Text = Strings.CloudConflict;
+            nameIoStreamCheckBox.Text = Strings.NameIoStream;
 
             // Labels
             timeoutLabel.Text = Strings.Timeout;
@@ -291,6 +340,7 @@ namespace EncFSy_gui
             toolTip.SetToolTip(paranoiaCheckBox, Strings.TooltipParanoia);
             toolTip.SetToolTip(languageComboBox, Strings.TooltipLanguage);
             toolTip.SetToolTip(cloudConflictCheckBox, Strings.TooltipCloudConflict);
+            toolTip.SetToolTip(nameIoStreamCheckBox, Strings.TooltipNameIoStream);
         }
 
         /// <summary>
@@ -415,6 +465,7 @@ namespace EncFSy_gui
                 EnableUnmountNetwork = enableUnmountNetworkCheckBox.Checked,
                 AllowIpcBatching = allowIpcBatchingCheckBox.Checked,
                 CloudConflict = cloudConflictCheckBox.Checked,
+                NameIoStream = nameIoStreamCheckBox.Checked,
 
                 // Advanced settings
                 Timeout = (int)timeoutNumeric.Value,
@@ -449,6 +500,7 @@ namespace EncFSy_gui
                 enableUnmountNetworkCheckBox.Checked = options.EnableUnmountNetwork;
                 allowIpcBatchingCheckBox.Checked = options.AllowIpcBatching;
                 cloudConflictCheckBox.Checked = options.CloudConflict;
+                nameIoStreamCheckBox.Checked = options.NameIoStream;
 
                 // Advanced settings
                 timeoutNumeric.Value = Math.Max(timeoutNumeric.Minimum, Math.Min(timeoutNumeric.Maximum, options.Timeout));
@@ -645,6 +697,7 @@ namespace EncFSy_gui
             previousRootPath = currentPath;
             UpdateButtons();
             UpdateCommandPreview();
+            UpdateNameIoStreamAvailability();
         }
 
         private void anyOption_Changed(object sender, EventArgs e)
@@ -681,6 +734,7 @@ namespace EncFSy_gui
             advancedOptionsGroup.Visible = isAdvancedMode;
             advancedSettingsGroup.Visible = isAdvancedMode;
             commandPreviewGroup.Visible = isAdvancedMode;
+            UpdateNameIoStreamAvailability();
         }
 
         private Process StartEncFS(string args)
@@ -735,6 +789,8 @@ namespace EncFSy_gui
                     args.Append(" --reverse");
                 if (cloudConflictCheckBox.Checked)
                     args.Append(" --cloud-conflict");
+                if (nameIoStreamCheckBox.Checked && IsNewVolumeRoot(rootPath))
+                    args.Append(" --nameio-stream");
                 if (timeoutNumeric.Value != 120000)
                     args.Append($" -i {(int)timeoutNumeric.Value}");
 

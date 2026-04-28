@@ -37,6 +37,6 @@ struct EncFSOptions {
 
 bool IsEncFSExists(LPCWSTR rootDir);
 
-int CreateEncFS(LPCWSTR rootDir, char *password, EncFSMode mode, bool paranoia);
+int CreateEncFS(LPCWSTR rootDir, char *password, EncFSMode mode, bool reverse, bool nameIoStream);
 
 int StartEncFS(EncFSOptions &options, char *password);

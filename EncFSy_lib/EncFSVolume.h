@@ -48,9 +48,24 @@ namespace EncFS
 		/** Enable cloud conflict file handling (Dropbox, Google Drive, OneDrive) */
 		bool cloudConflict = false;
 
+		/** Supported EncFS filename encoding algorithms */
+		enum class NameAlgorithm {
+			Block,
+			Stream
+		};
+
 	private:
 		/** Reverse encryption mode flag */
 		bool reverse = false;
+
+		/** Filename encoding algorithm */
+		NameAlgorithm nameAlgorithm = NameAlgorithm::Block;
+
+		/** nameio interface major version */
+		int32_t nameAlgorithmMajor = 3;
+
+		/** nameio interface minor version */
+		int32_t nameAlgorithmMinor = 0;
 
 		/** Encryption key size in bits (192 or 256) */
 		int32_t keySize = 0;
@@ -141,7 +156,7 @@ namespace EncFS
 		 * Requirements:
 		 * - Format: .encfs6.xml
 		 * - Cipher algorithm: ssl/aes 3.0
-		 * - Name algorithm: nameio/block 3.0
+        * - Name algorithm: nameio/block 3.0 or nameio/stream 2.x
 		 * 
 		 * Note: This method is NOT thread-safe. Call before multi-threaded access.
 		 */
@@ -156,6 +171,12 @@ namespace EncFS
 		 * Generates random salt, derives encryption key, and configures volume.
 		 */
 		void create(char* password, EncFSMode mode, bool reverse);
+
+		/**
+		 * @brief Selects the filename encoding algorithm for a newly-created volume
+		 * @param algorithm Filename encoding algorithm to write to .encfs6.xml
+		 */
+		void setNameAlgorithm(NameAlgorithm algorithm);
 
 		/**
 		 * @brief Saves volume configuration to XML std::string
@@ -321,28 +342,7 @@ namespace EncFS
 		 * @param pbkdf2Key Output parameter receiving derived key
 		 */
 		void deriveKey(char* password, CryptoPP::SecByteBlock &pbkdf2Key);
-		
-		/**
-		 * @brief Processes filename encryption/decryption
-		 * @param cipher AES cipher instance (CBC mode)
-		 * @param cipherLock Mutex for thread-safe cipher access
-		 * @param fileIv File-specific initialization vector
-		 * @param binFileName Input binary filename
-		 * @param fileName Output parameter receiving processed filename
-		 */
-		void processFileName(CryptoPP::SymmetricCipher &cipher, std::mutex &cipherLock, const std::string &fileIv, const std::string &binFileName, std::string &fileName);
-		
-		/**
-		 * @brief Internal block encryption/decryption implementation
-		 * @param fileIv File initialization vector
-		 * @param blockNum Block number
-		 * @param encode True for encryption, false for decryption
-		 * @param encodedBlock Input block (encrypted if decode, plain if encode)
-		 * @param plainBlock Output block (plain if decode, plain if encode)
-		 * @throws EncFSInvalidBlockException if MAC verification fails (decode only)
-		 */
-		void codeBlock(const int64_t fileIv, const int64_t blockNum, const bool encode, const std::string &encodedBlock, std::string &plainBlock);
-		
+
 		/**
 		 * @brief Internal file path encoding/decoding implementation
 		 * @param srcFilePath Source file path

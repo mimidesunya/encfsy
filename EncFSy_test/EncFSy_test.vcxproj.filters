@@ -39,6 +39,9 @@
     <ClCompile Include="test_large_file.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="test_nameio.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="test_performance.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>

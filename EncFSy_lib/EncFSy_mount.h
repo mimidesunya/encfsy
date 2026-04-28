@@ -18,6 +18,7 @@ bool IsEncFSExists(LPCWSTR rootDir);
  * @param password User password for encrypting the volume key (will be zeroed after use)
  * @param mode Security mode (STANDARD or PARANOIA)
  * @param reverse Enable reverse encryption mode (encrypt on-the-fly for read-only access)
+ * @param nameIoStream Use nameio/stream for filename encoding instead of nameio/block
  * @return EXIT_SUCCESS (0) on success, EXIT_FAILURE on error
  * 
  * This function:
@@ -32,7 +33,7 @@ bool IsEncFSExists(LPCWSTR rootDir);
  * 
  * Note: Returns EXIT_FAILURE if the configuration file already exists.
  */
-int CreateEncFS(LPCWSTR rootDir, char* password, EncFSMode mode, bool reverse);
+int CreateEncFS(LPCWSTR rootDir, char* password, EncFSMode mode, bool reverse, bool nameIoStream);
 
 /**
  * @brief Starts the EncFS filesystem and mounts it via Dokan

@@ -1,5 +1,5 @@
-#include "EncFSy_path.h"
 #include "EncFSy_globals.h"
+#include "EncFSy_path.h"
 #include "EncFSy_logging.h"
 #include <dokan.h>
 #include "EncFSUtils.hpp"

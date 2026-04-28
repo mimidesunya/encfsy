@@ -832,13 +832,13 @@ namespace EncFS {
         }
         
         // Adjust len if we read less than expected (accounting for shift)
-        DWORD maxAvailable = totalRead + i;
+        int64_t maxAvailable = static_cast<int64_t>(totalRead) + i;
         if (shift > 0 && totalRead > 0) {
             // First block might have shift offset
-            maxAvailable = i + totalRead - shift;
+            maxAvailable = static_cast<int64_t>(i) + totalRead - shift;
         }
-        if ((DWORD)len > maxAvailable) {
-            len = maxAvailable;
+        if (static_cast<int64_t>(len) > maxAvailable) {
+            len = static_cast<int32_t>(maxAvailable);
         }
         if (i >= (int32_t)len) {
             // Keep capacity for reuse
@@ -854,10 +854,11 @@ namespace EncFS {
             if (consumedBytes >= (int64_t)totalRead) {
                 break;
             }
-            size_t remainInBuffer = (size_t)((int64_t)totalRead - consumedBytes);
+            int64_t remainInBuffer = static_cast<int64_t>(totalRead) - consumedBytes;
+            int64_t availableAfterShift = std::max<int64_t>(0, remainInBuffer - shift);
             
             blockDataLen = static_cast<int32_t>(std::min<int64_t>(len - i, blockSize - shift));
-            blockDataLen = static_cast<int32_t>(std::min<int64_t>(blockDataLen, remainInBuffer - shift));
+            blockDataLen = static_cast<int32_t>(std::min<int64_t>(blockDataLen, availableAfterShift));
 
             // Prepare plain data
             int64_t copySize = blockDataLen + shift;

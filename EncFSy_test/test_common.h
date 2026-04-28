@@ -49,6 +49,7 @@ inline const std::vector<TestCategoryInfo>& GetAvailableCategories()
         {"aapt2",       "Android aapt2 pattern tests"},
         {"advanced",    "Advanced tests"},
         {"rename",      "File rename pattern tests"},
+        {"nameio",      "Filename encoding selection tests"},
         {"conflict",    "Cloud sync conflict tests (requires --cloud-conflict)"},
         {"large",       "Large file tests"},
         {"windows",     "Windows filesystem feature tests"},
@@ -90,6 +91,7 @@ inline void PrintUsage(const char* programName) {
     printf("\n");
     printf("Note: The 'conflict' category requires --cloud-conflict option to be enabled.\n");
     printf("      Case-insensitive specific tests in 'basic' category require --case-insensitive.\n");
+    printf("      The 'nameio' category creates temporary EncFS volumes and is skipped in raw mode.\n");
 }
 
 inline bool ParseCommandLine(int argc, char* argv[], TestConfig& config) {

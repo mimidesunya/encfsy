@@ -47,6 +47,12 @@ bool Test_RapidRenameCycle(const WCHAR* rootDir);
 bool Test_RenameWithConcurrentAccess(const WCHAR* rootDir);
 
 //=============================================================================
+// Filename Encoding Tests (test_nameio.cpp)
+//=============================================================================
+bool Test_NameIOStreamNewVolume(const WCHAR* rootDir);
+bool Test_NameIOStreamIgnoredForExistingVolume(const WCHAR* rootDir);
+
+//=============================================================================
 // Cloud Conflict Tests (test_conflict.cpp)
 //=============================================================================
 bool Test_ConflictShadowCopy(const WCHAR* rootDir);

@@ -1,4 +1,6 @@
-﻿#include "EncFSVolume.h"
+#include "EncFSVolume.h"
+#include "EncFSFileCodec.hpp"
+#include "EncFSNameCodec.hpp"
 #include "EncFSUtils.hpp"
 #include "EncFSCloudConflict.hpp"
 
@@ -97,6 +99,31 @@ namespace EncFS {
             if (!cfg) {
                 throw EncFSBadConfigurationException("Missing node: cfg");
             }
+
+            xml_node<>* nameAlg = cfg->first_node("nameAlg");
+            if (!nameAlg) {
+                throw EncFSBadConfigurationException("Missing node: nameAlg");
+            }
+
+            xml_node<>* nameNode = nameAlg->first_node("name");
+            xml_node<>* majorNode = nameAlg->first_node("major");
+            xml_node<>* minorNode = nameAlg->first_node("minor");
+            if (!nameNode || !nameNode->value() || !majorNode || !minorNode) {
+                throw EncFSBadConfigurationException("Invalid node: nameAlg");
+            }
+
+            this->nameAlgorithmMajor = static_cast<int32_t>(strtol(majorNode->value(), nullptr, 10));
+            this->nameAlgorithmMinor = static_cast<int32_t>(strtol(minorNode->value(), nullptr, 10));
+            const string nameAlgorithmName(nameNode->value());
+            if (nameAlgorithmName == "nameio/block") {
+                this->nameAlgorithm = NameAlgorithm::Block;
+            }
+            else if (nameAlgorithmName == "nameio/stream") {
+                this->nameAlgorithm = NameAlgorithm::Stream;
+            }
+            else {
+                throw EncFSBadConfigurationException(string("Unsupported name algorithm: ") + nameAlgorithmName);
+            }
             
             // Parse all integer values with validation
             this->keySize = parseXmlLong(cfg, "keySize");
@@ -166,6 +193,9 @@ namespace EncFS {
         this->blockMACRandBytes = 0;
         this->allowHoles = true;
         this->altStream = false;
+        this->nameAlgorithm = NameAlgorithm::Block;
+        this->nameAlgorithmMajor = 3;
+        this->nameAlgorithmMinor = 0;
         
         // Configure security level based on mode
         switch (mode) {
@@ -245,6 +275,19 @@ namespace EncFS {
         }
     }
 
+    void EncFSVolume::setNameAlgorithm(NameAlgorithm algorithm)
+    {
+        this->nameAlgorithm = algorithm;
+        if (algorithm == NameAlgorithm::Stream) {
+            this->nameAlgorithmMajor = 2;
+            this->nameAlgorithmMinor = 1;
+            return;
+        }
+
+        this->nameAlgorithmMajor = 3;
+        this->nameAlgorithmMinor = 0;
+    }
+
     /**
      * @brief Saves volume configuration to XML string
      * @param xml Output parameter receiving XML configuration
@@ -264,9 +307,9 @@ namespace EncFS {
             << "\t\t<minor>0</minor>\n"
             << "\t</cipherAlg>\n"
             << "\t<nameAlg>\n"
-            << "\t\t<name>nameio/block</name>\n"
-            << "\t\t<major>3</major>\n"
-            << "\t\t<minor>0</minor>\n"
+            << "\t\t<name>" << (this->nameAlgorithm == NameAlgorithm::Stream ? "nameio/stream" : "nameio/block") << "</name>\n"
+            << "\t\t<major>" << this->nameAlgorithmMajor << "</major>\n"
+            << "\t\t<minor>" << this->nameAlgorithmMinor << "</minor>\n"
             << "\t</nameAlg>\n"
             << "\t<keySize>" << this->keySize << "</keySize>\n"
             << "\t<blockSize>" << this->blockSize << "</blockSize>\n"
@@ -385,43 +428,6 @@ namespace EncFS {
     }
 
     /**
-     * @brief Processes filename encryption/decryption using AES-CBC
-     * @param cipher AES cipher instance (encryption or decryption)
-     * @param cipherLock Mutex for thread-safe cipher access
-     * @param fileIv File-specific initialization vector
-     * @param binFileName Input binary filename
-     * @param fileName Output parameter receiving processed filename
-     */
-    void EncFSVolume::processFileName(
-        SymmetricCipher& cipher,
-        std::mutex& cipherLock,
-        const string& fileIv,
-        const string& binFileName,
-        string& fileName
-    ) {
-        // Generate cipher IV from file IV
-        byte ivSpec[IV_SPEC_SIZE];
-        generateIv(this->volumeHmac, this->hmacLock, string((const char*)this->volumeIv.data(), this->volumeIv.size()), fileIv, (char*)ivSpec);
-
-        // Perform encryption/decryption with thread safety
-        {
-            lock_guard<decltype(cipherLock)> lock(cipherLock);
-            cipher.SetKeyWithIV(
-                this->volumeKey,
-                this->volumeKey.size(),
-                ivSpec
-            );
-            StreamTransformationFilter filter(
-                cipher,
-                new StringSink(fileName),
-                StreamTransformationFilter::ZEROS_PADDING
-            );
-            filter.Put((const byte*)binFileName.data(), binFileName.size());
-            filter.MessageEnd();
-        }
-    }
-
-    /**
      * @brief Encrypts a filename with padding and MAC
      * @param plainFileName Plain filename to encrypt
      * @param plainDirPath Parent directory path (for chained IV)
@@ -432,52 +438,24 @@ namespace EncFS {
         const string& plainDirPath,
         string& encodedFileName
     ) {
-        // Skip encryption for special directory entries
-        if (plainFileName == "." || plainFileName == "..") {
-            encodedFileName.append(plainFileName);
-            return;
-        }
-
-        // Calculate PKCS#7 padding length
-        size_t padLen = IV_SPEC_SIZE - (plainFileName.size() % IV_SPEC_SIZE);
-        
-        // Compute chain IV if enabled
-        char chainIv[CHAIN_IV_SIZE];
-        getChainIv(this->volumeHmac, this->hmacLock, this->chainedNameIV, plainDirPath, chainIv);
-
-        // Apply PKCS#7 padding
-        string paddedFileName = plainFileName;
-        paddedFileName.append(padLen, (char)padLen);
-
-        // Generate 16-bit MAC/checksum
-        char iv[MAC_16_SIZE];
-        if (this->chainedNameIV) {
-            mac16withIv(this->volumeHmac, this->hmacLock, paddedFileName, chainIv, iv);
-        }
-        else {
-            mac16(this->volumeHmac, this->hmacLock, paddedFileName, iv);
-        }
-
-        // Construct file IV from chain IV and MAC
-        string fileIv;
-        fileIv.resize(CHAIN_IV_SIZE);
-        memcpy(&fileIv[0], chainIv, CHAIN_IV_SIZE);
-        fileIv[6] ^= iv[0];
-        fileIv[7] ^= iv[1];
-
-        // Encrypt filename using AES-CBC
-        string binFileName;
-        this->processFileName(
+        NameCodecContext context{
+            this->volumeHmac,
+            this->hmacLock,
+            this->volumeKey,
+            this->volumeIv,
             this->aesCbcEnc,
             this->aesCbcEncLock,
-            fileIv,
-            paddedFileName,
-            binFileName
-        );
-        binFileName.insert(0, iv, MAC_16_SIZE);  // Prepend MAC
-
-        // Encode as Base64
-        encodeBase64FileName(binFileName, encodedFileName);
+            this->aesCbcDec,
+            this->aesCbcDecLock,
+            this->aesCfbEnc,
+            this->aesCfbEncLock,
+            this->aesCfbDec,
+            this->aesCfbDecLock,
+            this->chainedNameIV,
+            this->nameAlgorithm == NameAlgorithm::Stream,
+            this->nameAlgorithmMajor
+        };
+        EncodeFileName(context, plainFileName, plainDirPath, this->base64Lookup, encodedFileName);
     }
 
     /**
@@ -492,71 +470,26 @@ namespace EncFS {
         const string& plainDirPath,
         string& plainFileName
     ) {
-        // Skip decryption for special directory entries
-        if (encodedFileName == "." || encodedFileName == "..") {
-            plainFileName.append(encodedFileName);
-            return;
-        }
+        NameCodecContext context{
+            this->volumeHmac,
+            this->hmacLock,
+            this->volumeKey,
+            this->volumeIv,
+            this->aesCbcEnc,
+            this->aesCbcEncLock,
+            this->aesCbcDec,
+            this->aesCbcDecLock,
+            this->aesCfbEnc,
+            this->aesCfbEncLock,
+            this->aesCfbDec,
+            this->aesCfbDecLock,
+            this->chainedNameIV,
+            this->nameAlgorithm == NameAlgorithm::Stream,
+            this->nameAlgorithmMajor
+        };
 
         auto tryDecode = [&](const string& target, string& decoded) -> bool {
-            decoded.clear();
-
-            string binFileName;
-            if (!decodeBase64FileName(this->base64Lookup, target, binFileName)) {
-                return false;
-            }
-            if (binFileName.size() < MAC_16_SIZE + this->aesCbcDec.MandatoryBlockSize()) {
-                return false;
-            }
-
-            char chainIv[CHAIN_IV_SIZE];
-            getChainIv(this->volumeHmac, this->hmacLock, this->chainedNameIV, plainDirPath, chainIv);
-
-            string fileIv(CHAIN_IV_SIZE, '\0');
-            memcpy(&fileIv[0], chainIv, CHAIN_IV_SIZE);
-            fileIv[6] ^= binFileName[0];
-            fileIv[7] ^= binFileName[1];
-
-            char iv1[MAC_16_SIZE];
-            iv1[0] = binFileName[0];
-            iv1[1] = binFileName[1];
-            binFileName.erase(0, MAC_16_SIZE);
-
-            string plainCandidate;
-            this->processFileName(
-                this->aesCbcDec,
-                this->aesCbcDecLock,
-                fileIv,
-                binFileName,
-                plainCandidate
-            );
-
-            char iv2[MAC_16_SIZE];
-            if (this->chainedNameIV) {
-                mac16withIv(this->volumeHmac, this->hmacLock, plainCandidate.data(), plainCandidate.size(), chainIv, iv2);
-            }
-            else {
-                mac16(this->volumeHmac, this->hmacLock, plainCandidate.data(), plainCandidate.size(), iv2);
-            }
-            if (!CryptoPP::VerifyBufsEqual((const byte*)iv1, (const byte*)iv2, MAC_16_SIZE)) {
-                return false;
-            }
-
-            if (plainCandidate.empty()) {
-                return false;
-            }
-            const size_t padLen = (unsigned char)plainCandidate.back();
-            if (padLen == 0 || padLen > IV_SPEC_SIZE || padLen > plainCandidate.size()) {
-                return false;
-            }
-            for (size_t i = 0; i < padLen; ++i) {
-                if ((unsigned char)plainCandidate[plainCandidate.size() - padLen + i] != padLen) {
-                    return false;
-                }
-            }
-            plainCandidate.erase(plainCandidate.size() - padLen);
-            decoded.assign(plainCandidate);
-            return true;
+            return TryDecodeFileName(context, target, plainDirPath, this->base64Lookup, decoded);
         };
 
         string decoded;
@@ -739,25 +672,27 @@ namespace EncFS {
      * @return Logical file size in bytes
      */
     int64_t EncFSVolume::toDecodedLength(const int64_t encodedLength) {
-        int64_t size = encodedLength;
-        const int64_t headerSize = this->getHeaderSize();
-        
-        // Check minimum size requirement
-        if (size < (this->uniqueIV ? (int64_t)HEADER_SIZE : 0) + headerSize) {
-            return 0;
-        }
-        
-        // Subtract file IV header if present
-        if (this->uniqueIV) {
-            size -= HEADER_SIZE;
-        }
-        
-        // Subtract block headers
-        if (headerSize > 0 && size > 0) {
-            int64_t numBlocks = ((size - 1) / this->blockSize) + 1;
-            size -= numBlocks * headerSize;
-        }
-        return max((int64_t)0, size);
+        FileCodecContext context{
+            this->volumeHmac,
+            this->hmacLock,
+            this->volumeKey,
+            this->volumeIv,
+            this->aesCbcEnc,
+            this->aesCbcEncLock,
+            this->aesCbcDec,
+            this->aesCbcDecLock,
+            this->aesCfbEnc,
+            this->aesCfbEncLock,
+            this->aesCfbDec,
+            this->aesCfbDecLock,
+            this->uniqueIV,
+            this->externalIVChaining,
+            this->allowHoles,
+            this->blockSize,
+            this->blockMACBytes,
+            this->blockMACRandBytes
+        };
+        return ToDecodedLength(context, encodedLength);
     }
 
     /**
@@ -766,23 +701,27 @@ namespace EncFS {
      * @return Encrypted file size in bytes
      */
     int64_t EncFSVolume::toEncodedLength(const int64_t decodedLength) {
-        int64_t size = decodedLength;
-        if (size > 0) {
-            const int64_t headerSize = this->getHeaderSize();
-            const int64_t dataBlockSize = this->blockSize - headerSize;
-            
-            // Add block headers
-            if (headerSize > 0 && dataBlockSize > 0) {
-                int64_t numBlocks = ((size - 1) / dataBlockSize) + 1;
-                size += numBlocks * headerSize;
-            }
-            
-            // Add file IV header if needed
-            if (this->uniqueIV) {
-                size += HEADER_SIZE;
-            }
-        }
-        return size;
+        FileCodecContext context{
+            this->volumeHmac,
+            this->hmacLock,
+            this->volumeKey,
+            this->volumeIv,
+            this->aesCbcEnc,
+            this->aesCbcEncLock,
+            this->aesCbcDec,
+            this->aesCbcDecLock,
+            this->aesCfbEnc,
+            this->aesCfbEncLock,
+            this->aesCfbDec,
+            this->aesCfbDecLock,
+            this->uniqueIV,
+            this->externalIVChaining,
+            this->allowHoles,
+            this->blockSize,
+            this->blockMACBytes,
+            this->blockMACRandBytes
+        };
+        return ToEncodedLength(context, decodedLength);
     }
 
     /**
@@ -796,27 +735,27 @@ namespace EncFS {
         const int64_t fileIv,
         string& encodedFileHeader
     ) {
-        if (!this->uniqueIV) {
-            encodedFileHeader.assign(HEADER_SIZE, (char)0);
-            return;
-        }
-
-        // Compute initial IV based on file path (if external IV chaining enabled)
-        char initIvBytes[CHAIN_IV_SIZE];
-        getChainIv(this->volumeHmac, this->hmacLock, this->externalIVChaining, plainFilePath, initIvBytes);
-        string initIv(initIvBytes, CHAIN_IV_SIZE);
-        
-        // Convert file IV to bytes (big-endian)
-        string decodedFileIv;
-        longToBytesByBE(decodedFileIv, fileIv);
-
-        // Encrypt file IV
-        streamEncrypt(
-            this->volumeHmac, this->hmacLock,
-            string((const char*)this->volumeKey.data(), this->volumeKey.size()), string((const char*)this->volumeIv.data(), this->volumeIv.size()),
-            initIv, this->aesCfbEnc, this->aesCfbEncLock,
-            decodedFileIv, encodedFileHeader
-        );
+        FileCodecContext context{
+            this->volumeHmac,
+            this->hmacLock,
+            this->volumeKey,
+            this->volumeIv,
+            this->aesCbcEnc,
+            this->aesCbcEncLock,
+            this->aesCbcDec,
+            this->aesCbcDecLock,
+            this->aesCfbEnc,
+            this->aesCfbEncLock,
+            this->aesCfbDec,
+            this->aesCfbDecLock,
+            this->uniqueIV,
+            this->externalIVChaining,
+            this->allowHoles,
+            this->blockSize,
+            this->blockMACBytes,
+            this->blockMACRandBytes
+        };
+        EncodeFileIv(context, plainFilePath, fileIv, encodedFileHeader);
     }
 
     /**
@@ -829,26 +768,27 @@ namespace EncFS {
         const string& plainFilePath,
         const string& encodedFileHeader
     ) {
-        if (!this->uniqueIV) {
-            return 0;
-        }
-
-        // Compute initial IV based on file path (if external IV chaining enabled)
-        char initIvBytes[CHAIN_IV_SIZE];
-        getChainIv(this->volumeHmac, this->hmacLock, this->externalIVChaining, plainFilePath, initIvBytes);
-        string initIv(initIvBytes, CHAIN_IV_SIZE);
-
-        // Decrypt file IV
-        string decodedFileIv;
-        streamDecrypt(
-            this->volumeHmac, this->hmacLock,
-            string((const char*)this->volumeKey.data(), this->volumeKey.size()), string((const char*)this->volumeIv.data(), this->volumeIv.size()),
-            initIv, this->aesCfbDec, this->aesCfbDecLock,
-            encodedFileHeader, decodedFileIv
-        );
-
-        // Convert bytes to 64-bit integer (big-endian)
-        return bytesToLongByBE(decodedFileIv);
+        FileCodecContext context{
+            this->volumeHmac,
+            this->hmacLock,
+            this->volumeKey,
+            this->volumeIv,
+            this->aesCbcEnc,
+            this->aesCbcEncLock,
+            this->aesCbcDec,
+            this->aesCbcDecLock,
+            this->aesCfbEnc,
+            this->aesCfbEncLock,
+            this->aesCfbDec,
+            this->aesCfbDecLock,
+            this->uniqueIV,
+            this->externalIVChaining,
+            this->allowHoles,
+            this->blockSize,
+            this->blockMACBytes,
+            this->blockMACRandBytes
+        };
+        return DecodeFileIv(context, plainFilePath, encodedFileHeader);
     }
 
     /**
@@ -864,7 +804,27 @@ namespace EncFS {
         const string& plainBlock,
         string& encodedBlock
     ) {
-        this->codeBlock(fileIv, blockNum, true, plainBlock, encodedBlock);
+        FileCodecContext context{
+            this->volumeHmac,
+            this->hmacLock,
+            this->volumeKey,
+            this->volumeIv,
+            this->aesCbcEnc,
+            this->aesCbcEncLock,
+            this->aesCbcDec,
+            this->aesCbcDecLock,
+            this->aesCfbEnc,
+            this->aesCfbEncLock,
+            this->aesCfbDec,
+            this->aesCfbDecLock,
+            this->uniqueIV,
+            this->externalIVChaining,
+            this->allowHoles,
+            this->blockSize,
+            this->blockMACBytes,
+            this->blockMACRandBytes
+        };
+        EncodeBlock(context, fileIv, blockNum, plainBlock, encodedBlock);
     }
 
     /**
@@ -881,147 +841,27 @@ namespace EncFS {
         const string& encodedBlock,
         string& plainBlock
     ) {
-        this->codeBlock(fileIv, blockNum, false, encodedBlock, plainBlock);
-    }
-
-    /**
-     * @brief Internal block encryption/decryption implementation
-     * @param fileIv File initialization vector
-     * @param blockNum Block number (0-based)
-     * @param encode True for encryption, false for decryption
-     * @param srcBlock Source block (plain if encode, encrypted if decode)
-     * @param destBlock Output block (encrypted if encode, plain if decode)
-     * @throws EncFSInvalidBlockException if MAC verification fails (decode only)
-     */
-    void EncFSVolume::codeBlock(
-        const int64_t fileIv,
-        const int64_t blockNum,
-        const bool encode,
-        const string& srcBlock,
-        string& destBlock
-    ) {
-        // Compute block-specific IV
-        const int64_t iv = blockNum ^ fileIv;
-        const size_t headerSize = this->getHeaderSize();
-
-        if (encode) {
-            // Encryption path
-            
-            // Optimize zero blocks (sparse file support)
-            if (this->allowHoles && srcBlock.size() + headerSize == this->blockSize) {
-                const char* p = srcBlock.data();
-                size_t size = srcBlock.size();
-                if (size > 0 && p[0] == 0 && memcmp(p, p + 1, size - 1) == 0) {
-                    destBlock.assign(this->blockSize, (char)0);
-                    return;
-                }
-            }
-
-            // Prepare block with header + data
-            string block;
-            block.reserve(headerSize + srcBlock.size());
-            block.resize(headerSize);
-            block.append(srcBlock);
-
-            // Compute MAC for integrity
-            byte mac[8];
-            mac64(
-                this->volumeHmac, this->hmacLock,
-                (const byte*)srcBlock.data(), srcBlock.size(), (char*)mac
-            );
-            
-            // Store MAC in header (reversed byte order)
-            for (size_t i = 0; i < this->blockMACBytes; i++) {
-                block[i] = mac[7 - i];
-            }
-
-            // Generate block IV
-            string blockIv;
-            longToBytesByBE(blockIv, iv);
-
-            // Encrypt using AES-CBC (fixed size) or AES-CFB (variable size)
-            if (block.size() == this->blockSize) {
-                blockCipher(
-                    this->volumeHmac, this->hmacLock,
-                    string((const char*)this->volumeKey.data(), this->volumeKey.size()), string((const char*)this->volumeIv.data(), this->volumeIv.size()),
-                    blockIv, this->aesCbcEnc, this->aesCbcEncLock,
-                    block, destBlock
-                );
-            }
-            else {
-                streamEncrypt(
-                    this->volumeHmac, this->hmacLock,
-                    string((const char*)this->volumeKey.data(), this->volumeKey.size()), string((const char*)this->volumeIv.data(), this->volumeIv.size()),
-                    blockIv, this->aesCfbEnc, this->aesCfbEncLock,
-                    block, destBlock
-                );
-            }
-        }
-        else {
-            // Decryption path
-            
-            // Optimize zero blocks (sparse file support)
-            if (this->allowHoles && srcBlock.size() == this->blockSize) {
-                const char* p = srcBlock.data();
-                size_t size = srcBlock.size();
-                if (size > 0 && p[0] == 0 && memcmp(p, p + 1, size - 1) == 0) {
-                    destBlock.assign(this->blockSize - headerSize, (char)0);
-                    return;
-                }
-            }
-
-            // Generate block IV
-            string blockIv;
-            longToBytesByBE(blockIv, iv);
-
-            // Decrypt using AES-CBC (fixed size) or AES-CFB (variable size)
-            if (srcBlock.size() == this->blockSize) {
-                blockCipher(
-                    this->volumeHmac, this->hmacLock,
-                    string((const char*)this->volumeKey.data(), this->volumeKey.size()), string((const char*)this->volumeIv.data(), this->volumeIv.size()),
-                    blockIv, this->aesCbcDec, this->aesCbcDecLock,
-                    srcBlock, destBlock
-                );
-            }
-            else {
-                streamDecrypt(
-                    this->volumeHmac, this->hmacLock,
-                    string((const char*)this->volumeKey.data(), this->volumeKey.size()), string((const char*)this->volumeIv.data(), this->volumeIv.size()),
-                    blockIv, this->aesCfbDec, this->aesCfbDecLock,
-                    srcBlock, destBlock
-                );
-            }
-
-            // Verify MAC
-            if (destBlock.size() < headerSize) {
-                throw EncFSInvalidBlockException();
-            }
-            
-            byte mac[8];
-            // Compute MAC of decrypted data
-            mac64(
-                this->volumeHmac, this->hmacLock,
-                (const byte*)destBlock.data() + this->blockMACBytes,
-                destBlock.size() - this->blockMACBytes,
-                (char*)mac
-            );
-
-            // Compare with stored MAC (reversed byte order and constant time)
-            byte reversedMac[8];
-            for (size_t i = 0; i < this->blockMACBytes; i++) {
-                reversedMac[i] = mac[7 - i];
-            }
-
-            if (!CryptoPP::VerifyBufsEqual((const byte*)destBlock.data(), reversedMac, this->blockMACBytes)) {
-                throw EncFSInvalidBlockException();
-            }
-
-            // Remove header to get plain data
-            destBlock.assign(
-                destBlock.data() + headerSize,
-                destBlock.size() - headerSize
-            );
-        }
+        FileCodecContext context{
+            this->volumeHmac,
+            this->hmacLock,
+            this->volumeKey,
+            this->volumeIv,
+            this->aesCbcEnc,
+            this->aesCbcEncLock,
+            this->aesCbcDec,
+            this->aesCbcDecLock,
+            this->aesCfbEnc,
+            this->aesCfbEncLock,
+            this->aesCfbDec,
+            this->aesCfbDecLock,
+            this->uniqueIV,
+            this->externalIVChaining,
+            this->allowHoles,
+            this->blockSize,
+            this->blockMACBytes,
+            this->blockMACRandBytes
+        };
+        DecodeBlock(context, fileIv, blockNum, encodedBlock, plainBlock);
     }
 
 } // namespace EncFS

@@ -57,6 +57,15 @@
     <ClInclude Include="CredentialManager.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="EncFSCloudConflict.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="EncFSNameCodec.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="EncFSFileCodec.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="EncFSy.cpp">
@@ -81,6 +90,15 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="EncFSy_dokan.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="EncFSCloudConflict.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="EncFSNameCodec.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="EncFSFileCodec.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

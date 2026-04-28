@@ -592,6 +592,21 @@ static void RunAllTests(TestRunner& runner,
     }
 
     //=====================================================================
+    // Filename Encoding Tests
+    //=====================================================================
+    if (ShouldRunCategory(selectedCategories, "nameio")) {
+        if (isRawFilesystem) {
+            printf("\n--- FILENAME ENCODING TESTS (skipped; requires EncFS mount, not raw filesystem) ---\n");
+        } else {
+            printf("\n--- FILENAME ENCODING TESTS ---\n");
+            runner.runTest("nameio/stream encrypt/decrypt roundtrip", Test_NameIOStreamNewVolume, rootDir);
+            runner.runTest("nameio/stream ignored for existing volume", Test_NameIOStreamIgnoredForExistingVolume, rootDir);
+        }
+    } else {
+        printf("\n--- FILENAME ENCODING TESTS (skipped; include with -c nameio) ---\n");
+    }
+
+    //=====================================================================
     // Cloud Conflict Tests
     //=====================================================================
     if (ShouldRunCategory(selectedCategories, "conflict")) {

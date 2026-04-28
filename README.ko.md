@@ -77,6 +77,7 @@ encfsy는 안전한 비밀번호 관리를 위해 **Windows Credential Manager**
 4. "Mount" 클릭
 
 "Show Advanced Options"를 통해 명령줄 버전과 동일한 상세 설정에 접근할 수 있습니다.
+"NameIO Stream" 고급 옵션은 새 볼륨을 만들 때만 파일 이름 암호화를 nameio/stream으로 선택합니다. 기존 볼륨은 `.encfs6.xml`에 저장된 설정을 계속 사용합니다.
 
 ## 명령줄에서 Credential Manager 사용
 GUI에서 "Remember Password"를 체크하고 마운트하면 비밀번호가 Windows Credential Manager에 저장됩니다.
@@ -143,6 +144,8 @@ Usage: encfs.exe [options] <rootDir> <mountPoint>
   --paranoia                                   AES-256 암호화, 이름 변경 IV 및 외부 IV 체이닝 활성화
   --alt-stream                                 NTFS 대체 데이터 스트림 활성화
   --case-insensitive                           대소문자를 구분하지 않는 파일 이름 매칭 수행
+  --nameio-stream                              새 볼륨 생성 시 nameio/stream 파일 이름 암호화 사용
+                                               (기본값: nameio/block)
   --cloud-conflict                             클라우드 충돌 파일 처리 활성화
                                                (Dropbox, Google Drive, OneDrive). 기본값 비활성화
   --reverse                                    역방향 모드: 평문 rootDir을 mountPoint에
@@ -154,6 +157,7 @@ Usage: encfs.exe [options] <rootDir> <mountPoint>
   encfs.exe C:\Users M: --dokan-network \\myfs\share       # UNC \\myfs\share로 네트워크 드라이브 마운트
   encfs.exe C:\Data M: --volume-name "보안 드라이브"        # 사용자 정의 볼륨 이름으로 마운트
   encfs.exe C:\Data M: --use-credential                    # Credential Manager에서 저장된 비밀번호 사용
+  encfs.exe C:\Data M: --nameio-stream                     # nameio/stream으로 새 볼륨 생성
   encfs.exe C:\Data M: --cloud-conflict                    # 클라우드 충돌 지원으로 마운트
   encfs.exe C:\encrypted --scan-invalid                    # 잘못된 파일 이름 스캔 (JSON 출력)
 

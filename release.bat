@@ -9,7 +9,8 @@ set "ROOT=%~dp0"
 set "CONFIG=Release"
 set "PLATFORM=x64"
 set "GUI_PLATFORM=AnyCPU"
-set "CERT_FILE=%ROOT%codesign.pfx"
+if not defined SIGN_CERT_FILE set "SIGN_CERT_FILE=%ROOT%codesign.pfx"
+set "CERT_FILE=%SIGN_CERT_FILE%"
 set "INSTALLER_SCRIPT=%ROOT%installer\installer.nsi"
 set "TIMESTAMP_URL=http://timestamp.digicert.com"
 set "ENCFS_EXE=%ROOT%x64\Release\encfs.exe"
@@ -27,6 +28,7 @@ if defined SIGN_ENABLED (
         exit /b 1
     )
     call :resolve_password || exit /b 1
+    call :validate_certificate || exit /b 1
     call :resolve_signtool || exit /b 1
 )
 
@@ -96,6 +98,11 @@ set "SIGN_PASSWORD=%PFX_PASSWORD:"=%"
 if defined SIGN_PASSWORD exit /b 0
 echo ERROR: PFX_PASSWORD is not set. Define it in local.bat.
 exit /b 1
+
+:validate_certificate
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($env:CERT_FILE, $env:SIGN_PASSWORD); if (-not $cert.HasPrivateKey) { [Console]::Error.WriteLine('ERROR: Code signing certificate has no private key.'); [Environment]::Exit(1) }; if ($cert.NotAfter -le (Get-Date)) { [Console]::Error.WriteLine(('ERROR: Code signing certificate expired on {0:u}. Set SIGN_CERT_FILE to a renewed PFX before releasing.' -f $cert.NotAfter)); [Environment]::Exit(1) }; $eku = $cert.Extensions | Where-Object { $_.Oid.Value -eq '2.5.29.37' }; if ($eku -and $eku.Format($false) -notmatch '1\.3\.6\.1\.5\.5\.7\.3\.3|Code Signing') { [Console]::Error.WriteLine('ERROR: Certificate is not valid for code signing.'); [Environment]::Exit(1) }; Write-Host ('Using certificate: {0}; expires {1:u}' -f $cert.Subject, $cert.NotAfter)"
+if errorlevel 1 exit /b 1
+exit /b 0
 
 :resolve_msbuild
 if exist "%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" (

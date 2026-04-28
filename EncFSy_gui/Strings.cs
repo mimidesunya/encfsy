@@ -147,6 +147,7 @@ namespace EncFSy_gui
         public static string EnableUnmountNetwork { get { return L("Explorer Unmount", "エクスプローラーでアンマウント", "탐색기에서 언마운트", "在资源管理器中卸载", "在檔案總管中卸載", "Размонтировать через проводник", "إلغاء التركيب عبر المستكشف", "Über Explorer aushängen"); } }
         public static string AllowIpcBatching { get { return L("IPC Batching", "IPC バッチング", "IPC 배칭", "IPC 批处理", "IPC 批次處理", "IPC пакетная обработка", "تجميع IPC", "IPC-Batching"); } }
         public static string CloudConflict { get { return L("Cloud Conflict", "クラウドコンフリクト", "클라우드 충돌", "云冲突", "雲端衝突", "Облачный конфликт", "تعارض السحابة", "Cloud-Konflikt"); } }
+        public static string NameIoStream { get { return L("NameIO Stream", "NameIO Stream", "NameIO Stream", "NameIO Stream", "NameIO Stream", "NameIO Stream", "NameIO Stream", "NameIO Stream"); } }
 
         // Labels
         public static string Language { get { return L("Language:", "言語:", "언어:", "语言:", "語言:", "Язык:", "اللغة:", "Sprache:"); } }
@@ -176,5 +177,6 @@ namespace EncFSy_gui
         public static string TooltipParanoia { get { return L("AES-256, renamed IVs, external IV chaining", "AES-256、リネーム IV、外部 IV チェーン", "AES-256, 이름 변경 IV, 외부 IV 체인", "AES-256、重命名 IV、外部 IV 链", "AES-256、重新命名 IV、外部 IV 鏈", "AES-256, переименование IV", "AES-256، إعادة تسمية IV، سلسلة IV", "AES-256, umbenannte IVs, ext. IV-Verkettung"); } }
         public static string TooltipLanguage { get { return L("Select display language", "表示言語を選択", "표시 언어 선택", "选择显示语言", "選擇顯示語言", "Выберите язык интерфейса", "اختر لغة العرض", "Anzeigesprache auswählen"); } }
         public static string TooltipCloudConflict { get { return L("Enable cloud conflict file handling (Dropbox, Google Drive, OneDrive)", "クラウドコンフリクトファイル対応を有効化（Dropbox、Google Drive、OneDrive）", "클라우드 충돌 파일 처리 활성화 (Dropbox, Google Drive, OneDrive)", "启用云冲突文件处理（Dropbox、Google Drive、OneDrive）", "啟用雲端衝突檔案處理（Dropbox、Google Drive、OneDrive）", "Включить обработку конфликтных файлов облака (Dropbox, Google Drive, OneDrive)", "تمكين معالجة ملفات التعارض السحابية (Dropbox, Google Drive, OneDrive)", "Cloud-Konfliktdatei-Behandlung aktivieren (Dropbox, Google Drive, OneDrive)"); } }
+        public static string TooltipNameIoStream { get { return L("Use nameio/stream filename encoding when creating a new volume. Existing volumes keep their saved setting.", "新規ボリューム作成時に nameio/stream ファイル名暗号化を使用します。既存ボリュームは保存済み設定を使います。", "새 볼륨을 만들 때 nameio/stream 파일 이름 암호화를 사용합니다. 기존 볼륨은 저장된 설정을 유지합니다.", "创建新卷时使用 nameio/stream 文件名加密。现有卷会保留已保存的设置。", "建立新磁碟區時使用 nameio/stream 檔案名稱加密。既有磁碟區會保留已儲存的設定。", "Использовать шифрование имён nameio/stream при создании нового тома. Существующие тома сохраняют свои настройки.", "استخدم تشفير أسماء الملفات nameio/stream عند إنشاء وحدة جديدة. تحتفظ الوحدات الموجودة بإعداداتها المحفوظة.", "Beim Erstellen eines neuen Volumes nameio/stream für Dateinamen verwenden. Bestehende Volumes behalten ihre gespeicherte Einstellung."); } }
     }
 }

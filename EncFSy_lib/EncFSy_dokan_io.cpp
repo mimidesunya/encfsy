@@ -195,14 +195,23 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
     struct AutoRevert { 
         HANDLE token; 
         bool active; 
-        AutoRevert(HANDLE t):token(t),active(t!=INVALID_HANDLE_VALUE){} 
+        AutoRevert(HANDLE t):token(t),active(t != nullptr && t != INVALID_HANDLE_VALUE){}
         ~AutoRevert(){ if(active){ RevertToSelf(); CloseHandle(token);} } 
     } reverter(userTokenHandle);
+
+    auto impersonateCaller = [&]() -> bool {
+        if (!reverter.active) return true;
+        if (ImpersonateLoggedOnUser(reverter.token)) return true;
+        error = GetLastError();
+        ErrorPrint(L"CreateFile: ImpersonateLoggedOnUser FAILED (error=%lu)\n", error);
+        status = DokanNtStatusFromWin32(error);
+        return false;
+    };
 
     if (DokanFileInfo->IsDirectory) {
         // Directory creation/opening
         if (creationDisposition == CREATE_NEW || creationDisposition == OPEN_ALWAYS) {
-            if (reverter.active) ImpersonateLoggedOnUser(reverter.token);
+            if (!impersonateCaller()) return status;
             if (!CreateDirectory(filePath, &securityAttrib)) {
                 error = GetLastError();
                 if (error != ERROR_ALREADY_EXISTS || creationDisposition == CREATE_NEW) {
@@ -224,7 +233,7 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
                 return STATUS_NOT_A_DIRECTORY;
             }
             // Open directory handle
-            if (reverter.active) ImpersonateLoggedOnUser(reverter.token);
+            if (!impersonateCaller()) return status;
             handle = CreateFileW(filePath, genericDesiredAccess, ShareAccess,
                 &securityAttrib, OPEN_EXISTING,
                 fileAttributesAndFlags | FILE_FLAG_BACKUP_SEMANTICS, NULL);
@@ -273,7 +282,7 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
             genericDesiredAccess |= GENERIC_WRITE;
         }
         
-        if (reverter.active) ImpersonateLoggedOnUser(reverter.token);
+        if (!impersonateCaller()) return status;
         
         bool fileExists = (fileAttr != INVALID_FILE_ATTRIBUTES);
         bool isCreatingNewFile = (!fileExists && 
@@ -566,7 +575,7 @@ NTSTATUS DOKAN_CALLBACK EncFSReadFile(LPCWSTR FileName, LPVOID Buffer,
     size_t offset = static_cast<size_t>(Offset);
     EncFS::EncFSFile* encfsFile = nullptr;
     std::unique_ptr<EncFS::EncFSFile> tempEncFSFile;
-    WCHAR filePath[DOKAN_MAX_PATH];
+    WCHAR filePath[DOKAN_MAX_PATH] = {};
     bool hasFilePath = false;
 
     DbgPrintV(L"ReadFile: '%s' offset=%I64d len=%lu\n", FileName, Offset, BufferLength);
@@ -575,6 +584,7 @@ NTSTATUS DOKAN_CALLBACK EncFSReadFile(LPCWSTR FileName, LPVOID Buffer,
         if (hasFilePath) return true;
         try {
             GetFilePath(filePath, FileName, false);
+            filePath[DOKAN_MAX_PATH - 1] = L'\0';
             hasFilePath = true;
             return true;
         }
@@ -936,6 +946,7 @@ EncFSFindFiles(LPCWSTR FileName,
                 continue;
             }
             catch (const std::exception& ex) {
+                (void)ex;
                 DbgPrintV(L"  [WARN] Skipping file (exception: %S): '%s'\n", ex.what(), findData.cFileName);
                 continue;
             }
@@ -949,6 +960,7 @@ EncFSFindFiles(LPCWSTR FileName,
                 }
             }
             catch (const std::exception& ex) {
+                (void)ex;
                 DbgPrintV(L"  [WARN] Skipping file (exception: %S)\n", ex.what());
                 continue;
             }
@@ -989,25 +1001,25 @@ EncFSFindFiles(LPCWSTR FileName,
  * @return NTSTATUS indicating success or failure.
  */
 static NTSTATUS changeIVRecursive(LPCWSTR newFilePath, const string& cOldPlainDirPath, const string& cNewPlainDirPath) {
-    WCHAR findPath[DOKAN_MAX_PATH];
-    WCHAR oldPath[DOKAN_MAX_PATH];
-    WCHAR newPath[DOKAN_MAX_PATH];
+    std::vector<WCHAR> findPath(DOKAN_MAX_PATH);
+    std::vector<WCHAR> oldPath(DOKAN_MAX_PATH);
+    std::vector<WCHAR> newPath(DOKAN_MAX_PATH);
 
     if (wcslen(newFilePath) + 5 > DOKAN_MAX_PATH) return STATUS_BUFFER_OVERFLOW;
 
-    wcscpy_s(findPath, DOKAN_MAX_PATH, newFilePath);
-    wcscat_s(findPath, DOKAN_MAX_PATH, L"\\*.*");
+    wcscpy_s(findPath.data(), DOKAN_MAX_PATH, newFilePath);
+    wcscat_s(findPath.data(), DOKAN_MAX_PATH, L"\\*.*");
 
-    wcscpy_s(oldPath, DOKAN_MAX_PATH, newFilePath);
-    wcscat_s(oldPath, DOKAN_MAX_PATH, L"\\");
+    wcscpy_s(oldPath.data(), DOKAN_MAX_PATH, newFilePath);
+    wcscat_s(oldPath.data(), DOKAN_MAX_PATH, L"\\");
 
-    size_t oldPathLen = wcslen(oldPath);
-    wcscpy_s(newPath, DOKAN_MAX_PATH, oldPath);
+    size_t oldPathLen = wcslen(oldPath.data());
+    wcscpy_s(newPath.data(), DOKAN_MAX_PATH, oldPath.data());
 
     DbgPrintV(L"ChangeIVRecursive: '%s'\n", newFilePath);
 
     WIN32_FIND_DATAW find;
-    HANDLE findHandle = FindFirstFileW(findPath, &find);
+    HANDLE findHandle = FindFirstFileW(findPath.data(), &find);
     if (findHandle == INVALID_HANDLE_VALUE) {
         DWORD error = GetLastError();
         ErrorPrint(L"ChangeIVRecursive: FindFirstFile FAILED (error=%lu)\n", error);
@@ -1048,8 +1060,8 @@ static NTSTATUS changeIVRecursive(LPCWSTR newFilePath, const string& cOldPlainDi
 
         // Rename file if using chained name IV
         if (encfs.isChainedNameIV()) {
-            DbgPrintV(L"  [INFO] Renaming (chained IV): '%s' -> '%s'\n", oldPath, newPath);
-            if (!MoveFileW(oldPath, newPath)) {
+            DbgPrintV(L"  [INFO] Renaming (chained IV): '%s' -> '%s'\n", oldPath.data(), newPath.data());
+            if (!MoveFileW(oldPath.data(), newPath.data())) {
                 DWORD error = GetLastError();
                 ErrorPrint(L"ChangeIVRecursive: MoveFile FAILED (error=%lu)\n", error);
                 return DokanNtStatusFromWin32(error);
@@ -1063,7 +1075,7 @@ static NTSTATUS changeIVRecursive(LPCWSTR newFilePath, const string& cOldPlainDi
 
         if (find.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
             // Recurse into subdirectories
-            NTSTATUS status = changeIVRecursive(newPath, cPlainOldPath, cPlainNewPath);
+            NTSTATUS status = changeIVRecursive(newPath.data(), cPlainOldPath, cPlainNewPath);
             if (status != STATUS_SUCCESS) {
                 return status;
             }
@@ -1071,8 +1083,8 @@ static NTSTATUS changeIVRecursive(LPCWSTR newFilePath, const string& cOldPlainDi
         else {
             // Update file IV if using external IV chaining
             if (encfs.isExternalIVChaining()) {
-                DbgPrintV(L"  [INFO] Updating file IV: '%s'\n", newPath);
-                HANDLE handle2 = CreateFileW(newPath, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_WRITE, NULL,
+                DbgPrintV(L"  [INFO] Updating file IV: '%s'\n", newPath.data());
+                HANDLE handle2 = CreateFileW(newPath.data(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_WRITE, NULL,
                     OPEN_EXISTING, 0, NULL);
                 if (handle2 == INVALID_HANDLE_VALUE) {
                     DWORD error = GetLastError();
@@ -1113,10 +1125,10 @@ EncFSMoveFile(LPCWSTR FileName, LPCWSTR NewFileName, BOOL ReplaceIfExisting,
     BOOL result;
     size_t newFilePathLen;
 
-    WCHAR filePath[DOKAN_MAX_PATH];
-    WCHAR newFilePath[DOKAN_MAX_PATH];
-    GetFilePath(filePath, FileName, false);
-    GetFilePath(newFilePath, NewFileName, true);
+    std::vector<WCHAR> filePath(DOKAN_MAX_PATH);
+    std::vector<WCHAR> newFilePath(DOKAN_MAX_PATH);
+    GetFilePath(filePath.data(), FileName, false);
+    GetFilePath(newFilePath.data(), NewFileName, true);
 
     DbgPrint(L"MoveFile: '%s' -> '%s' (replace=%d, isDir=%d)\n", 
         FileName, NewFileName, ReplaceIfExisting, DokanFileInfo->IsDirectory);
@@ -1148,15 +1160,15 @@ EncFSMoveFile(LPCWSTR FileName, LPCWSTR NewFileName, BOOL ReplaceIfExisting,
             }
             
             std::string cSearch = cParentEnc + EncFS::g_pathSeparator + "*";
-            WCHAR searchPath[DOKAN_MAX_PATH];
-            ToWFilePath(strConv, cSearch, searchPath);
+            std::vector<WCHAR> searchPath(DOKAN_MAX_PATH);
+            ToWFilePath(strConv, cSearch, searchPath.data());
 
-            WCHAR parentPhys[DOKAN_MAX_PATH];
-            ToWFilePath(strConv, cParentEnc, parentPhys);
+            std::vector<WCHAR> parentPhys(DOKAN_MAX_PATH);
+            ToWFilePath(strConv, cParentEnc, parentPhys.data());
 
             WIN32_FIND_DATAW find;
             ZeroMemory(&find, sizeof(find));
-            HANDLE hFind = FindFirstFileW(searchPath, &find);
+            HANDLE hFind = FindFirstFileW(searchPath.data(), &find);
             if (hFind != INVALID_HANDLE_VALUE) {
                 auto closer = [](HANDLE h) { FindClose(h); };
                 std::unique_ptr<void, decltype(closer)> guard(hFind, closer);
@@ -1180,19 +1192,20 @@ EncFSMoveFile(LPCWSTR FileName, LPCWSTR NewFileName, BOOL ReplaceIfExisting,
                         TRUE);
                     if (cmp == CSTR_EQUAL) {
                         // Build full physical path
-                        WCHAR candidate[DOKAN_MAX_PATH];
-                        wcsncpy_s(candidate, parentPhys, _TRUNCATE);
-                        size_t len = wcslen(candidate);
+                        std::vector<WCHAR> candidate(DOKAN_MAX_PATH);
+                        wcsncpy_s(candidate.data(), DOKAN_MAX_PATH, parentPhys.data(), _TRUNCATE);
+                        candidate[DOKAN_MAX_PATH - 1] = L'\0';
+                        size_t len = wcslen(candidate.data());
                         if (len + 1 < DOKAN_MAX_PATH) {
                             if (candidate[len - 1] != L'\\') {
                                 candidate[len++] = L'\\';
                                 candidate[len] = L'\0';
                             }
-                            wcsncat_s(candidate, find.cFileName, _TRUNCATE);
+                            wcsncat_s(candidate.data(), DOKAN_MAX_PATH, find.cFileName, _TRUNCATE);
                         }
 
                         // Collision with different file
-                        if (wcscmp(candidate, filePath) != 0) {
+                        if (wcscmp(candidate.data(), filePath.data()) != 0) {
                             if (!ReplaceIfExisting) {
                                 DbgPrintV(L"  [INFO] Case-insensitive collision detected\n");
                                 return STATUS_OBJECT_NAME_COLLISION;
@@ -1220,7 +1233,7 @@ EncFSMoveFile(LPCWSTR FileName, LPCWSTR NewFileName, BOOL ReplaceIfExisting,
             DokanFileInfo->Context = 0;
 
             DbgPrintV(L"  [INFO] Moving directory (with IV update)\n");
-            if (!MoveFileW(filePath, newFilePath)) {
+            if (!MoveFileW(filePath.data(), newFilePath.data())) {
                 DWORD error = GetLastError();
                 ErrorPrint(L"MoveFile: MoveFileW FAILED (error=%lu)\n", error);
                 return DokanNtStatusFromWin32(error);
@@ -1233,7 +1246,7 @@ EncFSMoveFile(LPCWSTR FileName, LPCWSTR NewFileName, BOOL ReplaceIfExisting,
             wstring wNewPlainDirPath(NewFileName);
             string cNewPlainDirPath = strConv.to_bytes(wNewPlainDirPath);
 
-            return changeIVRecursive(newFilePath, cOldPlainDirPath, cNewPlainDirPath);
+            return changeIVRecursive(newFilePath.data(), cOldPlainDirPath, cNewPlainDirPath);
         }
         else if (encfs.isExternalIVChaining()) {
             // Single file: save original IV header before modifying it.
@@ -1264,14 +1277,14 @@ EncFSMoveFile(LPCWSTR FileName, LPCWSTR NewFileName, BOOL ReplaceIfExisting,
             }
 
             // Perform the actual rename
-            newFilePathLen = wcslen(newFilePath);
-            DWORD bufferSize = (DWORD)(sizeof(FILE_RENAME_INFO) + newFilePathLen * sizeof(newFilePath[0]));
+            newFilePathLen = wcslen(newFilePath.data());
+            DWORD bufferSize = (DWORD)(sizeof(FILE_RENAME_INFO) + newFilePathLen * sizeof(WCHAR));
             std::vector<BYTE> renameInfoBuffer(bufferSize);
             PFILE_RENAME_INFO renameInfo = (PFILE_RENAME_INFO)renameInfoBuffer.data();
             renameInfo->ReplaceIfExists = ReplaceIfExisting ? TRUE : FALSE;
             renameInfo->RootDirectory = NULL;
-            renameInfo->FileNameLength = (DWORD)newFilePathLen * sizeof(newFilePath[0]);
-            wcscpy_s(renameInfo->FileName, newFilePathLen + 1, newFilePath);
+            renameInfo->FileNameLength = (DWORD)newFilePathLen * sizeof(WCHAR);
+            wcscpy_s(renameInfo->FileName, newFilePathLen + 1, newFilePath.data());
 
             result = SetFileInformationByHandle(encfsFile->getHandle(), FileRenameInfo, renameInfo, bufferSize);
             if (result) {
@@ -1298,16 +1311,16 @@ EncFSMoveFile(LPCWSTR FileName, LPCWSTR NewFileName, BOOL ReplaceIfExisting,
     }
 
     // Perform the actual rename using SetFileInformationByHandle
-    newFilePathLen = wcslen(newFilePath);
-    DWORD bufferSize = (DWORD)(sizeof(FILE_RENAME_INFO) + newFilePathLen * sizeof(newFilePath[0]));
+    newFilePathLen = wcslen(newFilePath.data());
+    DWORD bufferSize = (DWORD)(sizeof(FILE_RENAME_INFO) + newFilePathLen * sizeof(WCHAR));
 
     std::vector<BYTE> renameInfoBuffer(bufferSize);
     PFILE_RENAME_INFO renameInfo = (PFILE_RENAME_INFO)renameInfoBuffer.data();
 
     renameInfo->ReplaceIfExists = ReplaceIfExisting ? TRUE : FALSE;
     renameInfo->RootDirectory = NULL;
-    renameInfo->FileNameLength = (DWORD)newFilePathLen * sizeof(newFilePath[0]);
-    wcscpy_s(renameInfo->FileName, newFilePathLen + 1, newFilePath);
+    renameInfo->FileNameLength = (DWORD)newFilePathLen * sizeof(WCHAR);
+    wcscpy_s(renameInfo->FileName, newFilePathLen + 1, newFilePath.data());
 
     result = SetFileInformationByHandle(encfsFile->getHandle(), FileRenameInfo, renameInfo, bufferSize);
 

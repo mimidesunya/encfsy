@@ -101,6 +101,7 @@ Use **encfsw.exe** to easily mount and unmount volumes without the command line.
 4. Click "Mount"
 
 "Show Advanced Options" provides access to the same detailed settings as the command-line version.
+The "NameIO Stream" advanced option selects nameio/stream filename encoding only when creating a new volume; existing volumes keep the setting stored in `.encfs6.xml`.
 
 ## Using Credential Manager from Command Line
 When you mount with "Remember Password" checked in the GUI, the password is saved to Windows Credential Manager.
@@ -171,6 +172,8 @@ Options:
                                                IV chaining.
   --alt-stream                                 Enable NTFS alternate data streams.
   --case-insensitive                           Perform case-insensitive filename matching.
+  --nameio-stream                              Use nameio/stream filename encoding when creating
+                                               a new volume (default: nameio/block).
   --cloud-conflict                             Enable cloud conflict file handling (Dropbox,
                                                Google Drive, OneDrive). Disabled by default.
   --reverse                                    Reverse mode: show plaintext rootDir as encrypted
@@ -182,6 +185,7 @@ Examples:
   encfs.exe C:\Users M: --dokan-network \\myfs\share       # Mount as network drive with UNC \\myfs\share
   encfs.exe C:\Data M: --volume-name "My Secure Drive"     # Mount with custom volume name
   encfs.exe C:\Data M: --use-credential                    # Use stored password from Credential Manager
+  encfs.exe C:\Data M: --nameio-stream                     # Create a new volume with nameio/stream
   encfs.exe C:\Data M: --cloud-conflict                    # Mount with cloud conflict file support
   encfs.exe C:\encrypted --scan-invalid                    # Scan for invalid filenames (JSON output)
 

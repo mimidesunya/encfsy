@@ -105,6 +105,7 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
     bool useCredential = false;       // Use Windows Credential Manager (keep password)
     bool useCredentialOnce = false;   // Use Windows Credential Manager (delete after use)
     bool scanInvalid = false;         // Scan for undecodable filenames only
+    bool nameIoStream = false;        // Use nameio/stream for newly-created volumes
 
     // Encryption mode (STANDARD or PARANOIA)
     EncFSMode mode = STANDARD;
@@ -270,6 +271,10 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
                     // Enable case-insensitive filename matching
                     efo.CaseInsensitive = TRUE;
                 }
+                else if (wcscmp(argv[command], L"--nameio-stream") == 0) {
+                    // Use nameio/stream when creating a new volume
+                    nameIoStream = true;
+                }
                 else if (wcscmp(argv[command], L"--cloud-conflict") == 0) {
                     // Enable cloud conflict file handling (Dropbox, Google Drive, OneDrive)
                     efo.CloudConflict = TRUE;
@@ -340,7 +345,7 @@ int __cdecl wmain(ULONG argc, PWCHAR argv[]) {
             // Note: Cannot use credential manager for new volume creation
             printf("%s", EncFSMessages::MSG_CONFIG_NOT_EXIST());
             getpass(EncFSMessages::MSG_ENTER_NEW_PASSWORD(), password, sizeof password);
-            CreateEncFS(efo.RootDirectory, password, mode, efo.Reverse);
+            CreateEncFS(efo.RootDirectory, password, mode, efo.Reverse, nameIoStream);
             // Password is cleared by CreateEncFS/deriveKey, but ensure it's cleared
             SecureZeroMemory(password, sizeof(password));
         }
