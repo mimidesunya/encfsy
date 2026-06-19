@@ -43,6 +43,31 @@ static inline EncFS::EncFSFile* ToEncFSFile(ULONG64 context) {
     return reinterpret_cast<EncFS::EncFSFile*>(context);
 }
 
+static NTSTATUS SetPhysicalDeleteDisposition(HANDLE handle, LPCWSTR fileName,
+    BOOLEAN deleteFile, bool logError) {
+    if (!handle || handle == INVALID_HANDLE_VALUE) {
+        return DokanNtStatusFromWin32(ERROR_INVALID_HANDLE);
+    }
+
+    FILE_DISPOSITION_INFO fdi = {};
+    fdi.DeleteFile = deleteFile;
+    if (!SetFileInformationByHandle(handle, FileDispositionInfo, &fdi,
+                                    sizeof(FILE_DISPOSITION_INFO))) {
+        DWORD error = GetLastError();
+        if (logError) {
+            ErrorPrint(L"SetDeleteDisposition: '%s' FAILED (delete=%d, error=%lu)\n",
+                       fileName, deleteFile, error);
+        }
+        else {
+            DbgPrintV(L"SetDeleteDisposition: '%s' failed (delete=%d, error=%lu)\n",
+                      fileName, deleteFile, error);
+        }
+        return DokanNtStatusFromWin32(error);
+    }
+
+    return STATUS_SUCCESS;
+}
+
 /**
  * @brief Prints the requesting user's account name (debug mode only).
  * @param DokanFileInfo Dokan file context containing requestor token.
@@ -398,7 +423,9 @@ void DOKAN_CALLBACK EncFSCloseFile(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileI
  * until CloseFile because pending I/O operations may still access it.
  * Those operations will get INVALID_HANDLE errors but won't crash.
  *
- * If DeletePending is set, the file/directory is deleted after closing the handle.
+ * If DeletePending is set, deletion is applied through the existing physical
+ * handle where possible. This avoids an unnecessary flush and path re-resolution
+ * for every file during large directory deletes.
  *
  * @param FileName Virtual path of the file.
  * @param DokanFileInfo Dokan file context.
@@ -406,12 +433,28 @@ void DOKAN_CALLBACK EncFSCloseFile(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileI
 void DOKAN_CALLBACK EncFSCleanup(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInfo) {
     DbgPrintV(L"Cleanup: '%s' (deletePending=%d)\n", FileName, DokanFileInfo->DeletePending);
 
+    bool deletePending = DokanFileInfo->DeletePending != FALSE;
+    bool deleteDispositionApplied = false;
+
     if (DokanFileInfo->Context) {
         EncFS::EncFSFile* encfsFile = ToEncFSFile(DokanFileInfo->Context);
-        
-        // Flush and close the handle, but keep the EncFSFile object alive
-        // Pending I/O operations will get INVALID_HANDLE errors but won't crash
-        encfsFile->flush();
+        HANDLE handle = encfsFile->getHandle();
+
+        if (deletePending && handle && handle != INVALID_HANDLE_VALUE) {
+            NTSTATUS dispositionStatus =
+                SetPhysicalDeleteDisposition(handle, FileName, TRUE, false);
+            deleteDispositionApplied = dispositionStatus == STATUS_SUCCESS;
+
+            if (!deleteDispositionApplied && !DokanFileInfo->IsDirectory) {
+                encfsFile->flush();
+            }
+        }
+        else if (!deletePending) {
+            encfsFile->flush();
+        }
+
+        // Close the handle, but keep the EncFSFile object alive. Pending I/O
+        // operations will get INVALID_HANDLE errors but won't crash.
         encfsFile->closeHandle();
         DbgPrintV(L"Cleanup: '%s' - Handle closed\n", FileName);
     }
@@ -420,14 +463,17 @@ void DOKAN_CALLBACK EncFSCleanup(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInf
     }
 
     // Perform deferred deletion if requested
-    if (DokanFileInfo->DeletePending) {
+    if (deletePending && !deleteDispositionApplied) {
         WCHAR filePath[DOKAN_MAX_PATH];
         GetFilePath(filePath, FileName, false);
 
         if (DokanFileInfo->IsDirectory) {
             DbgPrintV(L"  [INFO] Deleting directory '%s'\n", FileName);
             if (!RemoveDirectoryW(filePath)) {
-                ErrorPrint(L"Cleanup: RemoveDirectory '%s' FAILED (error=%lu)\n", FileName, GetLastError());
+                DWORD error = GetLastError();
+                if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND) {
+                    ErrorPrint(L"Cleanup: RemoveDirectory '%s' FAILED (error=%lu)\n", FileName, error);
+                }
             }
             else {
                 DbgPrintV(L"Cleanup: Directory '%s' deleted OK\n", FileName);
@@ -436,7 +482,10 @@ void DOKAN_CALLBACK EncFSCleanup(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInf
         else {
             DbgPrintV(L"  [INFO] Deleting file '%s'\n", FileName);
             if (DeleteFileW(filePath) == 0) {
-                ErrorPrint(L"Cleanup: DeleteFile '%s' FAILED (error=%lu)\n", FileName, GetLastError());
+                DWORD error = GetLastError();
+                if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND) {
+                    ErrorPrint(L"Cleanup: DeleteFile '%s' FAILED (error=%lu)\n", FileName, error);
+                }
             }
             else {
                 DbgPrintV(L"Cleanup: File '%s' deleted OK\n", FileName);
@@ -456,15 +505,10 @@ void DOKAN_CALLBACK EncFSCleanup(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInf
  */
 NTSTATUS DOKAN_CALLBACK
 EncFSDeleteFile(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInfo) {
-    WCHAR filePath[DOKAN_MAX_PATH];
-
-    GetFilePath(filePath, FileName, false);
     DbgPrintV(L"DeleteFile: '%s' (pending=%d)\n", FileName, DokanFileInfo->DeletePending);
 
-    DWORD dwAttrib = GetFileAttributesW(filePath);
-
     // Cannot use DeleteFile on directories
-    if (dwAttrib != INVALID_FILE_ATTRIBUTES && (dwAttrib & FILE_ATTRIBUTE_DIRECTORY)) {
+    if (DokanFileInfo->IsDirectory) {
         DbgPrintV(L"  [INFO] Cannot delete directory using DeleteFile\n");
         return STATUS_ACCESS_DENIED;
     }
@@ -475,14 +519,25 @@ EncFSDeleteFile(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInfo) {
         EncFS::EncFSFile* encfsFile = ToEncFSFile(DokanFileInfo->Context);
         HANDLE handle = encfsFile->getHandle();
         if (handle && handle != INVALID_HANDLE_VALUE) {
-            FILE_DISPOSITION_INFO fdi;
-            fdi.DeleteFile = DokanFileInfo->DeletePending ? TRUE : FALSE;
-            if (!SetFileInformationByHandle(handle, FileDispositionInfo, &fdi,
-                                            sizeof(FILE_DISPOSITION_INFO))) {
-                DWORD error = GetLastError();
-                ErrorPrint(L"DeleteFile: SetFileInformationByHandle '%s' FAILED (error=%lu)\n", FileName, error);
-                return DokanNtStatusFromWin32(error);
+            BY_HANDLE_FILE_INFORMATION info = {};
+            if (GetFileInformationByHandle(handle, &info) &&
+                (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+                DbgPrintV(L"  [INFO] Cannot delete directory using DeleteFile\n");
+                return STATUS_ACCESS_DENIED;
             }
+
+            return SetPhysicalDeleteDisposition(handle, FileName,
+                DokanFileInfo->DeletePending ? TRUE : FALSE, true);
+        }
+    }
+    else {
+        WCHAR filePath[DOKAN_MAX_PATH];
+        GetFilePath(filePath, FileName, false);
+
+        DWORD dwAttrib = GetFileAttributesW(filePath);
+        if (dwAttrib != INVALID_FILE_ATTRIBUTES && (dwAttrib & FILE_ATTRIBUTE_DIRECTORY)) {
+            DbgPrintV(L"  [INFO] Cannot delete directory using DeleteFile\n");
+            return STATUS_ACCESS_DENIED;
         }
     }
 
@@ -571,6 +626,11 @@ NTSTATUS DOKAN_CALLBACK EncFSReadFile(LPCWSTR FileName, LPVOID Buffer,
     DWORD BufferLength, LPDWORD ReadLength,
     LONGLONG Offset, PDOKAN_FILE_INFO DokanFileInfo) {
 
+    if (Offset < 0) {
+        *ReadLength = 0;
+        return STATUS_INVALID_PARAMETER;
+    }
+
     // Use size_t for offset to handle >4GB files correctly on 64-bit systems
     size_t offset = static_cast<size_t>(Offset);
     EncFS::EncFSFile* encfsFile = nullptr;
@@ -636,9 +696,12 @@ NTSTATUS DOKAN_CALLBACK EncFSReadFile(LPCWSTR FileName, LPVOID Buffer,
         }
     }
 
-    // Acquire file-level lock AFTER getting context to prevent data corruption
-    // during concurrent multi-handle access to the same file
-    EncFS::FileScopedLock fileLock(FileName);
+    if (!ensureFilePath()) {
+        return STATUS_OBJECT_NAME_INVALID;
+    }
+
+    // Lock by canonical physical path so case-insensitive aliases serialize.
+    EncFS::FileScopedLock fileLock(filePath);
 
     int32_t readLen;
     bool plain = false;
@@ -731,14 +794,40 @@ NTSTATUS DOKAN_CALLBACK EncFSWriteFile(LPCWSTR FileName, LPCVOID Buffer,
         FileName, Offset, NumberOfBytesToWrite, 
         DokanFileInfo->WriteToEndOfFile, DokanFileInfo->PagingIo);
 
+    if (!DokanFileInfo->WriteToEndOfFile && Offset < 0) {
+        *NumberOfBytesWritten = 0;
+        return STATUS_INVALID_PARAMETER;
+    }
+
     UINT64 fileSize = 0;
     EncFS::EncFSFile* encfsFile;
     std::unique_ptr<EncFS::EncFSFile> tempEncFSFile;
+    WCHAR filePath[DOKAN_MAX_PATH] = {};
+    bool hasFilePath = false;
+
+    auto ensureFilePath = [&]() -> bool {
+        if (hasFilePath) return true;
+        try {
+            GetFilePath(filePath, FileName, false);
+            filePath[DOKAN_MAX_PATH - 1] = L'\0';
+            hasFilePath = true;
+            return true;
+        }
+        catch (const std::exception& ex) {
+            ErrorPrint(L"WriteFile: Path conversion failed for '%s': %S\n", FileName, ex.what());
+            return false;
+        }
+        catch (...) {
+            ErrorPrint(L"WriteFile: Unknown exception during path conversion for '%s'\n", FileName);
+            return false;
+        }
+    };
 
     // Open temporary handle if context is unavailable
     if (!DokanFileInfo->Context) {
-        WCHAR filePath[DOKAN_MAX_PATH];
-        GetFilePath(filePath, FileName, false);
+        if (!ensureFilePath()) {
+            return STATUS_OBJECT_NAME_INVALID;
+        }
         DbgPrintV(L"WriteFile: '%s' - Context NULL, opening temp handle\n", FileName);
         HANDLE handle = CreateFileW(filePath, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_WRITE, NULL,
             OPEN_EXISTING, 0, NULL);
@@ -754,9 +843,12 @@ NTSTATUS DOKAN_CALLBACK EncFSWriteFile(LPCWSTR FileName, LPCVOID Buffer,
         encfsFile = ToEncFSFile(DokanFileInfo->Context);
     }
 
-    // Acquire file-level lock AFTER getting context to prevent data corruption
-    // during concurrent multi-handle access to the same file
-    EncFS::FileScopedLock fileLock(FileName);
+    if (!ensureFilePath()) {
+        return STATUS_OBJECT_NAME_INVALID;
+    }
+
+    // Lock by canonical physical path so case-insensitive aliases serialize.
+    EncFS::FileScopedLock fileLock(filePath);
 
     // Get logical (decrypted) file size
     LARGE_INTEGER li;

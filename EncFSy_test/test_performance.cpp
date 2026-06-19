@@ -753,3 +753,149 @@ bool Test_ConcurrentIOPerformance(const WCHAR* file)
     printf("Concurrent I/O performance test completed\n");
     return true;
 }
+
+static std::wstring JoinPerformancePath(const std::wstring& base, const WCHAR* name)
+{
+    if (base.empty() || base.back() == L'\\' || base.back() == L'/') {
+        return base + name;
+    }
+    return base + L"\\" + name;
+}
+
+static bool DeletePerformanceTree(const std::wstring& path)
+{
+    DWORD attrs = GetFileAttributesW(path.c_str());
+    if (attrs == INVALID_FILE_ATTRIBUTES) {
+        DWORD error = GetLastError();
+        return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
+    }
+
+    if ((attrs & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+        if (attrs & FILE_ATTRIBUTE_READONLY) {
+            SetFileAttributesW(path.c_str(), attrs & ~FILE_ATTRIBUTE_READONLY);
+        }
+        if (DeleteFileW(path.c_str())) {
+            return true;
+        }
+        DWORD error = GetLastError();
+        return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
+    }
+
+    std::wstring searchPath = JoinPerformancePath(path, L"*");
+    WIN32_FIND_DATAW findData = {};
+    HANDLE findHandle = FindFirstFileW(searchPath.c_str(), &findData);
+    if (findHandle != INVALID_HANDLE_VALUE) {
+        do {
+            if (wcscmp(findData.cFileName, L".") == 0 ||
+                wcscmp(findData.cFileName, L"..") == 0) {
+                continue;
+            }
+
+            std::wstring childPath = JoinPerformancePath(path, findData.cFileName);
+            if (!DeletePerformanceTree(childPath)) {
+                FindClose(findHandle);
+                return false;
+            }
+        } while (FindNextFileW(findHandle, &findData));
+
+        DWORD error = GetLastError();
+        FindClose(findHandle);
+        if (error != ERROR_NO_MORE_FILES) {
+            return false;
+        }
+    }
+    else {
+        DWORD error = GetLastError();
+        if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND) {
+            return false;
+        }
+    }
+
+    if (attrs & FILE_ATTRIBUTE_READONLY) {
+        SetFileAttributesW(path.c_str(), attrs & ~FILE_ATTRIBUTE_READONLY);
+    }
+    if (RemoveDirectoryW(path.c_str())) {
+        return true;
+    }
+    DWORD error = GetLastError();
+    return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
+}
+
+//=============================================================================
+// Test: Many-file directory delete performance
+// Exercises delete-on-close cleanup paths without enforcing environment-specific
+// timing thresholds.
+//=============================================================================
+bool Test_ManyFileDeletePerformance(const WCHAR* rootDir)
+{
+    printf("Testing many-file directory delete performance...\n");
+
+    const int fileCount = 500;
+    const DWORD fileSize = 64;
+    std::wstring testDir = JoinPerformancePath(rootDir, L"many_file_delete_perf");
+
+    if (!DeletePerformanceTree(testDir) && PathExists(testDir.c_str())) {
+        printf("  Failed to clean up stale test directory\n");
+        return false;
+    }
+
+    if (!CreateDirectoryW(testDir.c_str(), NULL)) {
+        DWORD error = GetLastError();
+        if (error != ERROR_ALREADY_EXISTS) {
+            printf("  Failed to create test directory (error=%lu)\n", error);
+            return false;
+        }
+    }
+
+    std::vector<char> data(fileSize, 'D');
+    auto createStart = high_resolution_clock::now();
+
+    for (int i = 0; i < fileCount; ++i) {
+        WCHAR fileName[64];
+        swprintf_s(fileName, L"delete_%05d.tmp", i);
+        std::wstring filePath = JoinPerformancePath(testDir, fileName);
+
+        HANDLE h = OpenTestFile(filePath.c_str(), GENERIC_READ | GENERIC_WRITE | DELETE,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL);
+        if (h == INVALID_HANDLE_VALUE) {
+            DeletePerformanceTree(testDir);
+            return false;
+        }
+
+        DWORD written = 0;
+        BOOL writeOk = WriteFile(h, data.data(), fileSize, &written, NULL);
+        CloseHandle(h);
+        if (!writeOk || written != fileSize) {
+            printf("  Failed to write test file %d\n", i);
+            DeletePerformanceTree(testDir);
+            return false;
+        }
+    }
+
+    auto createEnd = high_resolution_clock::now();
+    auto deleteStart = high_resolution_clock::now();
+    bool deleteOk = DeletePerformanceTree(testDir);
+    auto deleteEnd = high_resolution_clock::now();
+
+    auto createDuration = duration_cast<microseconds>(createEnd - createStart);
+    auto deleteDuration = duration_cast<microseconds>(deleteEnd - deleteStart);
+    double createSeconds = createDuration.count() / 1000000.0;
+    double deleteSeconds = deleteDuration.count() / 1000000.0;
+    if (createSeconds < 0.000001) createSeconds = 0.000001;
+    if (deleteSeconds < 0.000001) deleteSeconds = 0.000001;
+
+    printf("  Created %d files in %.3f s (%.1f files/s)\n",
+           fileCount, createSeconds, fileCount / createSeconds);
+    printf("  Deleted %d files in %.3f s (%.1f files/s)\n",
+           fileCount, deleteSeconds, fileCount / deleteSeconds);
+
+    if (!deleteOk || PathExists(testDir.c_str())) {
+        printf("  Directory was not fully deleted\n");
+        DeletePerformanceTree(testDir);
+        return false;
+    }
+
+    printf("Many-file directory delete performance test completed\n");
+    return true;
+}

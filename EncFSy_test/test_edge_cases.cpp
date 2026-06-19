@@ -6,7 +6,245 @@
 // 4. Basic file operation edge cases
 
 #include "test_common.h"
+#include "../EncFSy_lib/EncFSVolume.h"
+#include <algorithm>
+#include <exception>
+#include <string>
 #include <vector>
+
+namespace {
+
+bool ReplaceXmlValue(std::string& xml, const char* node, const char* value)
+{
+    std::string openTag = "<";
+    openTag += node;
+    openTag += ">";
+    std::string closeTag = "</";
+    closeTag += node;
+    closeTag += ">";
+
+    size_t start = xml.find(openTag);
+    if (start == std::string::npos) {
+        return false;
+    }
+    start += openTag.size();
+
+    size_t end = xml.find(closeTag, start);
+    if (end == std::string::npos) {
+        return false;
+    }
+
+    xml.replace(start, end - start, value);
+    return true;
+}
+
+std::string MakeVolumeXml()
+{
+    EncFS::EncFSVolume volume;
+    char password[] = "TEST";
+    volume.create(password, EncFS::STANDARD, false);
+
+    std::string xml;
+    volume.save(xml);
+    return xml;
+}
+
+bool LoadAndUnlock(const std::string& xml, EncFS::EncFSVolume& volume)
+{
+    volume.load(xml, false);
+    char password[] = "TEST";
+    volume.unlock(password);
+    return true;
+}
+
+} // namespace
+
+//=============================================================================
+// Test: EncFS config validation rejects unsafe or nonsensical values
+//=============================================================================
+bool Test_ConfigValidationRejectsInvalidValues(const WCHAR* file)
+{
+    (void)file;
+    printf("Testing EncFS configuration validation...\n");
+
+    struct BadConfig {
+        const char* node;
+        const char* value;
+        const char* label;
+    };
+
+    const BadConfig cases[] = {
+        { "blockMACBytes", "9", "oversized blockMACBytes" },
+        { "blockMACRandBytes", "9", "oversized blockMACRandBytes" },
+        { "blockSize", "8", "blockSize smaller than AES block" },
+        { "uniqueIV", "2", "non-boolean uniqueIV" },
+        { "kdfIterations", "0", "zero kdfIterations" },
+        { "keySize", "257", "unsupported keySize" },
+    };
+
+    const std::string baseXml = MakeVolumeXml();
+    for (const auto& testCase : cases) {
+        std::string badXml = baseXml;
+        if (!ReplaceXmlValue(badXml, testCase.node, testCase.value)) {
+            printf("ERROR: could not edit XML node %s\n", testCase.node);
+            return false;
+        }
+
+        try {
+            EncFS::EncFSVolume volume;
+            volume.load(badXml, false);
+            printf("ERROR: accepted invalid config: %s\n", testCase.label);
+            return false;
+        }
+        catch (const EncFS::EncFSBadConfigurationException&) {
+            printf("  Rejected %s\n", testCase.label);
+        }
+        catch (const std::exception& ex) {
+            printf("ERROR: unexpected exception for %s: %s\n", testCase.label, ex.what());
+            return false;
+        }
+    }
+
+    printf("EncFS configuration validation test PASSED\n");
+    return true;
+}
+
+//=============================================================================
+// Test: blockMACRandBytes round-trips and produces non-deterministic ciphertext
+//=============================================================================
+bool Test_BlockMACRandBytesRoundTrip(const WCHAR* file)
+{
+    (void)file;
+    printf("Testing blockMACRandBytes block codec round-trip...\n");
+
+    std::string xml = MakeVolumeXml();
+    if (!ReplaceXmlValue(xml, "blockMACRandBytes", "4")) {
+        printf("ERROR: could not set blockMACRandBytes\n");
+        return false;
+    }
+
+    EncFS::EncFSVolume volume;
+    try {
+        LoadAndUnlock(xml, volume);
+    }
+    catch (const std::exception& ex) {
+        printf("ERROR: load/unlock failed: %s\n", ex.what());
+        return false;
+    }
+
+    const size_t dataSize = static_cast<size_t>(volume.getBlockSize() - volume.getHeaderSize());
+    std::string plain(dataSize, '\0');
+    for (size_t i = 0; i < plain.size(); ++i) {
+        plain[i] = static_cast<char>('A' + (i % 26));
+    }
+
+    std::string encoded1;
+    std::string encoded2;
+    std::string decoded;
+    try {
+        volume.encodeBlock(12345, 7, plain, encoded1);
+        volume.decodeBlock(12345, 7, encoded1, decoded);
+        if (decoded != plain) {
+            printf("ERROR: full block decoded data mismatch\n");
+            return false;
+        }
+
+        decoded.clear();
+        volume.encodeBlock(12345, 7, plain, encoded2);
+        volume.decodeBlock(12345, 7, encoded2, decoded);
+        if (decoded != plain) {
+            printf("ERROR: second full block decoded data mismatch\n");
+            return false;
+        }
+
+        if (encoded1 == encoded2) {
+            printf("ERROR: ciphertext did not change when blockMACRandBytes was enabled\n");
+            return false;
+        }
+
+        const std::string partialPlain = "partial block data";
+        std::string partialEncoded;
+        std::string partialDecoded;
+        volume.encodeBlock(12345, 8, partialPlain, partialEncoded);
+        volume.decodeBlock(12345, 8, partialEncoded, partialDecoded);
+        if (partialDecoded != partialPlain) {
+            printf("ERROR: partial block decoded data mismatch\n");
+            return false;
+        }
+    }
+    catch (const EncFS::EncFSInvalidBlockException&) {
+        printf("ERROR: block codec rejected its own ciphertext\n");
+        return false;
+    }
+
+    printf("blockMACRandBytes round-trip test PASSED\n");
+    return true;
+}
+
+//=============================================================================
+// Test: allowHoles=false writes authenticated zero blocks, not sparse zeros
+//=============================================================================
+bool Test_AllowHolesFalseRejectsSparseZeroBlock(const WCHAR* file)
+{
+    (void)file;
+    printf("Testing allowHoles=false zero block behavior...\n");
+
+    std::string xml = MakeVolumeXml();
+    if (!ReplaceXmlValue(xml, "allowHoles", "0")) {
+        printf("ERROR: could not set allowHoles\n");
+        return false;
+    }
+
+    EncFS::EncFSVolume volume;
+    try {
+        LoadAndUnlock(xml, volume);
+    }
+    catch (const std::exception& ex) {
+        printf("ERROR: load/unlock failed: %s\n", ex.what());
+        return false;
+    }
+
+    const size_t dataSize = static_cast<size_t>(volume.getBlockSize() - volume.getHeaderSize());
+    std::string zeroPlain(dataSize, '\0');
+    std::string encoded;
+    std::string decoded;
+
+    try {
+        volume.encodeBlock(1, 0, zeroPlain, encoded);
+        if (encoded.size() != static_cast<size_t>(volume.getBlockSize())) {
+            printf("ERROR: encoded zero block size %zu, expected %d\n", encoded.size(), volume.getBlockSize());
+            return false;
+        }
+        if (std::all_of(encoded.begin(), encoded.end(), [](char c) { return c == '\0'; })) {
+            printf("ERROR: allowHoles=false encoded a full zero block as sparse zeros\n");
+            return false;
+        }
+
+        volume.decodeBlock(1, 0, encoded, decoded);
+        if (decoded != zeroPlain) {
+            printf("ERROR: authenticated zero block decoded data mismatch\n");
+            return false;
+        }
+    }
+    catch (const EncFS::EncFSInvalidBlockException&) {
+        printf("ERROR: allowHoles=false rejected its own authenticated zero block\n");
+        return false;
+    }
+
+    try {
+        std::string sparseZeroCipher(static_cast<size_t>(volume.getBlockSize()), '\0');
+        decoded.clear();
+        volume.decodeBlock(1, 0, sparseZeroCipher, decoded);
+        printf("ERROR: allowHoles=false accepted an unauthenticated sparse zero block\n");
+        return false;
+    }
+    catch (const EncFS::EncFSInvalidBlockException&) {
+        printf("  Rejected unauthenticated sparse zero block\n");
+    }
+
+    printf("allowHoles=false zero block test PASSED\n");
+    return true;
+}
 
 //=============================================================================
 // Test: Zero-length read request (fixed underflow bug)

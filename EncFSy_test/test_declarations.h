@@ -9,6 +9,7 @@
 bool Test_DirectoryOps(const WCHAR* rootDir);
 bool Test_CreateAndPrintPath(const WCHAR* file);
 bool Test_CaseInsensitiveOpen(const WCHAR* fileLowerCase, const WCHAR* fileCaseVariant);
+bool Test_CaseInsensitiveConcurrentAliasWrite(const WCHAR* fileLowerCase, const WCHAR* fileCaseVariant);
 bool Test_BufferedIO(const WCHAR* file);
 bool Test_AppendWrite(const WCHAR* file);
 bool Test_NoBufferingIO(const WCHAR* file, const WCHAR* drive);
@@ -100,6 +101,9 @@ bool Test_MultiBlockSpanningRead(const WCHAR* file);
 //=============================================================================
 bool Test_ZeroLengthRead(const WCHAR* file);
 bool Test_ZeroLengthWrite(const WCHAR* file);
+bool Test_ConfigValidationRejectsInvalidValues(const WCHAR* file);
+bool Test_BlockMACRandBytesRoundTrip(const WCHAR* file);
+bool Test_AllowHolesFalseRejectsSparseZeroBlock(const WCHAR* file);
 bool Test_SetEndOfFileBoundaryBlock(const WCHAR* file);
 bool Test_FileExpansionPartialBlock(const WCHAR* file);
 bool Test_RapidTruncateWrite(const WCHAR* file);
@@ -153,6 +157,7 @@ bool Test_LargeSingleReadPerformance(const WCHAR* file);
 bool Test_FileResizePerformance(const WCHAR* file);
 bool Test_MemoryAllocationImpact(const WCHAR* file);
 bool Test_ConcurrentIOPerformance(const WCHAR* file);
+bool Test_ManyFileDeletePerformance(const WCHAR* rootDir);
 
 //=============================================================================
 // Windows-Specific Filesystem Tests (test_windows_fs.cpp)

@@ -2,6 +2,7 @@
 #include <winioctl.h> 
 #include <osrng.h> // For AutoSeededX917RNG
 #include <algorithm>
+#include <limits>
 
 using namespace std;
 using namespace CryptoPP;
@@ -344,8 +345,10 @@ namespace EncFS {
             return 0;
         }
 
-        // Overflow check for offset + length
-        if (off > SIZE_MAX - len) {
+        // Overflow check for offset + length and signed 64-bit block math.
+        if (off > SIZE_MAX - len ||
+            off > static_cast<size_t>((std::numeric_limits<int64_t>::max)()) ||
+            len > static_cast<DWORD>((std::numeric_limits<int32_t>::max)())) {
             SetLastError(ERROR_ARITHMETIC_OVERFLOW);
             return -1;
         }
@@ -399,7 +402,7 @@ namespace EncFS {
             const int64_t blockDataSize = blockSize - blockHeaderSize;
             
             // Safeguard against invalid block configuration
-            if (blockDataSize == 0) {
+            if (blockDataSize <= 0) {
                 SetLastError(ERROR_INVALID_PARAMETER);
                 return -1;
             }
@@ -407,6 +410,10 @@ namespace EncFS {
             // Use int64_t for all offset/block calculations to handle >4GB files
             const int64_t off64 = static_cast<int64_t>(off);
             const int64_t len64 = static_cast<int64_t>(len);
+            if (off64 > (std::numeric_limits<int64_t>::max)() - len64 + 1) {
+                SetLastError(ERROR_ARITHMETIC_OVERFLOW);
+                return -1;
+            }
             
             int64_t shift = off64 % blockDataSize;
             int64_t blockNum = off64 / blockDataSize;
@@ -421,6 +428,12 @@ namespace EncFS {
             int32_t copiedLen = 0;
 
             // Calculate how many encrypted blocks to read (use int64_t)
+            const int64_t maxBlockOffset = (std::numeric_limits<int64_t>::max)() / blockSize;
+            if (blockNum > maxBlockOffset || lastBlockNum > maxBlockOffset - 1) {
+                SetLastError(ERROR_ARITHMETIC_OVERFLOW);
+                return -1;
+            }
+
             int64_t blocksOffset = blockNum * blockSize;
             const int64_t blocksLength = (lastBlockNum + 1) * blockSize - blocksOffset;
             
@@ -544,8 +557,11 @@ namespace EncFS {
             return 0;
         }
         
-        // Overflow check for offset + length
-        if (off > SIZE_MAX - len) {
+        // Overflow check for offset + length and signed 64-bit block math.
+        if (off > SIZE_MAX - len ||
+            off > static_cast<size_t>((std::numeric_limits<int64_t>::max)()) ||
+            fileSize > static_cast<size_t>((std::numeric_limits<int64_t>::max)()) ||
+            len > static_cast<DWORD>((std::numeric_limits<int32_t>::max)())) {
             SetLastError(ERROR_ARITHMETIC_OVERFLOW);
             return -1;
         }
@@ -579,7 +595,7 @@ namespace EncFS {
             const int64_t blockDataSize = blockSize - blockHeaderSize;
             
             // Safeguard against invalid block configuration
-            if (blockDataSize == 0) {
+            if (blockDataSize <= 0) {
                 SetLastError(ERROR_INVALID_PARAMETER);
                 return -1;
             }
@@ -588,6 +604,10 @@ namespace EncFS {
             const int64_t off64 = static_cast<int64_t>(off);
             const int64_t len64 = static_cast<int64_t>(len);
             const int64_t fileSize64 = static_cast<int64_t>(fileSize);
+            if (off64 > (std::numeric_limits<int64_t>::max)() - len64 + 1) {
+                SetLastError(ERROR_ARITHMETIC_OVERFLOW);
+                return -1;
+            }
             
             int64_t shift = off64 % blockDataSize;
             int64_t blockNum = off64 / blockDataSize;
@@ -600,6 +620,11 @@ namespace EncFS {
             }
             
             // Use int64_t for blocksOffset to handle >4GB offsets
+            if (blockNum > (std::numeric_limits<int64_t>::max)() / blockSize) {
+                SetLastError(ERROR_ARITHMETIC_OVERFLOW);
+                return -1;
+            }
+
             int64_t blocksOffset = blockNum * blockSize;
             if (encfs.isUniqueIV()) {
                 blocksOffset += EncFS::EncFSVolume::HEADER_SIZE;
@@ -756,6 +781,13 @@ namespace EncFS {
             return 0;
         }
 
+        if (off > SIZE_MAX - len ||
+            off > static_cast<size_t>((std::numeric_limits<int64_t>::max)()) ||
+            len > static_cast<DWORD>((std::numeric_limits<int32_t>::max)())) {
+            SetLastError(ERROR_ARITHMETIC_OVERFLOW);
+            return -1;
+        }
+
         int64_t fileIv = 0; // File IV is not used in reverse mode
 
         // Calculate block positions
@@ -771,6 +803,10 @@ namespace EncFS {
         // Use int64_t for all offset/block calculations
         const int64_t off64 = static_cast<int64_t>(off);
         const int64_t len64 = static_cast<int64_t>(len);
+        if (off64 > (std::numeric_limits<int64_t>::max)() - len64 + 1) {
+            SetLastError(ERROR_ARITHMETIC_OVERFLOW);
+            return -1;
+        }
         
         int64_t shift = off64 % blockSize;
         int64_t blockNum = off64 / blockSize;
@@ -778,6 +814,12 @@ namespace EncFS {
 
         // Overflow check for block calculations
         if (lastBlockNum < blockNum) {
+            SetLastError(ERROR_ARITHMETIC_OVERFLOW);
+            return -1;
+        }
+
+        const int64_t maxBlockOffset = (std::numeric_limits<int64_t>::max)() / blockSize;
+        if (blockNum > maxBlockOffset || lastBlockNum > maxBlockOffset - 1) {
             SetLastError(ERROR_ARITHMETIC_OVERFLOW);
             return -1;
         }
@@ -930,6 +972,12 @@ namespace EncFS {
             return true;
         }
 
+        if (fileSize > static_cast<size_t>((std::numeric_limits<int64_t>::max)()) ||
+            length > static_cast<size_t>((std::numeric_limits<int64_t>::max)())) {
+            SetLastError(ERROR_ARITHMETIC_OVERFLOW);
+            return false;
+        }
+
         return this->_setLength(FileName, fileSize, length);
     }
 
@@ -964,12 +1012,18 @@ namespace EncFS {
 
         // Calculate block boundary positions
         // Use int64_t for all calculations to handle >4GB files
+        if (fileSize > static_cast<size_t>((std::numeric_limits<int64_t>::max)()) ||
+            length > static_cast<size_t>((std::numeric_limits<int64_t>::max)())) {
+            SetLastError(ERROR_ARITHMETIC_OVERFLOW);
+            return false;
+        }
+
         const int64_t blockSize = encfs.getBlockSize();
         const int64_t blockHeaderSize = encfs.getHeaderSize();
         const int64_t blockDataSize = blockSize - blockHeaderSize;
         
         // Safeguard against invalid block configuration
-        if (blockDataSize == 0) {
+        if (blockDataSize <= 0) {
             SetLastError(ERROR_INVALID_PARAMETER);
             return false;
         }
@@ -1038,6 +1092,10 @@ namespace EncFS {
 
         // Set the new encrypted file size
         int64_t encodedLength = encfs.toEncodedLength(length64);
+        if (encodedLength <= 0) {
+            SetLastError(ERROR_ARITHMETIC_OVERFLOW);
+            return false;
+        }
         {
             LARGE_INTEGER offset;
             offset.QuadPart = static_cast<LONGLONG>(encodedLength);
@@ -1111,6 +1169,30 @@ namespace EncFS {
                 // Write with retry logic
                 if (!WriteWithRetry(this->handle, this->encodeBuffer.data(), this->encodeBuffer.size())) {
                     return false;
+                }
+            }
+
+            if (!encfs.isAllowHoles()) {
+                const int64_t firstFullBlock = fileSize64 == 0 ? 0 : ((fileSize64 - 1) / blockDataSize) + 1;
+                const int64_t lastFullBlock = (length64 / blockDataSize) - 1;
+                for (int64_t zeroBlockNum = firstFullBlock; zeroBlockNum <= lastFullBlock; ++zeroBlockNum) {
+                    blocksOffset = zeroBlockNum * blockSize;
+                    if (encfs.isUniqueIV()) {
+                        blocksOffset += EncFS::EncFSVolume::HEADER_SIZE;
+                    }
+
+                    this->decodeBuffer.assign(static_cast<size_t>(blockDataSize), (char)0);
+                    this->encodeBuffer.clear();
+                    encfs.encodeBlock(fileIv, this->lastBlockNum = zeroBlockNum, this->decodeBuffer, this->encodeBuffer);
+
+                    LARGE_INTEGER distanceToMove;
+                    distanceToMove.QuadPart = static_cast<LONGLONG>(blocksOffset);
+                    if (!SetFilePointerEx(this->handle, distanceToMove, NULL, FILE_BEGIN)) {
+                        return false;
+                    }
+                    if (!WriteWithRetry(this->handle, this->encodeBuffer.data(), this->encodeBuffer.size())) {
+                        return false;
+                    }
                 }
             }
         }

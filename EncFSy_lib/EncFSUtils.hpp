@@ -262,14 +262,14 @@ namespace EncFS
 	 * Combines base IV with seed in little-endian order, then computes
 	 * HMAC-SHA1 and truncates to 16 bytes for AES block size.
 	 */
-	inline void generateIv(HMAC<SHA1> &hmac, mutex &hmacLock, const string &iv, const string &ivSeed, char* ivResult) {
+	inline void generateIv(HMAC<SHA1> &hmac, mutex &hmacLock, const byte* iv, size_t ivLen, const string &ivSeed, char* ivResult) {
 		string concat;
-		const size_t totalSize = iv.size() + 8;
+		const size_t totalSize = ivLen + 8;
 		concat.reserve(totalSize);
-		concat.assign(iv.begin(), iv.end());
+		concat.assign(reinterpret_cast<const char*>(iv), ivLen);
 		concat.resize(totalSize, '\0');
 
-		const size_t ivSize = iv.size();
+		const size_t ivSize = ivLen;
 		if (ivSeed.size() == 4) {
 			// Optimized: use pointer arithmetic instead of indexing
 			char* dest = &concat[ivSize];
@@ -303,6 +303,10 @@ namespace EncFS
 		memcpy(ivResult, d, 16);
 	}
 
+	inline void generateIv(HMAC<SHA1> &hmac, mutex &hmacLock, const string &iv, const string &ivSeed, char* ivResult) {
+		generateIv(hmac, hmacLock, reinterpret_cast<const byte*>(iv.data()), iv.size(), ivSeed, ivResult);
+	}
+
 	/**
 	 * @brief Encrypt or decrypt data block using AES-CBC with custom IV
 	 * @param hmac HMAC for IV generation
@@ -317,13 +321,13 @@ namespace EncFS
 	 * 
 	 * Used for middle blocks in files where block boundary alignment is maintained.
 	 */
-	inline void blockCipher(HMAC<SHA1> &hmac, mutex &hmacLock, const string &key, const string &iv, const string &ivSeed, CipherModeBase &cipher, mutex &cipherLock, const string &data, string &result) {
+	inline void blockCipher(HMAC<SHA1> &hmac, mutex &hmacLock, const byte* key, size_t keyLen, const byte* iv, size_t ivLen, const string &ivSeed, CipherModeBase &cipher, mutex &cipherLock, const string &data, string &result) {
 		char ivSpec[16];
-		generateIv(hmac, hmacLock, iv, ivSeed, ivSpec);
+		generateIv(hmac, hmacLock, iv, ivLen, ivSeed, ivSpec);
 
 		{
 			lock_guard<decltype(cipherLock)> lock(cipherLock);
-			cipher.SetKeyWithIV((const byte*)key.data(), key.size(), (const byte*)ivSpec);
+			cipher.SetKeyWithIV(key, keyLen, (const byte*)ivSpec);
 			StreamTransformationFilter dec(cipher, new StringSink(result), StreamTransformationFilter::ZEROS_PADDING);
 			dec.Put((byte*)data.data(), data.size());
 			dec.MessageEnd();
@@ -345,7 +349,12 @@ namespace EncFS
 	 * Uses two-pass encryption with byte shuffling and flipping for enhanced
 	 * diffusion. Used for file tails and filenames where length is variable.
 	 */
-	inline void streamEncrypt(HMAC<SHA1> &hmac, mutex &hmacLock, const string &key, const string &iv, const string &ivSeed, CFB_Mode<AES>::Encryption &cipher, mutex &cipherLock, const string &data, string &result) {
+	inline void streamEncrypt(HMAC<SHA1> &hmac, mutex &hmacLock, const byte* key, size_t keyLen, const byte* iv, size_t ivLen, const string &ivSeed, CFB_Mode<AES>::Encryption &cipher, mutex &cipherLock, const string &data, string &result) {
+		if (data.empty()) {
+			result.clear();
+			return;
+		}
+
 		// AES / CFB / NoPadding
 		string ivSeedPlusOne;
 		incrementIvSeedByOne(ivSeed, ivSeedPlusOne);
@@ -360,10 +369,10 @@ namespace EncFS
 			}
 
 			char ivSpec[16];
-			generateIv(hmac, hmacLock, iv, ivSeed, ivSpec);
+			generateIv(hmac, hmacLock, iv, ivLen, ivSeed, ivSpec);
 			{
 				lock_guard<decltype(cipherLock)> lock(cipherLock);
-				cipher.SetKeyWithIV((const byte*)key.data(), key.size(), (const byte*)ivSpec);
+				cipher.SetKeyWithIV(key, keyLen, (const byte*)ivSpec);
 				StreamTransformationFilter dec(cipher, new StringSink(firstEncResult), StreamTransformationFilter::ZEROS_PADDING);
 				dec.Put((byte*)buf.data(), buf.size());
 				dec.MessageEnd();
@@ -382,11 +391,11 @@ namespace EncFS
 		// Second pass encryption with incremented IV
 		{
 			char ivSpec[16];
-			generateIv(hmac, hmacLock, iv, ivSeedPlusOne, ivSpec);
+			generateIv(hmac, hmacLock, iv, ivLen, ivSeedPlusOne, ivSpec);
 
 			{
 				lock_guard<decltype(cipherLock)> lock(cipherLock);
-				cipher.SetKeyWithIV((const byte*)key.data(), key.size(), (const byte*)ivSpec);
+				cipher.SetKeyWithIV(key, keyLen, (const byte*)ivSpec);
 				StreamTransformationFilter dec(cipher, new StringSink(result), StreamTransformationFilter::ZEROS_PADDING);
 				dec.Put((byte*)flipBytesResult.data(), flipBytesResult.size());
 				dec.MessageEnd();
@@ -409,7 +418,12 @@ namespace EncFS
 	 * Reverses the streamEncrypt process: decrypt twice, flip bytes, and
 	 * unshuffle (reverse XOR operations).
 	 */
-	inline void streamDecrypt(HMAC<SHA1> &hmac, mutex &hmacLock, const string &key, const string &iv, const string &ivSeed, CFB_Mode<AES>::Decryption &cipher, mutex &cipherLock, const string &data, string &result) {
+	inline void streamDecrypt(HMAC<SHA1> &hmac, mutex &hmacLock, const byte* key, size_t keyLen, const byte* iv, size_t ivLen, const string &ivSeed, CFB_Mode<AES>::Decryption &cipher, mutex &cipherLock, const string &data, string &result) {
+		if (data.empty()) {
+			result.clear();
+			return;
+		}
+
 		// AES / CFB / NoPadding
 
 		string firstDecResult;
@@ -418,11 +432,11 @@ namespace EncFS
 			incrementIvSeedByOne(ivSeed, ivSeedPlusOne);
 
 			char ivSpec[16];
-			generateIv(hmac, hmacLock, iv, ivSeedPlusOne, ivSpec);
+			generateIv(hmac, hmacLock, iv, ivLen, ivSeedPlusOne, ivSpec);
 
 			{
 				lock_guard<decltype(cipherLock)> lock(cipherLock);
-				cipher.SetKeyWithIV((const byte*)key.data(), key.size(), (const byte*)ivSpec);
+				cipher.SetKeyWithIV(key, keyLen, (const byte*)ivSpec);
 				StreamTransformationFilter dec(cipher, new StringSink(firstDecResult), StreamTransformationFilter::ZEROS_PADDING);
 				dec.Put((byte*)data.data(), data.size());
 				dec.MessageEnd();
@@ -441,11 +455,11 @@ namespace EncFS
 		// Second pass decryption
 		{
 			char ivSpec[16];
-			generateIv(hmac, hmacLock, iv, ivSeed, ivSpec);
+			generateIv(hmac, hmacLock, iv, ivLen, ivSeed, ivSpec);
 
 			{
 				lock_guard<decltype(cipherLock)> lock(cipherLock);
-				cipher.SetKeyWithIV((const byte*)key.data(), key.size(), (const byte*)ivSpec);
+				cipher.SetKeyWithIV(key, keyLen, (const byte*)ivSpec);
 				StreamTransformationFilter dec(cipher, new StringSink(result), StreamTransformationFilter::ZEROS_PADDING);
 				dec.Put((byte*)flipBytesResult.data(), flipBytesResult.size());
 				dec.MessageEnd();

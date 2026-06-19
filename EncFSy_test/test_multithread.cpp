@@ -984,3 +984,155 @@ bool Test_StressMultiHandleReadWrite(const WCHAR* file)
     printf("Stress multi-handle read/write test PASSED\n");
     return testPassed.load();
 }
+
+//=============================================================================
+// Test: Case-insensitive aliases serialize writes to the same physical file
+//=============================================================================
+bool Test_CaseInsensitiveConcurrentAliasWrite(const WCHAR* fileLowerCase, const WCHAR* fileCaseVariant)
+{
+    printf("Testing case-insensitive concurrent alias writes...\n");
+
+    DeleteFileW(fileLowerCase);
+    if (!CreateParentDirectories(fileLowerCase)) {
+        printf("Failed to create parent directories for '%ls'\n", fileLowerCase);
+        return false;
+    }
+
+    const size_t BLOCK_DATA_SIZE = 1016;
+    const size_t BLOCK_COUNT = 32;
+    const size_t FILE_SIZE = BLOCK_DATA_SIZE * BLOCK_COUNT;
+    const DWORD PATCH_SIZE = 96;
+    const size_t A_OFFSET = 100;
+    const size_t B_OFFSET = 500;
+
+    std::vector<char> expected(FILE_SIZE, '.');
+    {
+        HANDLE h = OpenTestFile(fileLowerCase, GENERIC_READ | GENERIC_WRITE,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL);
+        if (h == INVALID_HANDLE_VALUE) {
+            return false;
+        }
+
+        DWORD written = 0;
+        if (!WriteFile(h, expected.data(), static_cast<DWORD>(expected.size()), &written, NULL) ||
+            written != expected.size()) {
+            PrintLastError("WriteFile initial");
+            CloseHandle(h);
+            return false;
+        }
+        CloseHandle(h);
+    }
+
+    HANDLE lower = OpenTestFile(fileLowerCase, GENERIC_READ | GENERIC_WRITE,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL);
+    if (lower == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+
+    HANDLE variant = OpenTestFile(fileCaseVariant, GENERIC_READ | GENERIC_WRITE,
+                                  FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                  OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL);
+    if (variant == INVALID_HANDLE_VALUE) {
+        CloseHandle(lower);
+        return false;
+    }
+
+    for (size_t block = 0; block < BLOCK_COUNT; ++block) {
+        std::fill(expected.begin() + block * BLOCK_DATA_SIZE + A_OFFSET,
+                  expected.begin() + block * BLOCK_DATA_SIZE + A_OFFSET + PATCH_SIZE, 'A');
+        std::fill(expected.begin() + block * BLOCK_DATA_SIZE + B_OFFSET,
+                  expected.begin() + block * BLOCK_DATA_SIZE + B_OFFSET + PATCH_SIZE, 'B');
+    }
+
+    std::atomic<bool> testPassed{true};
+    std::atomic<int> arrived{0};
+    std::atomic<int> generation{0};
+
+    auto waitForPeer = [&](int block) {
+        (void)block;
+        int gen = generation.load(std::memory_order_acquire);
+        if (arrived.fetch_add(1, std::memory_order_acq_rel) == 1) {
+            arrived.store(0, std::memory_order_release);
+            generation.fetch_add(1, std::memory_order_release);
+            return;
+        }
+
+        while (generation.load(std::memory_order_acquire) == gen && testPassed.load(std::memory_order_acquire)) {
+            Sleep(0);
+        }
+    };
+
+    auto writer = [&](HANDLE handle, char fill, size_t innerOffset) {
+        std::vector<char> patch(PATCH_SIZE, fill);
+        for (size_t block = 0; block < BLOCK_COUNT && testPassed.load(std::memory_order_acquire); ++block) {
+            LARGE_INTEGER pos;
+            pos.QuadPart = static_cast<LONGLONG>(block * BLOCK_DATA_SIZE + innerOffset);
+            if (!SetFilePointerEx(handle, pos, NULL, FILE_BEGIN)) {
+                printf("SetFilePointerEx failed in alias writer: %lu\n", GetLastError());
+                testPassed.store(false, std::memory_order_release);
+                return;
+            }
+
+            waitForPeer(static_cast<int>(block));
+
+            DWORD written = 0;
+            if (!WriteFile(handle, patch.data(), PATCH_SIZE, &written, NULL) || written != PATCH_SIZE) {
+                printf("WriteFile failed in alias writer: %lu\n", GetLastError());
+                testPassed.store(false, std::memory_order_release);
+                return;
+            }
+        }
+    };
+
+    std::thread lowerThread(writer, lower, 'A', A_OFFSET);
+    std::thread variantThread(writer, variant, 'B', B_OFFSET);
+    lowerThread.join();
+    variantThread.join();
+
+    FlushFileBuffers(lower);
+    FlushFileBuffers(variant);
+    CloseHandle(lower);
+    CloseHandle(variant);
+
+    if (!testPassed.load()) {
+        DeleteFileW(fileLowerCase);
+        return false;
+    }
+
+    HANDLE verify = OpenTestFile(fileLowerCase, GENERIC_READ,
+                                 FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                 OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL);
+    if (verify == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+
+    std::vector<char> actual(FILE_SIZE, '\0');
+    DWORD bytesRead = 0;
+    bool readOk = ReadFile(verify, actual.data(), static_cast<DWORD>(actual.size()), &bytesRead, NULL) != FALSE;
+    CloseHandle(verify);
+
+    if (!readOk || bytesRead != actual.size()) {
+        printf("Final read failed or short read: ok=%d read=%lu expected=%zu error=%lu\n",
+               readOk ? 1 : 0, static_cast<unsigned long>(bytesRead), actual.size(), GetLastError());
+        DeleteFileW(fileLowerCase);
+        return false;
+    }
+
+    if (actual != expected) {
+        for (size_t i = 0; i < actual.size(); ++i) {
+            if (actual[i] != expected[i]) {
+                printf("Alias write mismatch at offset %zu: got '%c', expected '%c'\n",
+                       i, actual[i], expected[i]);
+                break;
+            }
+        }
+        DeleteFileW(fileLowerCase);
+        return false;
+    }
+
+    DeleteFileW(fileLowerCase);
+    printf("Case-insensitive concurrent alias write test PASSED\n");
+    return true;
+}

@@ -15,6 +15,12 @@ set "INSTALLER_SCRIPT=%ROOT%installer\installer.nsi"
 set "TIMESTAMP_URL=http://timestamp.digicert.com"
 set "ENCFS_EXE=%ROOT%x64\Release\encfs.exe"
 set "ENCFSW_EXE=%ROOT%x64\Release\encfsw.exe"
+set "TEST_EXE=%ROOT%x64\Release\test.exe"
+if not defined TEST_LOG_DIR set "TEST_LOG_DIR=%ROOT%x64\Release\test-logs"
+if not defined TEST_TIMEOUT_SECONDS set "TEST_TIMEOUT_SECONDS=600"
+if not defined TEST_ARGS set "TEST_ARGS=-s"
+if not defined CASE_TEST_ARGS set "CASE_TEST_ARGS=--case-insensitive -s -c basic"
+if /i "%SKIP_CASE_TESTS%"=="1" set "CASE_TEST_ARGS="
 
 call :resolve_msbuild || exit /b 1
 call :resolve_makensis || exit /b 1
@@ -48,29 +54,43 @@ if defined SIGN_ENABLED (
 )
 echo.
 
-echo [1/4] Building encfs.exe
-"%MSBUILD%" "%ROOT%EncFSy_console\EncFSy_console.vcxproj" /m /t:Build /p:Configuration=%CONFIG%;Platform=%PLATFORM%;SolutionDir=%ROOT%
+echo [1/6] Rebuilding encfs.exe
+"%MSBUILD%" "%ROOT%EncFSy_console\EncFSy_console.vcxproj" /m /t:Rebuild /p:Configuration=%CONFIG%;Platform=%PLATFORM%;SolutionDir=%ROOT%
 if errorlevel 1 exit /b 1
 
 echo.
-echo [2/4] Building encfsw.exe
-"%MSBUILD%" "%ROOT%EncFSy_gui\EncFSy_gui.csproj" /m /t:Build /p:Configuration=%CONFIG%;Platform=%GUI_PLATFORM%;SolutionDir=%ROOT%
+echo [2/6] Rebuilding encfsw.exe
+"%MSBUILD%" "%ROOT%EncFSy_gui\EncFSy_gui.csproj" /m /t:Rebuild /p:Configuration=%CONFIG%;Platform=%GUI_PLATFORM%;SolutionDir=%ROOT%
+if errorlevel 1 exit /b 1
+
+echo.
+echo [3/6] Rebuilding test.exe
+"%MSBUILD%" "%ROOT%EncFSy_test\EncFSy_test.vcxproj" /m /t:Rebuild /p:Configuration=%CONFIG%;Platform=%PLATFORM%;SolutionDir=%ROOT%
 if errorlevel 1 exit /b 1
 
 call :require_file "%ENCFS_EXE%" || exit /b 1
 call :require_file "%ENCFSW_EXE%" || exit /b 1
+call :require_file "%TEST_EXE%" || exit /b 1
 
 echo.
-if defined SIGN_ENABLED (
-    echo [3/4] Signing executables
-    call :sign_file "%ENCFS_EXE%" || exit /b 1
-    call :sign_file "%ENCFSW_EXE%" || exit /b 1
+if /i "%SKIP_TESTS%"=="1" (
+    echo [4/6] Skipping tests because SKIP_TESTS=1.
 ) else (
-    echo [3/4] Skipping executable signing
+    echo [4/6] Running release tests
+    call :run_tests || exit /b 1
 )
 
 echo.
-echo [4/4] Building installer
+if defined SIGN_ENABLED (
+    echo [5/6] Signing executables
+    call :sign_file "%ENCFS_EXE%" || exit /b 1
+    call :sign_file "%ENCFSW_EXE%" || exit /b 1
+) else (
+    echo [5/6] Skipping executable signing
+)
+
+echo.
+echo [6/6] Building installer
 "%MAKENSIS%" "%INSTALLER_SCRIPT%"
 if errorlevel 1 exit /b 1
 
@@ -91,6 +111,36 @@ if defined SIGN_ENABLED (
 echo   "%ENCFS_EXE%"
 echo   "%ENCFSW_EXE%"
 echo   "%INSTALLER_EXE%"
+exit /b 0
+
+:run_tests
+if not exist "%TEST_LOG_DIR%" mkdir "%TEST_LOG_DIR%" || exit /b 1
+call :run_test_case release-default "%TEST_ARGS%" || exit /b 1
+if defined CASE_TEST_ARGS (
+    echo.
+    call :run_test_case release-case-insensitive "%CASE_TEST_ARGS%" || exit /b 1
+)
+exit /b 0
+
+:run_test_case
+set "TEST_CASE_NAME=%~1"
+set "TEST_CASE_ARGS=%~2"
+set "TEST_LOG=%TEST_LOG_DIR%\%TEST_CASE_NAME%.log"
+set "TEST_ERR_LOG=%TEST_LOG_DIR%\%TEST_CASE_NAME%.err.log"
+del "%TEST_LOG%" "%TEST_ERR_LOG%" >nul 2>nul
+echo Running "%TEST_EXE%" %TEST_CASE_ARGS%
+echo   Log: "%TEST_LOG%"
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "$timeout = [int]$env:TEST_TIMEOUT_SECONDS * 1000; $p = Start-Process -FilePath $env:TEST_EXE -ArgumentList $env:TEST_CASE_ARGS -WorkingDirectory (Join-Path $env:ROOT 'x64\Release') -RedirectStandardOutput $env:TEST_LOG -RedirectStandardError $env:TEST_ERR_LOG -PassThru; if (-not $p.WaitForExit($timeout)) { Stop-Process -Id $p.Id -Force; exit 124 }; exit $p.ExitCode"
+set "TEST_EXIT=%ERRORLEVEL%"
+if not "%TEST_EXIT%"=="0" (
+    echo ERROR: Test case failed: %TEST_CASE_NAME% (exit %TEST_EXIT%)
+    if exist "%TEST_LOG%" type "%TEST_LOG%"
+    if exist "%TEST_ERR_LOG%" type "%TEST_ERR_LOG%"
+    exit /b %TEST_EXIT%
+)
+findstr /C:"Total:" /C:"*** ALL TESTS PASSED ***" "%TEST_LOG%"
+if errorlevel 1 type "%TEST_LOG%"
 exit /b 0
 
 :resolve_password

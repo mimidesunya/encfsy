@@ -426,6 +426,9 @@ static void RunAllTests(TestRunner& runner,
         printf("\n--- EDGE CASE TESTS (Bug Regression) ---\n");
         runner.runTest("Zero-length read request", Test_ZeroLengthRead, file);
         runner.runTest("Zero-length write request", Test_ZeroLengthWrite, file);
+        runner.runTest("EncFS config validation rejects invalid values", Test_ConfigValidationRejectsInvalidValues, file);
+        runner.runTest("blockMACRandBytes codec round-trip", Test_BlockMACRandBytesRoundTrip, file);
+        runner.runTest("allowHoles=false rejects sparse zero block", Test_AllowHolesFalseRejectsSparseZeroBlock, file);
         runner.runTest("SetEndOfFile boundary block", Test_SetEndOfFileBoundaryBlock, file);
         runner.runTest("File expansion partial block", Test_FileExpansionPartialBlock, file);
         runner.runTest("Rapid truncate and write", Test_RapidTruncateWrite, file);
@@ -476,8 +479,10 @@ static void RunAllTests(TestRunner& runner,
         runner.runTest("Create and print final path", Test_CreateAndPrintPath, file);
         if (caseInsensitiveMode) {
             runner.runTest("Case-insensitive open", Test_CaseInsensitiveOpen, fileLowerNested, fileCaseVariant);
+            runner.runTest("Case-insensitive concurrent alias write", Test_CaseInsensitiveConcurrentAliasWrite, fileLowerNested, fileCaseVariant);
         } else {
             printf("Skipping case-insensitive-only test: Case-insensitive open (requires --case-insensitive)\n");
+            printf("Skipping case-insensitive-only test: Case-insensitive concurrent alias write (requires --case-insensitive)\n");
         }
         runner.runTest("Buffered IO (seek, read, write)", Test_BufferedIO, file);
         runner.runTest("Append-only write", Test_AppendWrite, file);
@@ -701,6 +706,7 @@ static void RunAllTests(TestRunner& runner,
         runner.runTest("File resize performance", Test_FileResizePerformance, file);
         runner.runTest("Memory allocation impact", Test_MemoryAllocationImpact, file);
         runner.runTest("Concurrent I/O performance", Test_ConcurrentIOPerformance, file);
+        runner.runTest("Many-file directory delete performance", Test_ManyFileDeletePerformance, rootDir);
     } else {
         printf("\n--- PERFORMANCE TESTS (skipped; include with -c performance) ---\n");
     }

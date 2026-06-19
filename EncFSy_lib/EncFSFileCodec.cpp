@@ -2,7 +2,10 @@
 #include "EncFSVolume.h"
 #include "EncFSUtils.hpp"
 
+#include <algorithm>
+#include <limits>
 #include <misc.h>
+#include <osrng.h>
 
 using namespace std;
 using namespace CryptoPP;
@@ -11,6 +14,7 @@ namespace EncFS {
     namespace {
         constexpr int HEADER_SIZE = 8;
         constexpr int CHAIN_IV_SIZE = 8;
+        static thread_local AutoSeededX917RNG<AES> random;
 
         inline int32_t getHeaderSize(const FileCodecContext& context) {
             return context.blockMACRandBytes + context.blockMACBytes;
@@ -26,8 +30,8 @@ namespace EncFS {
             if (input.size() == static_cast<size_t>(context.blockSize)) {
                 blockCipher(
                     context.volumeHmac, context.hmacLock,
-                    string((const char*)context.volumeKey.data(), context.volumeKey.size()),
-                    string((const char*)context.volumeIv.data(), context.volumeIv.size()),
+                    context.volumeKey.data(), context.volumeKey.size(),
+                    context.volumeIv.data(), context.volumeIv.size(),
                     blockIv, cipher, cipherLock,
                     input, output);
             }
@@ -65,9 +69,17 @@ namespace EncFS {
                 block.reserve(headerSize + srcBlock.size());
                 block.resize(headerSize);
                 block.append(srcBlock);
+                if (context.blockMACRandBytes > 0) {
+                    random.GenerateBlock(
+                        reinterpret_cast<byte*>(&block[static_cast<size_t>(context.blockMACBytes)]),
+                        static_cast<size_t>(context.blockMACRandBytes));
+                }
 
                 byte mac[8];
-                mac64(context.volumeHmac, context.hmacLock, (const byte*)srcBlock.data(), srcBlock.size(), (char*)mac);
+                mac64(context.volumeHmac, context.hmacLock,
+                    reinterpret_cast<const byte*>(block.data()) + context.blockMACBytes,
+                    static_cast<size_t>(context.blockMACRandBytes) + srcBlock.size(),
+                    reinterpret_cast<char*>(mac));
                 for (size_t i = 0; i < static_cast<size_t>(context.blockMACBytes); ++i) {
                     block[i] = mac[7 - i];
                 }
@@ -77,16 +89,16 @@ namespace EncFS {
                 if (block.size() == static_cast<size_t>(context.blockSize)) {
                     blockCipher(
                         context.volumeHmac, context.hmacLock,
-                        string((const char*)context.volumeKey.data(), context.volumeKey.size()),
-                        string((const char*)context.volumeIv.data(), context.volumeIv.size()),
+                        context.volumeKey.data(), context.volumeKey.size(),
+                        context.volumeIv.data(), context.volumeIv.size(),
                         blockIv, context.aesCbcEnc, context.aesCbcEncLock,
                         block, destBlock);
                 }
                 else {
                     streamEncrypt(
                         context.volumeHmac, context.hmacLock,
-                        string((const char*)context.volumeKey.data(), context.volumeKey.size()),
-                        string((const char*)context.volumeIv.data(), context.volumeIv.size()),
+                        context.volumeKey.data(), context.volumeKey.size(),
+                        context.volumeIv.data(), context.volumeIv.size(),
                         blockIv, context.aesCfbEnc, context.aesCfbEncLock,
                         block, destBlock);
                 }
@@ -107,16 +119,16 @@ namespace EncFS {
             if (srcBlock.size() == static_cast<size_t>(context.blockSize)) {
                 blockCipher(
                     context.volumeHmac, context.hmacLock,
-                    string((const char*)context.volumeKey.data(), context.volumeKey.size()),
-                    string((const char*)context.volumeIv.data(), context.volumeIv.size()),
+                    context.volumeKey.data(), context.volumeKey.size(),
+                    context.volumeIv.data(), context.volumeIv.size(),
                     blockIv, context.aesCbcDec, context.aesCbcDecLock,
                     srcBlock, destBlock);
             }
             else {
                 streamDecrypt(
                     context.volumeHmac, context.hmacLock,
-                    string((const char*)context.volumeKey.data(), context.volumeKey.size()),
-                    string((const char*)context.volumeIv.data(), context.volumeIv.size()),
+                    context.volumeKey.data(), context.volumeKey.size(),
+                    context.volumeIv.data(), context.volumeIv.size(),
                     blockIv, context.aesCfbDec, context.aesCfbDecLock,
                     srcBlock, destBlock);
             }
@@ -136,7 +148,8 @@ namespace EncFS {
                 reversedMac[i] = mac[7 - i];
             }
 
-            if (!VerifyBufsEqual((const byte*)destBlock.data(), reversedMac, context.blockMACBytes)) {
+            if (context.blockMACBytes > 0 &&
+                !VerifyBufsEqual((const byte*)destBlock.data(), reversedMac, context.blockMACBytes)) {
                 throw EncFSInvalidBlockException();
             }
 
@@ -145,6 +158,11 @@ namespace EncFS {
     }
 
     int64_t ToDecodedLength(const FileCodecContext& context, int64_t encodedLength) {
+        if (encodedLength <= 0 || context.blockSize <= 0 || getHeaderSize(context) < 0 ||
+            context.blockSize <= getHeaderSize(context)) {
+            return 0;
+        }
+
         int64_t size = encodedLength;
         const int64_t headerSize = getHeaderSize(context);
         if (size < (context.uniqueIV ? (int64_t)HEADER_SIZE : 0) + headerSize) {
@@ -161,17 +179,26 @@ namespace EncFS {
     }
 
     int64_t ToEncodedLength(const FileCodecContext& context, int64_t decodedLength) {
+        if (decodedLength <= 0 || context.blockSize <= 0 || getHeaderSize(context) < 0 ||
+            context.blockSize <= getHeaderSize(context)) {
+            return 0;
+        }
+
         int64_t size = decodedLength;
-        if (size > 0) {
-            const int64_t headerSize = getHeaderSize(context);
-            const int64_t dataBlockSize = context.blockSize - headerSize;
-            if (headerSize > 0 && dataBlockSize > 0) {
-                int64_t numBlocks = ((size - 1) / dataBlockSize) + 1;
-                size += numBlocks * headerSize;
+        const int64_t headerSize = getHeaderSize(context);
+        const int64_t dataBlockSize = context.blockSize - headerSize;
+        if (headerSize > 0) {
+            int64_t numBlocks = ((size - 1) / dataBlockSize) + 1;
+            if (numBlocks > (std::numeric_limits<int64_t>::max() - size) / headerSize) {
+                return 0;
             }
-            if (context.uniqueIV) {
-                size += HEADER_SIZE;
+            size += numBlocks * headerSize;
+        }
+        if (context.uniqueIV) {
+            if (size > std::numeric_limits<int64_t>::max() - HEADER_SIZE) {
+                return 0;
             }
+            size += HEADER_SIZE;
         }
         return size;
     }
@@ -190,8 +217,8 @@ namespace EncFS {
 
         streamEncrypt(
             context.volumeHmac, context.hmacLock,
-            string((const char*)context.volumeKey.data(), context.volumeKey.size()),
-            string((const char*)context.volumeIv.data(), context.volumeIv.size()),
+            context.volumeKey.data(), context.volumeKey.size(),
+            context.volumeIv.data(), context.volumeIv.size(),
             initIv, context.aesCfbEnc, context.aesCfbEncLock,
             decodedFileIv, encodedFileHeader);
     }
@@ -208,8 +235,8 @@ namespace EncFS {
 
         streamDecrypt(
             context.volumeHmac, context.hmacLock,
-            string((const char*)context.volumeKey.data(), context.volumeKey.size()),
-            string((const char*)context.volumeIv.data(), context.volumeIv.size()),
+            context.volumeKey.data(), context.volumeKey.size(),
+            context.volumeIv.data(), context.volumeIv.size(),
             initIv, context.aesCfbDec, context.aesCfbDecLock,
             encodedFileHeader, decodedFileIv);
 

@@ -57,6 +57,10 @@ NTSTATUS DOKAN_CALLBACK EncFSLockFile(LPCWSTR FileName,
 
     DbgPrintV(L"LockFile: '%s' offset=%I64d len=%I64d\n", FileName, ByteOffset, Length);
 
+    if (ByteOffset < 0 || Length < 0) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
     if (!DokanFileInfo->Context) {
         DbgPrintV(L"  [WARN] Context is NULL, handle already closed\n");
         return STATUS_INVALID_HANDLE;
@@ -115,6 +119,10 @@ NTSTATUS DOKAN_CALLBACK EncFSSetEndOfFile(
 
     DbgPrintV(L"SetEndOfFile: '%s' newSize=%I64d\n", FileName, ByteOffset);
 
+    if (ByteOffset < 0) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
     if (!DokanFileInfo->Context) {
         DbgPrintV(L"  [WARN] Context is NULL\n");
         return STATUS_INVALID_HANDLE;
@@ -122,8 +130,11 @@ NTSTATUS DOKAN_CALLBACK EncFSSetEndOfFile(
 
     EncFS::EncFSFile* encfsFile = ToEncFSFile(DokanFileInfo->Context);
     
-    // Acquire file-level lock to prevent data corruption during concurrent access
-    EncFS::FileScopedLock fileLock(FileName);
+    WCHAR filePath[DOKAN_MAX_PATH];
+    GetFilePath(filePath, FileName, false);
+
+    // Lock by canonical physical path so case-insensitive aliases serialize.
+    EncFS::FileScopedLock fileLock(filePath);
     
     if (!encfsFile->setLength(FileName, ByteOffset)) {
         DWORD error = GetLastError();
@@ -224,6 +235,10 @@ NTSTATUS DOKAN_CALLBACK EncFSSetAllocationSize(
 
     DbgPrintV(L"SetAllocationSize: '%s' allocSize=%I64d\n", FileName, AllocSize);
 
+    if (AllocSize < 0) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
     if (!DokanFileInfo->Context) {
         DbgPrintV(L"  [WARN] Context is NULL\n");
         return STATUS_INVALID_HANDLE;
@@ -231,8 +246,11 @@ NTSTATUS DOKAN_CALLBACK EncFSSetAllocationSize(
 
     EncFS::EncFSFile* encfsFile = ToEncFSFile(DokanFileInfo->Context);
     
-    // Acquire file-level lock to prevent data corruption during concurrent access
-    EncFS::FileScopedLock fileLock(FileName);
+    WCHAR filePath[DOKAN_MAX_PATH];
+    GetFilePath(filePath, FileName, false);
+
+    // Lock by canonical physical path so case-insensitive aliases serialize.
+    EncFS::FileScopedLock fileLock(filePath);
     
     LARGE_INTEGER encodedFileSize;
     if (GetFileSizeEx(encfsFile->getHandle(), &encodedFileSize)) {
@@ -342,6 +360,10 @@ EncFSUnlockFile(LPCWSTR FileName, LONGLONG ByteOffset, LONGLONG Length,
     LARGE_INTEGER offset;
 
     DbgPrintV(L"UnlockFile: '%s' offset=%I64d len=%I64d\n", FileName, ByteOffset, Length);
+
+    if (ByteOffset < 0 || Length < 0) {
+        return STATUS_INVALID_PARAMETER;
+    }
 
     if (!DokanFileInfo->Context) {
         DbgPrintV(L"  [WARN] Context is NULL\n");

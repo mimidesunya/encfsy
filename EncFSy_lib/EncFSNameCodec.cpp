@@ -34,7 +34,7 @@ namespace EncFS {
             std::string& output) {
             byte ivSpec[IV_SPEC_SIZE];
             generateIv(context.volumeHmac, context.hmacLock,
-                string((const char*)context.volumeIv.data(), context.volumeIv.size()),
+                context.volumeIv.data(), context.volumeIv.size(),
                 fileIv,
                 (char*)ivSpec);
 
@@ -95,8 +95,8 @@ namespace EncFS {
             string body;
             streamEncrypt(
                 context.volumeHmac, context.hmacLock,
-                string((const char*)context.volumeKey.data(), context.volumeKey.size()),
-                string((const char*)context.volumeIv.data(), context.volumeIv.size()),
+                context.volumeKey.data(), context.volumeKey.size(),
+                context.volumeIv.data(), context.volumeIv.size(),
                 ivSeed,
                 context.aesCfbEnc, context.aesCfbEncLock,
                 plainFileName, body);
@@ -152,8 +152,8 @@ namespace EncFS {
             string decoded;
             streamDecrypt(
                 context.volumeHmac, context.hmacLock,
-                string((const char*)context.volumeKey.data(), context.volumeKey.size()),
-                string((const char*)context.volumeIv.data(), context.volumeIv.size()),
+                context.volumeKey.data(), context.volumeKey.size(),
+                context.volumeIv.data(), context.volumeIv.size(),
                 ivSeed,
                 context.aesCfbDec, context.aesCfbDecLock,
                 body, decoded);

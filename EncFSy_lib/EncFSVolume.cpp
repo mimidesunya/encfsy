@@ -12,6 +12,7 @@
 #include <algorithm> // For std::all_of
 #include <vector>
 #include <regex>
+#include <cerrno>
 
 #if defined(WIN32) || defined(_WIN32)
 #include <windows.h> // For SecureZeroMemory
@@ -43,11 +44,88 @@ namespace EncFS {
                 throw EncFSBadConfigurationException(string("Missing XML node: ") + childName);
             }
             char* end;
+            errno = 0;
             long value = strtol(node->value(), &end, 10);
-            if (end == node->value() || *end != '\0') { // Check if conversion failed or was partial
+            if (errno == ERANGE || end == node->value() || *end != '\0') { // Check if conversion failed or was partial
                 throw EncFSBadConfigurationException(string("Invalid integer value for node: ") + childName);
             }
             return value;
+        }
+
+        long parseXmlLongNode(xml_node<>* node, const char* nodeName) {
+            if (!node || !node->value()) {
+                throw EncFSBadConfigurationException(string("Missing XML node: ") + nodeName);
+            }
+            char* end;
+            errno = 0;
+            long value = strtol(node->value(), &end, 10);
+            if (errno == ERANGE || end == node->value() || *end != '\0') {
+                throw EncFSBadConfigurationException(string("Invalid integer value for node: ") + nodeName);
+            }
+            return value;
+        }
+
+        void requireBool(int32_t value, const char* name) {
+            if (value != 0 && value != 1) {
+                throw EncFSBadConfigurationException(string("Invalid boolean value for node: ") + name);
+            }
+        }
+
+        void requireRange(int32_t value, int32_t minValue, int32_t maxValue, const char* name) {
+            if (value < minValue || value > maxValue) {
+                throw EncFSBadConfigurationException(string("Value out of range for node: ") + name);
+            }
+        }
+
+        void validateLoadedConfig(const EncFSVolume::NameAlgorithm nameAlgorithm,
+            int32_t nameMajor,
+            int32_t nameMinor,
+            int32_t keySize,
+            int32_t blockSize,
+            int32_t uniqueIV,
+            int32_t chainedNameIV,
+            int32_t externalIVChaining,
+            int32_t blockMACBytes,
+            int32_t blockMACRandBytes,
+            int32_t allowHoles,
+            int32_t encodedKeySize,
+            int32_t saltLen,
+            int32_t kdfIterations,
+            int32_t desiredKDFDuration) {
+            requireBool(uniqueIV, "uniqueIV");
+            requireBool(chainedNameIV, "chainedNameIV");
+            requireBool(externalIVChaining, "externalIVChaining");
+            requireBool(allowHoles, "allowHoles");
+
+            if (keySize != 128 && keySize != 192 && keySize != 256) {
+                throw EncFSBadConfigurationException("Unsupported keySize");
+            }
+            requireRange(blockSize, AES::BLOCKSIZE, 1024 * 1024, "blockSize");
+            if ((blockSize % AES::BLOCKSIZE) != 0) {
+                throw EncFSBadConfigurationException("blockSize must be a multiple of AES block size");
+            }
+            requireRange(blockMACBytes, 0, 8, "blockMACBytes");
+            requireRange(blockMACRandBytes, 0, 8, "blockMACRandBytes");
+            if (blockSize <= blockMACBytes + blockMACRandBytes) {
+                throw EncFSBadConfigurationException("blockSize must be larger than block MAC header");
+            }
+            requireRange(saltLen, 1, 1024, "saltLen");
+            requireRange(kdfIterations, 1, 100000000, "kdfIterations");
+            requireRange(desiredKDFDuration, 0, 24 * 60 * 60 * 1000, "desiredKDFDuration");
+
+            const int32_t minEncodedKeySize = (keySize / 8) + MAC_32_SIZE + 1;
+            requireRange(encodedKeySize, minEncodedKeySize, (keySize / 8) + MAC_32_SIZE + 32, "encodedKeySize");
+
+            if (nameAlgorithm == EncFSVolume::NameAlgorithm::Block) {
+                if (nameMajor != 3 || nameMinor != 0) {
+                    throw EncFSBadConfigurationException("Unsupported nameio/block version");
+                }
+            }
+            else {
+                if (nameMajor < 1 || nameMajor > 2 || nameMinor < 0) {
+                    throw EncFSBadConfigurationException("Unsupported nameio/stream version");
+                }
+            }
         }
 
         // Helper to get chain IV
@@ -105,6 +183,22 @@ namespace EncFS {
                 throw EncFSBadConfigurationException("Missing node: nameAlg");
             }
 
+            xml_node<>* cipherAlg = cfg->first_node("cipherAlg");
+            if (!cipherAlg) {
+                throw EncFSBadConfigurationException("Missing node: cipherAlg");
+            }
+            xml_node<>* cipherName = cipherAlg->first_node("name");
+            xml_node<>* cipherMajor = cipherAlg->first_node("major");
+            xml_node<>* cipherMinor = cipherAlg->first_node("minor");
+            if (!cipherName || !cipherName->value() || !cipherMajor || !cipherMinor) {
+                throw EncFSBadConfigurationException("Invalid node: cipherAlg");
+            }
+            if (string(cipherName->value()) != "ssl/aes" ||
+                parseXmlLongNode(cipherMajor, "cipherAlg/major") != 3 ||
+                parseXmlLongNode(cipherMinor, "cipherAlg/minor") != 0) {
+                throw EncFSBadConfigurationException("Unsupported cipher algorithm");
+            }
+
             xml_node<>* nameNode = nameAlg->first_node("name");
             xml_node<>* majorNode = nameAlg->first_node("major");
             xml_node<>* minorNode = nameAlg->first_node("minor");
@@ -112,8 +206,8 @@ namespace EncFS {
                 throw EncFSBadConfigurationException("Invalid node: nameAlg");
             }
 
-            this->nameAlgorithmMajor = static_cast<int32_t>(strtol(majorNode->value(), nullptr, 10));
-            this->nameAlgorithmMinor = static_cast<int32_t>(strtol(minorNode->value(), nullptr, 10));
+            this->nameAlgorithmMajor = static_cast<int32_t>(parseXmlLongNode(majorNode, "nameAlg/major"));
+            this->nameAlgorithmMinor = static_cast<int32_t>(parseXmlLongNode(minorNode, "nameAlg/minor"));
             const string nameAlgorithmName(nameNode->value());
             if (nameAlgorithmName == "nameio/block") {
                 this->nameAlgorithm = NameAlgorithm::Block;
@@ -126,18 +220,18 @@ namespace EncFS {
             }
             
             // Parse all integer values with validation
-            this->keySize = parseXmlLong(cfg, "keySize");
-            this->blockSize = parseXmlLong(cfg, "blockSize");
-            this->uniqueIV = parseXmlLong(cfg, "uniqueIV");
-            this->chainedNameIV = parseXmlLong(cfg, "chainedNameIV");
-            this->externalIVChaining = parseXmlLong(cfg, "externalIVChaining");
-            this->blockMACBytes = parseXmlLong(cfg, "blockMACBytes");
-            this->blockMACRandBytes = parseXmlLong(cfg, "blockMACRandBytes");
-            this->allowHoles = parseXmlLong(cfg, "allowHoles");
-            this->encodedKeySize = parseXmlLong(cfg, "encodedKeySize");
-            this->saltLen = parseXmlLong(cfg, "saltLen");
-            this->kdfIterations = parseXmlLong(cfg, "kdfIterations");
-            this->desiredKDFDuration = parseXmlLong(cfg, "desiredKDFDuration");
+            const int32_t parsedKeySize = static_cast<int32_t>(parseXmlLong(cfg, "keySize"));
+            const int32_t parsedBlockSize = static_cast<int32_t>(parseXmlLong(cfg, "blockSize"));
+            const int32_t parsedUniqueIV = static_cast<int32_t>(parseXmlLong(cfg, "uniqueIV"));
+            const int32_t parsedChainedNameIV = static_cast<int32_t>(parseXmlLong(cfg, "chainedNameIV"));
+            const int32_t parsedExternalIVChaining = static_cast<int32_t>(parseXmlLong(cfg, "externalIVChaining"));
+            const int32_t parsedBlockMACBytes = static_cast<int32_t>(parseXmlLong(cfg, "blockMACBytes"));
+            const int32_t parsedBlockMACRandBytes = static_cast<int32_t>(parseXmlLong(cfg, "blockMACRandBytes"));
+            const int32_t parsedAllowHoles = static_cast<int32_t>(parseXmlLong(cfg, "allowHoles"));
+            const int32_t parsedEncodedKeySize = static_cast<int32_t>(parseXmlLong(cfg, "encodedKeySize"));
+            const int32_t parsedSaltLen = static_cast<int32_t>(parseXmlLong(cfg, "saltLen"));
+            const int32_t parsedKdfIterations = static_cast<int32_t>(parseXmlLong(cfg, "kdfIterations"));
+            const int32_t parsedDesiredKDFDuration = static_cast<int32_t>(parseXmlLong(cfg, "desiredKDFDuration"));
 
             // Parse encoded key data (Base64)
             {
@@ -158,6 +252,35 @@ namespace EncFS {
                 this->saltData.assign(node->value());
                 trim(this->saltData);
             }
+
+            validateLoadedConfig(this->nameAlgorithm,
+                this->nameAlgorithmMajor,
+                this->nameAlgorithmMinor,
+                parsedKeySize,
+                parsedBlockSize,
+                parsedUniqueIV,
+                parsedChainedNameIV,
+                parsedExternalIVChaining,
+                parsedBlockMACBytes,
+                parsedBlockMACRandBytes,
+                parsedAllowHoles,
+                parsedEncodedKeySize,
+                parsedSaltLen,
+                parsedKdfIterations,
+                parsedDesiredKDFDuration);
+
+            this->keySize = parsedKeySize;
+            this->blockSize = parsedBlockSize;
+            this->uniqueIV = parsedUniqueIV != 0;
+            this->chainedNameIV = parsedChainedNameIV != 0;
+            this->externalIVChaining = parsedExternalIVChaining != 0;
+            this->blockMACBytes = parsedBlockMACBytes;
+            this->blockMACRandBytes = parsedBlockMACRandBytes;
+            this->allowHoles = parsedAllowHoles != 0;
+            this->encodedKeySize = parsedEncodedKeySize;
+            this->saltLen = parsedSaltLen;
+            this->kdfIterations = parsedKdfIterations;
+            this->desiredKDFDuration = parsedDesiredKDFDuration;
 
             // Apply reverse mode constraints
             this->reverse = reverse;
@@ -261,7 +384,8 @@ namespace EncFS {
 
         // Encrypt the volume key
         string encryptedKey;
-        streamEncrypt(passKeyHmac, this->hmacLock, string((char*)passKey.data(), passKey.size()), string((char*)passIv.data(), passIv.size()), ivSeed,
+        streamEncrypt(passKeyHmac, this->hmacLock,
+            passKey.data(), passKey.size(), passIv.data(), passIv.size(), ivSeed,
             this->aesCfbEnc, this->aesCfbEncLock, string((char*)plainKey.data(), plainKey.size()), encryptedKey);
         encryptedKey.insert(0, ivSeed);
 
@@ -404,7 +528,7 @@ namespace EncFS {
         string plainKey;
         streamDecrypt(
             passKeyHmac, this->hmacLock,
-            string((const char*)passKey.data(), passKey.size()), string((const char*)passIv.data(), passIv.size()), ivSeed,
+            passKey.data(), passKey.size(), passIv.data(), passIv.size(), ivSeed,
             this->aesCfbDec, this->aesCfbDecLock,
             encryptedKey, plainKey
         );

@@ -223,6 +223,14 @@ namespace EncFS
 		inline bool isUniqueIV() const {
 			return this->uniqueIV;
 		}
+
+		/**
+		 * @brief Checks if sparse zero-block passthrough is enabled
+		 * @return True if all-zero encrypted blocks may represent zero plaintext
+		 */
+		inline bool isAllowHoles() const {
+			return this->allowHoles;
+		}
 		
 		/**
 		 * @brief Checks if reverse encryption mode is enabled
