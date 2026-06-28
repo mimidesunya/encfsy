@@ -16,3 +16,8 @@ EncFSy_test/Debug
 EncFSy_gui/bin
 EncFSy_gui/obj
 /EncFSy_lib/Release
+
+# 外部依存（ダウンロード/チェックアウト。git管理外）
+/dokany/
+/cryptopp-CRYPTOPP_8_9_0/
+/cryptopp-CRYPTOPP_7_0_0/
