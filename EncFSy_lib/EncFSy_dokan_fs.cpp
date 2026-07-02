@@ -167,7 +167,9 @@ NTSTATUS DOKAN_CALLBACK EncFSGetFileInformation(
         WCHAR filePath[DOKAN_MAX_PATH];
         GetFilePath(filePath, FileName, false);
         DbgPrintV(L"  [INFO] Context is NULL (cleanup occurred?), opening temp handle\n");
-        HANDLE handle = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, NULL,
+        // Full sharing so this metadata query never fails against other open handles.
+        HANDLE handle = CreateFileW(filePath, GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
             OPEN_EXISTING, 0, NULL);
         if (handle == INVALID_HANDLE_VALUE) {
             DWORD error = GetLastError();

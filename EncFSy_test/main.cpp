@@ -587,6 +587,7 @@ static void RunAllTests(TestRunner& runner,
     if (ShouldRunCategory(selectedCategories, "rename")) {
         printf("\n--- FILE RENAME PATTERN TESTS (Adobe Reader regression) ---\n");
         runner.runTest("Adobe Reader-like save pattern", Test_AdobeReaderSavePattern, rootDir);
+        runner.runTest("ReplaceFile while target open (safe-save)", Test_ReplaceFileWhileTargetOpen, rootDir);
         runner.runTest("Rapid rename to same target", Test_RapidRenameToSameTarget, rootDir);
         runner.runTest("Rename chain cycle (A->B->C->A)", Test_RenameChainCycle, rootDir);
         runner.runTest("Write-rename-read immediate", Test_WriteRenameReadImmediate, rootDir);
@@ -671,6 +672,7 @@ static void RunAllTests(TestRunner& runner,
         printf("\n--- WINDOWS FILESYSTEM TESTS (Memory-Mapped Files) ---\n");
         runner.runTest("Memory-mapped file (read)", Test_MemoryMappedFileRead, file);
         runner.runTest("Memory-mapped file (write)", Test_MemoryMappedFileWrite, file);
+        runner.runTest("Mmap paging read with 2nd handle", Test_MmapPagingReadWithSecondHandle, file);
 
         printf("\n--- WINDOWS FILESYSTEM TESTS (Notifications & Special Names) ---\n");
         runner.runTest("File change notification", Test_FileChangeNotification, rootDir);

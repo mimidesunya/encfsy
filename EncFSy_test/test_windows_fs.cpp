@@ -977,6 +977,105 @@ bool Test_MemoryMappedFileWrite(const WCHAR* file)
 }
 
 //=============================================================================
+// Test: Paging reads on a mapped view after the handle is closed, while a
+// second read/write handle is open ("memory error" regression).
+//
+// Apps (and Explorer's thumbnail/property extraction) commonly map a file and
+// close the handle; the mapping keeps the section alive and later page-ins
+// arrive on a Dokan context whose handle was already closed in Cleanup.
+// EncFSy then reopens a temporary read handle. This reopen used to use a
+// restrictive share mode, which collided with any concurrently open R/W
+// handle, failed the paging read, and surfaced to the app as
+// EXCEPTION_IN_PAGE_ERROR (the "memory error" crash dialog).
+//=============================================================================
+
+// SEH must be isolated from C++ objects (C2712).
+static DWORD TouchMappedPages(const char* view, size_t size) {
+    __try {
+        volatile char acc = 0;
+        for (size_t i = 0; i < size; i += 4096) acc ^= view[i];
+        acc ^= view[size - 1];
+        return 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return GetExceptionCode();
+    }
+}
+
+bool Test_MmapPagingReadWithSecondHandle(const WCHAR* file)
+{
+    printf("Testing paging reads after handle close with a second R/W handle open\n");
+
+    DeleteFileW(file);
+    const size_t SIZE = 1 << 20; // 1MB: forces real paging reads past the prefetch
+
+    // Create the file
+    {
+        std::vector<char> data(SIZE);
+        for (size_t i = 0; i < SIZE; i++) data[i] = (char)(i * 17 + 5);
+        HANDLE h = OpenTestFile(file, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ,
+                                CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL);
+        if (h == INVALID_HANDLE_VALUE) return false;
+        DWORD w = 0;
+        if (!WriteFile(h, data.data(), (DWORD)SIZE, &w, NULL) || w != SIZE) {
+            PrintLastError("WriteFile");
+            CloseHandle(h);
+            return false;
+        }
+        FlushFileBuffers(h);
+        CloseHandle(h);
+    }
+
+    // Map the file, then close the file handle (section stays alive)
+    HANDLE h1 = OpenTestFile(file, GENERIC_READ,
+                             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                             OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL);
+    if (h1 == INVALID_HANDLE_VALUE) return false;
+    HANDLE hMapping = CreateFileMappingW(h1, NULL, PAGE_READONLY, 0, 0, NULL);
+    if (hMapping == NULL) {
+        PrintLastError("CreateFileMappingW");
+        CloseHandle(h1);
+        DeleteFileW(file);
+        return true; // mapping unsupported
+    }
+    const char* view = (const char*)MapViewOfFile(hMapping, FILE_MAP_READ, 0, 0, 0);
+    if (view == NULL) {
+        PrintLastError("MapViewOfFile");
+        CloseHandle(hMapping);
+        CloseHandle(h1);
+        DeleteFileW(file);
+        return true;
+    }
+    CloseHandle(h1); // Cleanup runs; paging reads must still work
+
+    // Open a second handle with write access while pages get faulted in
+    HANDLE h2 = OpenTestFile(file, GENERIC_READ | GENERIC_WRITE,
+                             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                             OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL);
+    if (h2 == INVALID_HANDLE_VALUE) {
+        PrintLastError("second handle open");
+        UnmapViewOfFile(view);
+        CloseHandle(hMapping);
+        DeleteFileW(file);
+        return false;
+    }
+
+    DWORD exceptionCode = TouchMappedPages(view, SIZE);
+
+    CloseHandle(h2);
+    UnmapViewOfFile(view);
+    CloseHandle(hMapping);
+    DeleteFileW(file);
+
+    if (exceptionCode != 0) {
+        printf("ERROR: touching mapped pages raised exception 0x%08lX (in-page error)\n",
+               static_cast<unsigned long>(exceptionCode));
+        return false;
+    }
+    printf("All mapped pages readable OK\n");
+    return true;
+}
+
+//=============================================================================
 // Test: File change notification (ReadDirectoryChangesW)
 //=============================================================================
 bool Test_FileChangeNotification(const WCHAR* rootDir)
@@ -1285,13 +1384,13 @@ bool Test_UnicodeFilenames(const WCHAR* rootDir)
     
     // Various Unicode test cases
     const WCHAR* unicodeNames[] = {
-        L"“ú–{Œêƒtƒ@ƒCƒ‹.txt",           // Japanese
+        L"ï¿½ï¿½ï¿½{ï¿½ï¿½tï¿½@ï¿½Cï¿½ï¿½.txt",           // Japanese
         L"????.txt",                  // Korean
-        L"’†•¶•¶Œ.txt",                  // Chinese
-        L"„†„p„z„|.txt",                      // Russian
-        L"ƒ¿ƒÀƒÁƒÂ.txt",                      // Greek
+        L"ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½.txt",                  // Chinese
+        L"ï¿½ï¿½ï¿½pï¿½zï¿½|.txt",                      // Russian
+        L"ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½.txt",                      // Greek
         L"emoji_??_test.txt",             // Emoji (surrogate pair)
-        L"mixed_“ú–{Œê_English.txt",      // Mixed
+        L"mixed_ï¿½ï¿½ï¿½{ï¿½ï¿½_English.txt",      // Mixed
     };
     
     bool ok = true;

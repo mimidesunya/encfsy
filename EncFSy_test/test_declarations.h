@@ -41,6 +41,7 @@ bool Test_WordLikeSavePattern(const WCHAR* rootDir);
 bool Test_InterleavedReadWriteWithResize(const WCHAR* file);
 bool Test_OverwriteThenTruncate(const WCHAR* file);
 bool Test_AdobeReaderSavePattern(const WCHAR* rootDir);
+bool Test_ReplaceFileWhileTargetOpen(const WCHAR* rootDir);
 bool Test_RapidRenameToSameTarget(const WCHAR* rootDir);
 bool Test_RenameChainCycle(const WCHAR* rootDir);
 bool Test_WriteRenameReadImmediate(const WCHAR* rootDir);
@@ -190,6 +191,7 @@ bool Test_MultipleHardLinks(const WCHAR* rootDir);
 // Memory-Mapped Files
 bool Test_MemoryMappedFileRead(const WCHAR* file);
 bool Test_MemoryMappedFileWrite(const WCHAR* file);
+bool Test_MmapPagingReadWithSecondHandle(const WCHAR* file);
 
 // File Change Notifications
 bool Test_FileChangeNotification(const WCHAR* rootDir);

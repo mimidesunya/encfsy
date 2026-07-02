@@ -199,7 +199,9 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
         if (fileAttr & FILE_ATTRIBUTE_DIRECTORY) {
             if (!(CreateOptions & FILE_NON_DIRECTORY_FILE)) {
                 DokanFileInfo->IsDirectory = TRUE;
-                ShareAccess |= FILE_SHARE_READ;
+                // Physical opens use full sharing; logical sharing is enforced by the
+                // Dokan kernel driver (see the file branch below for details).
+                ShareAccess = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
             } else {
                 DbgPrintV(L"  [INFO] Directory found but FILE_NON_DIRECTORY_FILE specified\n");
                 return STATUS_FILE_IS_A_DIRECTORY;
@@ -319,13 +321,16 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
              creationDisposition == TRUNCATE_EXISTING));
         
         // EncFS requires read access for encryption/decryption operations
+        // (partial-block writes are read-modify-write on encrypted blocks).
         if (fileExists && (genericDesiredAccess & (GENERIC_WRITE | FILE_WRITE_DATA | FILE_APPEND_DATA))) {
             genericDesiredAccess |= FILE_READ_DATA | FILE_WRITE_DATA;
-            if (ShareAccess & FILE_SHARE_WRITE) ShareAccess |= FILE_SHARE_READ;
         }
-        if (fileExists && (genericDesiredAccess & DELETE)) {
+        // DELETE-access handles are used by MoveFile. Rewriting the file IV header on
+        // rename (changeFileIV) needs R/W data access, but only when external IV chaining
+        // ties the header to the file path. Otherwise, keep the physical access minimal so
+        // it cannot conflict with other processes holding the backing file (cloud sync etc).
+        if (fileExists && (genericDesiredAccess & DELETE) && encfs.isExternalIVChaining()) {
             genericDesiredAccess |= FILE_READ_DATA | FILE_WRITE_DATA;
-            if (ShareAccess & FILE_SHARE_DELETE) ShareAccess |= FILE_SHARE_WRITE | FILE_SHARE_READ;
         }
         
         // New/truncated files need read access for IV operations
@@ -352,13 +357,18 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
         
         DWORD finalAttributes = attrPart | flagPart;
 
-        // Always allow delete-sharing on physical encrypted files.
-        // Without this, EncFSMoveFile's SetFileInformationByHandle(ReplaceIfExists=TRUE)
-        // fails with ERROR_SHARING_VIOLATION when the target file has an open EncFSy handle
-        // that lacks FILE_SHARE_DELETE (e.g., Acrobat holds original.pdf open while
-        // renaming a temp file over it — the classic "safe-save" pattern).
-        // Physical files are internal implementation details; Dokan enforces logical sharing.
-        ShareAccess |= FILE_SHARE_DELETE;
+        // Always open physical encrypted files with full sharing (R/W/D).
+        // Logical share-mode enforcement already happened in the Dokan kernel driver
+        // (sys/create.c: DokanCheckShareAccess/IoCheckShareAccess), so replicating the
+        // caller's share mode here only creates false ERROR_SHARING_VIOLATIONs at the
+        // physical layer: EncFSy escalates access beyond what the caller requested
+        // (e.g., FILE_READ_DATA|FILE_WRITE_DATA for encryption block RMW and IV updates),
+        // so a physical open can conflict with another EncFSy physical handle even though
+        // the two logical opens are perfectly compatible. Example: Acrobat/Word safe-save —
+        // the app holds original.pdf open (share R+D) while ReplaceFile opens it with
+        // DELETE access; EncFSy's escalated physical W access collided with the holder's
+        // unshared-W physical handle and the save failed, leaving the temp file behind.
+        ShareAccess = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
 
         handle = CreateFileW(filePath, genericDesiredAccess, ShareAccess,
             &securityAttrib, creationDisposition, finalAttributes, NULL);
@@ -665,7 +675,11 @@ NTSTATUS DOKAN_CALLBACK EncFSReadFile(LPCWSTR FileName, LPVOID Buffer,
         }
 
         DbgPrintV(L"ReadFile: '%s' - Context NULL, opening temp handle\n", FileName);
-        HANDLE handle = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, NULL,
+        // Full sharing: this read may be a paging read for a memory-mapped view whose
+        // handle was already closed; a restrictive share mode here collides with other
+        // open handles and turns the paging read into an in-page error (app crash).
+        HANDLE handle = CreateFileW(filePath, GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
             OPEN_EXISTING, 0, NULL);
         if (handle == INVALID_HANDLE_VALUE) {
             DWORD error = GetLastError();
@@ -684,7 +698,10 @@ NTSTATUS DOKAN_CALLBACK EncFSReadFile(LPCWSTR FileName, LPVOID Buffer,
                 return STATUS_OBJECT_NAME_INVALID;
             }
             DbgPrintV(L"ReadFile: '%s' - Context handle invalid, reopening temp handle\n", FileName);
-            HANDLE handle = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, NULL,
+            // Full sharing for the same reason as above: paging reads on a mapped view
+            // arrive after Cleanup closed the handle; other writers may hold the file.
+            HANDLE handle = CreateFileW(filePath, GENERIC_READ,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
                 OPEN_EXISTING, 0, NULL);
             if (handle == INVALID_HANDLE_VALUE) {
                 DWORD error = GetLastError();
@@ -829,7 +846,10 @@ NTSTATUS DOKAN_CALLBACK EncFSWriteFile(LPCWSTR FileName, LPCVOID Buffer,
             return STATUS_OBJECT_NAME_INVALID;
         }
         DbgPrintV(L"WriteFile: '%s' - Context NULL, opening temp handle\n", FileName);
-        HANDLE handle = CreateFileW(filePath, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_WRITE, NULL,
+        // Full sharing: paging writes (mapped-file flush) can arrive after Cleanup;
+        // restrictive sharing here fails against any other open handle on the file.
+        HANDLE handle = CreateFileW(filePath, GENERIC_READ | GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
             OPEN_EXISTING, 0, NULL);
         if (handle == INVALID_HANDLE_VALUE) {
             DWORD error = GetLastError();
@@ -1176,7 +1196,8 @@ static NTSTATUS changeIVRecursive(LPCWSTR newFilePath, const string& cOldPlainDi
             // Update file IV if using external IV chaining
             if (encfs.isExternalIVChaining()) {
                 DbgPrintV(L"  [INFO] Updating file IV: '%s'\n", newPath.data());
-                HANDLE handle2 = CreateFileW(newPath.data(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_WRITE, NULL,
+                HANDLE handle2 = CreateFileW(newPath.data(), GENERIC_READ | GENERIC_WRITE,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
                     OPEN_EXISTING, 0, NULL);
                 if (handle2 == INVALID_HANDLE_VALUE) {
                     DWORD error = GetLastError();
@@ -1199,6 +1220,55 @@ static NTSTATUS changeIVRecursive(LPCWSTR newFilePath, const string& cOldPlainDi
 }
 
 /**
+ * @brief Renames a physical file through its handle.
+ *
+ * Prefers POSIX-semantics rename (FileRenameInfoEx) so that an existing target
+ * can be replaced even while other handles keep it open with FILE_SHARE_DELETE
+ * (all EncFSy physical handles do). This is required for the ReplaceFile-based
+ * "safe save" used by Acrobat/Word: the app still holds the document open when
+ * the temp file is renamed over it. Classic FileRenameInfo would fail with
+ * ERROR_ACCESS_DENIED in that case. Falls back to the classic rename when the
+ * underlying filesystem or OS does not support POSIX semantics.
+ *
+ * @param handle Physical file handle (must have DELETE access).
+ * @param newFilePath Physical destination path.
+ * @param replaceIfExisting Whether to replace an existing target.
+ * @return TRUE on success; on failure GetLastError() holds the error.
+ */
+static BOOL RenamePhysicalFile(HANDLE handle, LPCWSTR newFilePath, BOOL replaceIfExisting) {
+    size_t newFilePathLen = wcslen(newFilePath);
+    DWORD bufferSize = (DWORD)(sizeof(FILE_RENAME_INFO) + newFilePathLen * sizeof(WCHAR));
+    std::vector<BYTE> renameInfoBuffer(bufferSize);
+    PFILE_RENAME_INFO renameInfo = (PFILE_RENAME_INFO)renameInfoBuffer.data();
+
+#if defined(FILE_RENAME_FLAG_POSIX_SEMANTICS)
+    ZeroMemory(renameInfo, sizeof(FILE_RENAME_INFO));
+    renameInfo->Flags = FILE_RENAME_FLAG_POSIX_SEMANTICS |
+        (replaceIfExisting ? FILE_RENAME_FLAG_REPLACE_IF_EXISTS : 0);
+    renameInfo->RootDirectory = NULL;
+    renameInfo->FileNameLength = (DWORD)newFilePathLen * sizeof(WCHAR);
+    wcscpy_s(renameInfo->FileName, newFilePathLen + 1, newFilePath);
+    if (SetFileInformationByHandle(handle, FileRenameInfoEx, renameInfo, bufferSize)) {
+        return TRUE;
+    }
+    DWORD exError = GetLastError();
+    // Not supported (e.g., FAT/exFAT/SMB or pre-RS1 Windows): fall back below.
+    if (exError != ERROR_INVALID_PARAMETER && exError != ERROR_NOT_SUPPORTED &&
+        exError != ERROR_INVALID_FUNCTION) {
+        return FALSE;
+    }
+    DbgPrintV(L"  [INFO] POSIX rename unsupported (error=%lu), falling back\n", exError);
+#endif
+
+    ZeroMemory(renameInfo, sizeof(FILE_RENAME_INFO));
+    renameInfo->ReplaceIfExists = replaceIfExisting ? TRUE : FALSE;
+    renameInfo->RootDirectory = NULL;
+    renameInfo->FileNameLength = (DWORD)newFilePathLen * sizeof(WCHAR);
+    wcscpy_s(renameInfo->FileName, newFilePathLen + 1, newFilePath);
+    return SetFileInformationByHandle(handle, FileRenameInfo, renameInfo, bufferSize);
+}
+
+/**
  * @brief Moves or renames a file or directory.
  *
  * Handles IV updates for chained name IV and external IV chaining modes.
@@ -1215,7 +1285,6 @@ EncFSMoveFile(LPCWSTR FileName, LPCWSTR NewFileName, BOOL ReplaceIfExisting,
     PDOKAN_FILE_INFO DokanFileInfo) {
 
     BOOL result;
-    size_t newFilePathLen;
 
     std::vector<WCHAR> filePath(DOKAN_MAX_PATH);
     std::vector<WCHAR> newFilePath(DOKAN_MAX_PATH);
@@ -1369,16 +1438,7 @@ EncFSMoveFile(LPCWSTR FileName, LPCWSTR NewFileName, BOOL ReplaceIfExisting,
             }
 
             // Perform the actual rename
-            newFilePathLen = wcslen(newFilePath.data());
-            DWORD bufferSize = (DWORD)(sizeof(FILE_RENAME_INFO) + newFilePathLen * sizeof(WCHAR));
-            std::vector<BYTE> renameInfoBuffer(bufferSize);
-            PFILE_RENAME_INFO renameInfo = (PFILE_RENAME_INFO)renameInfoBuffer.data();
-            renameInfo->ReplaceIfExists = ReplaceIfExisting ? TRUE : FALSE;
-            renameInfo->RootDirectory = NULL;
-            renameInfo->FileNameLength = (DWORD)newFilePathLen * sizeof(WCHAR);
-            wcscpy_s(renameInfo->FileName, newFilePathLen + 1, newFilePath.data());
-
-            result = SetFileInformationByHandle(encfsFile->getHandle(), FileRenameInfo, renameInfo, bufferSize);
+            result = RenamePhysicalFile(encfsFile->getHandle(), newFilePath.data(), ReplaceIfExisting);
             if (result) {
                 encfsFile->invalidateFileNameCache();
                 DbgPrint(L"MoveFile: '%s' -> '%s' OK\n", FileName, NewFileName);
@@ -1403,18 +1463,7 @@ EncFSMoveFile(LPCWSTR FileName, LPCWSTR NewFileName, BOOL ReplaceIfExisting,
     }
 
     // Perform the actual rename using SetFileInformationByHandle
-    newFilePathLen = wcslen(newFilePath.data());
-    DWORD bufferSize = (DWORD)(sizeof(FILE_RENAME_INFO) + newFilePathLen * sizeof(WCHAR));
-
-    std::vector<BYTE> renameInfoBuffer(bufferSize);
-    PFILE_RENAME_INFO renameInfo = (PFILE_RENAME_INFO)renameInfoBuffer.data();
-
-    renameInfo->ReplaceIfExists = ReplaceIfExisting ? TRUE : FALSE;
-    renameInfo->RootDirectory = NULL;
-    renameInfo->FileNameLength = (DWORD)newFilePathLen * sizeof(WCHAR);
-    wcscpy_s(renameInfo->FileName, newFilePathLen + 1, newFilePath.data());
-
-    result = SetFileInformationByHandle(encfsFile->getHandle(), FileRenameInfo, renameInfo, bufferSize);
+    result = RenamePhysicalFile(encfsFile->getHandle(), newFilePath.data(), ReplaceIfExisting);
 
     if (result) {
         // Invalidate filename cache for IV recalculation

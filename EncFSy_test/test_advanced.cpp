@@ -156,6 +156,97 @@ bool Test_AdobeReaderSavePattern(const WCHAR* rootDir)
 }
 
 //=============================================================================
+// Test: ReplaceFile while the target is still open (Acrobat/Word safe-save)
+// Acrobat keeps the displayed PDF open (GENERIC_READ, share READ|DELETE)
+// while it writes the new content to a temp file and calls ReplaceFile.
+// This works on NTFS. It used to fail on EncFSy with ERROR_SHARING_VIOLATION
+// (leaving the temp file behind) because physical opens inherited the app's
+// share mode while EncFSy escalated its own physical access rights.
+//=============================================================================
+bool Test_ReplaceFileWhileTargetOpen(const WCHAR* rootDir)
+{
+    printf("Testing ReplaceFile while target is held open (safe-save pattern)\n");
+
+    WCHAR originalFile[260];
+    WCHAR tmpFile[260];
+    wsprintfW(originalFile, L"%s\\replace_open.pdf", rootDir);
+    wsprintfW(tmpFile, L"%s\\replace_open.tmp", rootDir);
+
+    bool ok = true;
+    const int ITERATIONS = 10;
+
+    for (int iter = 0; iter < ITERATIONS && ok; iter++) {
+        DeleteFileW(originalFile);
+        DeleteFileW(tmpFile);
+
+        char oldContent[64];
+        char newContent[64];
+        sprintf_s(oldContent, "OLD CONTENT iteration %d", iter);
+        sprintf_s(newContent, "NEW CONTENT iteration %d - updated", iter);
+
+        // Create original
+        HANDLE h = OpenTestFile(originalFile, GENERIC_READ | GENERIC_WRITE,
+                                FILE_SHARE_READ, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL);
+        if (h == INVALID_HANDLE_VALUE) return false;
+        DWORD ioLen = 0;
+        WriteFile(h, oldContent, static_cast<DWORD>(strlen(oldContent)), &ioLen, NULL);
+        CloseHandle(h);
+
+        // Holder: simulates the app keeping the document open during save
+        HANDLE holder = OpenTestFile(originalFile, GENERIC_READ,
+                                     FILE_SHARE_READ | FILE_SHARE_DELETE,
+                                     OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL);
+        if (holder == INVALID_HANDLE_VALUE) return false;
+
+        // Write new content to temp file
+        h = OpenTestFile(tmpFile, GENERIC_READ | GENERIC_WRITE,
+                         FILE_SHARE_READ, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL);
+        if (h == INVALID_HANDLE_VALUE) { CloseHandle(holder); return false; }
+        WriteFile(h, newContent, static_cast<DWORD>(strlen(newContent)), &ioLen, NULL);
+        FlushFileBuffers(h);
+        CloseHandle(h);
+
+        // Replace while the holder is still open (works on NTFS)
+        BOOL replaced = ReplaceFileW(originalFile, tmpFile, NULL, 0, NULL, NULL);
+        DWORD replaceErr = replaced ? 0 : GetLastError();
+        CloseHandle(holder);
+
+        if (!replaced) {
+            printf("ERROR at iteration %d: ReplaceFile failed (error=%lu)\n",
+                   iter, static_cast<unsigned long>(replaceErr));
+            ok = false;
+            break;
+        }
+
+        // The temp file must be gone
+        if (GetFileAttributesW(tmpFile) != INVALID_FILE_ATTRIBUTES) {
+            printf("ERROR at iteration %d: temp file left behind after ReplaceFile\n", iter);
+            ok = false;
+            break;
+        }
+
+        // Content must be the new one
+        h = OpenTestFile(originalFile, GENERIC_READ, FILE_SHARE_READ,
+                         OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL);
+        if (h == INVALID_HANDLE_VALUE) { ok = false; break; }
+        char verifyBuf[128] = {0};
+        ReadFile(h, verifyBuf, sizeof(verifyBuf) - 1, &ioLen, NULL);
+        CloseHandle(h);
+        if (ioLen != strlen(newContent) || memcmp(verifyBuf, newContent, ioLen) != 0) {
+            printf("ERROR at iteration %d: content mismatch after ReplaceFile\n", iter);
+            ok = false;
+            break;
+        }
+    }
+
+    if (ok) printf("ReplaceFile-while-open (%d iterations) verified OK\n", ITERATIONS);
+
+    DeleteFileW(originalFile);
+    DeleteFileW(tmpFile);
+    return ok;
+}
+
+//=============================================================================
 // Test: Rapid rename to same target (stress test for rename timing)
 // This simulates rapid save operations where a file is repeatedly
 // replaced via rename operations.
