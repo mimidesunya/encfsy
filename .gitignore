@@ -21,3 +21,9 @@ EncFSy_gui/obj
 /dokany/
 /cryptopp-CRYPTOPP_8_9_0/
 /cryptopp-CRYPTOPP_7_0_0/
+
+# AI エージェント定義はローカル専用
+AGENTS.md
+CLAUDE.md
+.agents/
+.claude/
