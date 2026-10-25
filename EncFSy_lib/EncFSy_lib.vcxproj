@@ -171,6 +171,7 @@
     <ClInclude Include="EncFSy_logging.h" />
     <ClInclude Include="EncFSy_mount.h" />
     <ClInclude Include="EncFSy_path.h" />
+    <ClInclude Include="EncFSy_watch.h" />
     <ClInclude Include="rapidxml.hpp" />
     <ClInclude Include="rapidxml_iterators.hpp" />
     <ClInclude Include="rapidxml_print.hpp" />
@@ -188,6 +189,7 @@
     <ClCompile Include="EncFSy_dokan_io.cpp" />
     <ClCompile Include="EncFSy_logging.cpp" />
     <ClCompile Include="EncFSy_path.cpp" />
+    <ClCompile Include="EncFSy_watch.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="..\EncFSy_gui\EncFSy_gui.csproj" />

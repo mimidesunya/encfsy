@@ -8,6 +8,48 @@ namespace EncFS {
 
 namespace {
 
+// Dropbox localizes the "conflicted copy" suffix by account language, so the
+// marker inside the parentheses differs per locale (e.g. Japanese
+// "(PC名 の競合コピー 2026-07-13)"). Latin-script markers are matched
+// ASCII-case-insensitively; non-Latin markers are matched as raw UTF-8 bytes.
+bool containsConflictMarker(const std::string& parenContent) {
+    // Latin-script markers, compared against an ASCII-lowercased copy.
+    // "conflict" also covers Dutch "conflicterende kopie";
+    // "konflikt" also covers Polish "kopia konfliktowa".
+    static const char* const latinMarkers[] = {
+        "conflict",   // en
+        "conflit",    // fr
+        "conflicto",  // es
+        "conflitto",  // it
+        "conflito",   // pt
+        "konflikt",   // de, pl, sv, ...
+    };
+    // Non-Latin markers as UTF-8 byte sequences (no case folding needed;
+    // the Russian marker skips the first letter to stay case-insensitive).
+    static const char* const rawMarkers[] = {
+        "\xE7\xAB\xB6\xE5\x90\x88",                          // ja 競合
+        "\xE5\x86\xB2\xE7\xAA\x81",                          // zh-CN 冲突
+        "\xE8\xA1\x9D\xE7\xAA\x81",                          // zh-TW 衝突
+        "\xEC\xB6\xA9\xEB\x8F\x8C",                          // ko 충돌
+        "\xD0\xBE\xD0\xBD\xD1\x84\xD0\xBB\xD0\xB8\xD0\xBA\xD1\x82", // ru (к)онфликт
+    };
+
+    std::string lowered(parenContent);
+    std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    for (const char* marker : latinMarkers) {
+        if (lowered.find(marker) != std::string::npos) {
+            return true;
+        }
+    }
+    for (const char* marker : rawMarkers) {
+        if (parenContent.find(marker) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
 ConflictSuffixResult tryExtractDropboxConflict(const std::string& name) {
     ConflictSuffixResult result = { "", "", false };
 
@@ -22,7 +64,7 @@ ConflictSuffixResult tryExtractDropboxConflict(const std::string& name) {
     }
 
     std::string parenContent = name.substr(parenPos + 1, closePos - parenPos - 1);
-    if (parenContent.find("conflict") == std::string::npos) {
+    if (!containsConflictMarker(parenContent)) {
         return result;
     }
 

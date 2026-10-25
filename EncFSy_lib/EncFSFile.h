@@ -106,6 +106,11 @@ namespace EncFS
 		HANDLE handle;           // Windows file handle
 		bool canRead;            // Flag indicating if file should be readable
 
+		// Parameters for reopening the physical handle when the backing file
+		// is replaced externally (cloud sync). 0 access = reopen disabled.
+		DWORD reopenAccess = 0;  // Desired access of the original physical open
+		DWORD reopenFlags = 0;   // Flags of the original physical open
+
 		int64_t fileIv;          // File initialization vector for encryption
 		std::atomic<bool> fileIvAvailable;  // Flag indicating if fileIv has been loaded (atomic for thread safety)
 
@@ -230,11 +235,34 @@ namespace EncFS
 
 		/**
 		 * @brief Invalidates cached file name after rename operation
-		 * 
+		 *
 		 * This should be called after a successful rename to ensure subsequent
 		 * operations use the new file path for IV calculations.
 		 */
 		void invalidateFileNameCache();
+
+		/**
+		 * @brief Enables physical-handle reopen on external replacement
+		 * @param access Desired access of the original physical open
+		 * @param flags Flags (high word of dwFlagsAndAttributes) of the original open
+		 */
+		inline void setReopenParams(DWORD access, DWORD flags) {
+			this->reopenAccess = access;
+			this->reopenFlags = flags;
+		}
+
+		/**
+		 * @brief Reacts to an external change of the backing file (cloud sync)
+		 * @param physicalPath Physical path for handle reopen, or NULL to only
+		 *        invalidate caches
+		 *
+		 * Drops the cached file IV and block cache so the next operation re-reads
+		 * the header. When the file at physicalPath is a different physical file
+		 * than the one this handle refers to (ReplaceFile-style sync update), the
+		 * handle is reopened so subsequent I/O targets the new file instead of
+		 * the orphaned old one.
+		 */
+		void onExternalChange(const LPCWSTR physicalPath);
 
 	private:
 		/**

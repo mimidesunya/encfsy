@@ -48,6 +48,9 @@
     <ClInclude Include="EncFSy_path.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="EncFSy_watch.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="EncFSy_mount.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -81,6 +84,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="EncFSy_path.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="EncFSy_watch.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="EncFSy_dokan_io.cpp">

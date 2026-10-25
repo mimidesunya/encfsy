@@ -1,5 +1,6 @@
 ﻿#include "EncFSFile.h"
-#include <winioctl.h> 
+#include "EncFSy_watch.h"
+#include <winioctl.h>
 #include <osrng.h> // For AutoSeededX917RNG
 #include <algorithm>
 #include <limits>
@@ -106,13 +107,72 @@ namespace EncFS {
      * @brief Destructor implementation
      */
     EncFSFile::~EncFSFile() {
+        // Remove from the backing-store watcher registry (no-op if never
+        // registered). Must happen before the object is torn down so the
+        // watcher can never see a dangling pointer.
+        EncFSUnregisterOpenFile(this);
+
         // Close handle if valid
         if (this->handle && this->handle != INVALID_HANDLE_VALUE) {
             CloseHandle(this->handle);
         }
-        
+
         // Decrement counter (atomic operation)
         counter.fetch_sub(1, std::memory_order_relaxed);
+    }
+
+    /**
+     * @brief Reacts to an external change of the backing file (cloud sync)
+     */
+    void EncFSFile::onExternalChange(const LPCWSTR physicalPath) {
+        lock_guard<decltype(this->mutexLock)> lock(this->mutexLock);
+
+        // The header (and thus the file IV) may have changed - force a re-read.
+        this->fileIvAvailable.store(false, std::memory_order_release);
+        this->lastBlockNum = -1;
+        this->decodeBuffer.clear();
+        this->encodeBuffer.clear();
+        this->blockBuffer.clear();
+
+        if (!physicalPath || this->reopenAccess == 0) {
+            return;
+        }
+        if (!this->handle || this->handle == INVALID_HANDLE_VALUE) {
+            return;
+        }
+
+        // Cloud sync clients update files by writing a temp file and renaming
+        // it over the original (ReplaceFile). Our handle then refers to the
+        // orphaned old file: reads return stale data and writes are lost.
+        // Detect this by comparing the file identity behind our handle with
+        // the file currently at the path, and adopt a fresh handle if they
+        // differ.
+        BY_HANDLE_FILE_INFORMATION oldInfo;
+        if (!GetFileInformationByHandle(this->handle, &oldInfo)) {
+            return;
+        }
+
+        HANDLE newHandle = CreateFileW(physicalPath, this->reopenAccess,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+            OPEN_EXISTING, this->reopenFlags & 0xFFFF0000, NULL);
+        if (newHandle == INVALID_HANDLE_VALUE) {
+            // File deleted externally or access denied - keep the old handle
+            // so in-flight readers still see consistent (old) data.
+            return;
+        }
+
+        BY_HANDLE_FILE_INFORMATION newInfo;
+        if (GetFileInformationByHandle(newHandle, &newInfo) &&
+            (newInfo.dwVolumeSerialNumber != oldInfo.dwVolumeSerialNumber ||
+             newInfo.nFileIndexHigh != oldInfo.nFileIndexHigh ||
+             newInfo.nFileIndexLow != oldInfo.nFileIndexLow)) {
+            CloseHandle(this->handle);
+            this->handle = newHandle;
+        }
+        else {
+            // Same physical file (in-place change) - cache reset is enough.
+            CloseHandle(newHandle);
+        }
     }
 
     /**

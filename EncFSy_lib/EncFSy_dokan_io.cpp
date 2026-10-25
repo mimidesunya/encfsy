@@ -27,6 +27,7 @@
 #include "EncFSy_globals.h"
 #include "EncFSy_logging.h"
 #include "EncFSy_path.h"
+#include "EncFSy_watch.h"
 
 using namespace std;
 
@@ -248,6 +249,9 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
                 }
                 DbgPrintV(L"  [INFO] Directory already exists\n");
             }
+            else {
+                EncFSNoteSelfChange(FileName);
+            }
             if (reverter.active) RevertToSelf();
         }
 
@@ -384,9 +388,22 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
             // Determine read capability for EncFS operations
             bool canRead = (genericDesiredAccess & (GENERIC_READ | FILE_READ_DATA)) != 0 ||
                            isCreatingNewFile || isTruncating;
-            
-            DokanFileInfo->Context = (ULONG64)new EncFS::EncFSFile(handle, canRead);
-            
+
+            EncFS::EncFSFile* newEncFSFile = new EncFS::EncFSFile(handle, canRead);
+            DokanFileInfo->Context = (ULONG64)newEncFSFile;
+
+            // Track this open for the backing-store watcher. Alternate-stream
+            // opens never swap handles (the reopen path targets the main
+            // stream), so reopen stays disabled for them.
+            bool isStreamOpen = (wcschr(FileName, L':') != NULL);
+            if (!isStreamOpen) {
+                newEncFSFile->setReopenParams(genericDesiredAccess, flagPart);
+            }
+            EncFSRegisterOpenFile(FileName, newEncFSFile);
+            if (isCreatingNewFile || isTruncating) {
+                EncFSNoteSelfChange(FileName);
+            }
+
             // Need to update FileAttributes with previous when overwriting file
             if (fileAttr != INVALID_FILE_ATTRIBUTES &&
                 creationDisposition == TRUNCATE_EXISTING) {
@@ -442,6 +459,9 @@ void DOKAN_CALLBACK EncFSCloseFile(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileI
  */
 void DOKAN_CALLBACK EncFSCleanup(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInfo) {
     DbgPrintV(L"Cleanup: '%s' (deletePending=%d)\n", FileName, DokanFileInfo->DeletePending);
+
+    // Flush/delete below change the backing file; keep the watcher quiet.
+    EncFSNoteSelfChange(FileName);
 
     bool deletePending = DokanFileInfo->DeletePending != FALSE;
     bool deleteDispositionApplied = false;
@@ -945,6 +965,9 @@ NTSTATUS DOKAN_CALLBACK EncFSWriteFile(LPCWSTR FileName, LPCVOID Buffer,
     }
     *NumberOfBytesWritten = writtenLen;
 
+    // Our own write is about to surface as a backing-store change event.
+    EncFSNoteSelfChange(FileName);
+
     DbgPrintV(L"WriteFile: '%s' OK (requested=%lu, written=%lu)\n", FileName, NumberOfBytesToWrite, writtenLen);
     return STATUS_SUCCESS;
 }
@@ -1400,6 +1423,9 @@ EncFSMoveFile(LPCWSTR FileName, LPCWSTR NewFileName, BOOL ReplaceIfExisting,
                 return DokanNtStatusFromWin32(error);
             }
 
+            EncFSNoteSelfChange(FileName);
+            EncFSNoteSelfChange(NewFileName);
+
             // Recursively update IVs
             wstring wOldPlainDirPath(FileName);
             wstring_convert<codecvt_utf8_utf16<wchar_t>> strConv;
@@ -1441,6 +1467,9 @@ EncFSMoveFile(LPCWSTR FileName, LPCWSTR NewFileName, BOOL ReplaceIfExisting,
             result = RenamePhysicalFile(encfsFile->getHandle(), newFilePath.data(), ReplaceIfExisting);
             if (result) {
                 encfsFile->invalidateFileNameCache();
+                EncFSRekeyOpenFile(encfsFile, NewFileName);
+                EncFSNoteSelfChange(FileName);
+                EncFSNoteSelfChange(NewFileName);
                 DbgPrint(L"MoveFile: '%s' -> '%s' OK\n", FileName, NewFileName);
                 return STATUS_SUCCESS;
             }
@@ -1468,6 +1497,9 @@ EncFSMoveFile(LPCWSTR FileName, LPCWSTR NewFileName, BOOL ReplaceIfExisting,
     if (result) {
         // Invalidate filename cache for IV recalculation
         encfsFile->invalidateFileNameCache();
+        EncFSRekeyOpenFile(encfsFile, NewFileName);
+        EncFSNoteSelfChange(FileName);
+        EncFSNoteSelfChange(NewFileName);
         DbgPrint(L"MoveFile: '%s' -> '%s' OK\n", FileName, NewFileName);
         return STATUS_SUCCESS;
     }

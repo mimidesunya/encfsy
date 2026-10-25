@@ -46,7 +46,7 @@ When `--paranoia` mode (external IV chaining) is enabled, any filename changes m
 When using cloud storage services (Dropbox, Google Drive, OneDrive), sync conflicts may create files with special suffixes that cannot be decrypted normally. The `--cloud-conflict` option enables detection and handling of these conflict files.
 
 **Supported conflict patterns:**
-- Dropbox: `filename (Computer's conflicted copy 2024-01-01).ext`
+- Dropbox: `filename (Computer's conflicted copy 2024-01-01).ext` — localized suffixes are also detected (e.g. Japanese 「競合コピー」, German "Konflikt", French "conflit", Chinese 「冲突/衝突」, Korean 「충돌」, Russian «конфликт»)
 - Google Drive: `filename_conf(1).ext`
 
 **Usage:**
@@ -55,6 +55,16 @@ encfs.exe C:\Data M: --cloud-conflict
 ```
 
 **Note:** This option is disabled by default because conflict detection may have a minor performance impact and is only needed when using cloud sync services.
+
+## Using a Cloud-Synced Folder as the Encrypted Root
+
+EncFSy watches the encrypted root directory while mounted. When a sync client (Dropbox etc.) updates, replaces, or deletes encrypted files from outside — for example when a change made on another machine is synced down — EncFSy invalidates its caches, reattaches open file handles to the replaced file, and notifies Windows so the mounted volume reflects the external change.
+
+Recommendations when the encrypted root lives inside a cloud-synced folder:
+
+- **Keep the encrypted folder "available offline" (always local).** Online-only placeholder files must be downloaded on first access; a large file on a slow connection can stall file operations on the mounted volume.
+- **Avoid editing the same files from multiple machines at the same time.** EncFSy writes encrypted blocks in place, so a sync snapshot taken in the middle of a save can upload a torn (partially updated) file. The file is uploaded again once the save finishes, but if another machine changed the same file in the meantime, the sync service will keep the torn version as a conflict copy. Mount with `--cloud-conflict` so such conflict copies remain visible and recoverable.
+- **Let sync finish before working on recently changed files** when you switch between machines.
 
 ## Scanning for Invalid Filenames
 

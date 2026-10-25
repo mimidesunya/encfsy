@@ -631,6 +631,7 @@ static void RunAllTests(TestRunner& runner,
             runner.runTest("Conflict file without extension", Test_ConflictNoExtension, rootDir);
             runner.runTest("Multiple conflict files", Test_ConflictMultiple, rootDir);
             runner.runTest("Nested parentheses conflict", Test_ConflictNestedParentheses, rootDir);
+            runner.runTest("Japanese-locale conflict pattern", Test_ConflictLocalizedJapanese, rootDir);
             runner.runTest("Google Drive conflict pattern", Test_ConflictGoogleDrive, rootDir);
         }
     } else {

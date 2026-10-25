@@ -27,6 +27,7 @@
 #include "EncFSy_globals.h"
 #include "EncFSy_logging.h"
 #include "EncFSy_path.h"
+#include "EncFSy_watch.h"
 
 using namespace std;
 
@@ -96,6 +97,7 @@ EncFSFlushFileBuffers(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInfo) {
     }
 
     EncFS::EncFSFile* encfsFile = ToEncFSFile(DokanFileInfo->Context);
+    EncFSNoteSelfChange(FileName);
     if (encfsFile->flush()) {
         DbgPrintV(L"FlushFileBuffers: '%s' OK\n", FileName);
         return STATUS_SUCCESS;
@@ -136,6 +138,7 @@ NTSTATUS DOKAN_CALLBACK EncFSSetEndOfFile(
     // Lock by canonical physical path so case-insensitive aliases serialize.
     EncFS::FileScopedLock fileLock(filePath);
     
+    EncFSNoteSelfChange(FileName);
     if (!encfsFile->setLength(FileName, ByteOffset)) {
         DWORD error = GetLastError();
         ErrorPrint(L"SetEndOfFile: '%s' FAILED (error=%lu, size=%I64d)\n", FileName, error, ByteOffset);
@@ -260,6 +263,7 @@ NTSTATUS DOKAN_CALLBACK EncFSSetAllocationSize(
         // Truncate only if new allocation is smaller than current logical size
         if (AllocSize < (int64_t)decodedFileSize) {
             DbgPrintV(L"  [INFO] Truncating: %I64d -> %I64d\n", (int64_t)decodedFileSize, AllocSize);
+            EncFSNoteSelfChange(FileName);
             if (!encfsFile->setLength(FileName, AllocSize)) {
                 DWORD error = GetLastError();
                 ErrorPrint(L"SetAllocationSize: '%s' setLength FAILED (error=%lu)\n", FileName, error);
@@ -297,6 +301,7 @@ NTSTATUS DOKAN_CALLBACK EncFSSetFileAttributes(
     if (FileAttributes != 0) {
         WCHAR filePath[DOKAN_MAX_PATH];
         GetFilePath(filePath, FileName, false);
+        EncFSNoteSelfChange(FileName);
         if (!SetFileAttributesW(filePath, FileAttributes)) {
             DWORD error = GetLastError();
             ErrorPrint(L"SetFileAttributes: '%s' FAILED (error=%lu, attr=0x%08X)\n", FileName, error, FileAttributes);
@@ -337,6 +342,7 @@ EncFSSetFileTime(LPCWSTR FileName, CONST FILETIME* CreationTime,
     }
     EncFS::EncFSFile* encfsFile = ToEncFSFile(DokanFileInfo->Context);
 
+    EncFSNoteSelfChange(FileName);
     if (!SetFileTime(encfsFile->getHandle(), CreationTime, LastAccessTime, LastWriteTime)) {
         DWORD error = GetLastError();
         ErrorPrint(L"SetFileTime: '%s' FAILED (error=%lu)\n", FileName, error);

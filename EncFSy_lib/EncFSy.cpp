@@ -28,6 +28,7 @@
 #include "EncFSy_path.h"
 #include "EncFSy_mount.h"
 #include "EncFSy_dokan.h"
+#include "EncFSy_watch.h"
 
 #define _SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING
 
@@ -97,6 +98,9 @@ static BOOL AddSeSecurityNamePrivilege() {
 static NTSTATUS DOKAN_CALLBACK EncFSMounted(LPCWSTR MountPoint, PDOKAN_FILE_INFO DokanFileInfo) {
     UNREFERENCED_PARAMETER(DokanFileInfo);
     InfoPrint(L"Mounted as %s\n", MountPoint);
+    // The actual mount point may have been assigned by the mount manager;
+    // the backing-store watcher needs it to build DokanNotify* paths.
+    EncFSSetNotifyMountPoint(MountPoint);
     // Open explorer window on mount point if not in debug mode.
     if (!g_efo.g_DebugMode) {
         wchar_t buff[20];
@@ -292,8 +296,19 @@ int StartEncFS(EncFSOptions& efo, char* password) {
 
     g_efo = efo;
     DokanInit();
-    // This call blocks until the filesystem is unmounted.
-    int status = DokanMain(&dokanOptions, &dokanOperations);
+    // DokanCreateFileSystem (instead of DokanMain) provides the mount instance
+    // handle required by the DokanNotify* API, which the backing-store watcher
+    // uses to invalidate kernel caches when a cloud sync client (Dropbox etc.)
+    // modifies the encrypted files from outside.
+    DOKAN_HANDLE dokanInstance = nullptr;
+    int status = DokanCreateFileSystem(&dokanOptions, &dokanOperations, &dokanInstance);
+    if (status == DOKAN_SUCCESS) {
+        EncFSStartBackingStoreWatcher(dokanInstance);
+        // Block until the filesystem is unmounted.
+        DokanWaitForFileSystemClosed(dokanInstance, INFINITE);
+        EncFSStopBackingStoreWatcher();
+        DokanCloseHandle(dokanInstance);
+    }
     DokanShutdown();
 
     // Report the final status.

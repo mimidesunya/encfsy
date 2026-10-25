@@ -65,6 +65,7 @@ bool Test_ConflictLikeNormalFile(const WCHAR* rootDir);
 bool Test_ConflictNoExtension(const WCHAR* rootDir);
 bool Test_ConflictMultiple(const WCHAR* rootDir);
 bool Test_ConflictNestedParentheses(const WCHAR* rootDir);
+bool Test_ConflictLocalizedJapanese(const WCHAR* rootDir);
 bool Test_ConflictGoogleDrive(const WCHAR* rootDir);
 
 //=============================================================================

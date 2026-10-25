@@ -32,6 +32,16 @@ encfs.exe C:\Data M: --cloud-conflict
 
 **Hinweis:** Diese Option ist standardmäßig deaktiviert, da die Konflikterkennung einen geringen Leistungseinfluss haben kann und nur bei Verwendung von Cloud-Sync-Diensten benötigt wird.
 
+## Verschlüsselter Ordner in einem Cloud-Sync-Ordner
+
+EncFSy überwacht das verschlüsselte Stammverzeichnis, solange das Laufwerk eingebunden ist. Wenn ein Sync-Client (z. B. Dropbox) verschlüsselte Dateien von außen aktualisiert, ersetzt oder löscht – etwa wenn Änderungen von einem anderen Rechner synchronisiert werden – verwirft EncFSy seine Caches, verbindet offene Datei-Handles neu mit der ersetzten Datei und benachrichtigt Windows, sodass das eingebundene Laufwerk die externe Änderung widerspiegelt.
+
+Empfehlungen, wenn der verschlüsselte Ordner in einem Cloud-Sync-Ordner liegt:
+
+- **Den verschlüsselten Ordner „immer offline verfügbar" (lokal) halten.** Nur-Online-Platzhalterdateien müssen beim ersten Zugriff heruntergeladen werden; große Dateien über langsame Verbindungen können Dateioperationen auf dem eingebundenen Laufwerk blockieren.
+- **Dieselben Dateien nicht gleichzeitig von mehreren Rechnern bearbeiten.** EncFSy schreibt verschlüsselte Blöcke direkt an Ort und Stelle; ein Sync-Snapshot mitten in einem Speichervorgang kann daher eine unvollständige Datei hochladen. Nach Abschluss des Speicherns wird die Datei erneut hochgeladen; hat aber inzwischen ein anderer Rechner dieselbe Datei geändert, bleibt die unvollständige Version als Konfliktkopie erhalten. Mit `--cloud-conflict` bleiben solche Konfliktkopien sichtbar und wiederherstellbar.
+- **Beim Rechnerwechsel die Synchronisierung abschließen lassen**, bevor kürzlich geänderte Dateien weiterbearbeitet werden.
+
 ## Ungültige Dateinamen scannen
 
 Die Option `--scan-invalid` durchsucht das verschlüsselte Verzeichnis und meldet Dateinamen, die nicht entschlüsselt werden können. Die Ergebnisse werden im JSON-Format ausgegeben.

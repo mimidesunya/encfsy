@@ -794,6 +794,139 @@ bool Test_ConflictNestedParentheses(const WCHAR* rootDir)
     return visible && contentMatch && deleteOk;
 }
 
+// Test 9b: Japanese-locale Dropbox conflict pattern
+// Dropbox localizes the suffix by account language; Japanese accounts produce
+// "filename (PCNAME の競合コピー DATE).ext".
+bool Test_ConflictLocalizedJapanese(const WCHAR* rootDir)
+{
+    if (rootDir == nullptr || rootDir[0] == L'\0') {
+        printf("Test requires a valid mount point.\n");
+        return false;
+    }
+    if (IsRawFilesystemRun(rootDir)) {
+        printf("Test cannot run with -r.\n");
+        return false;
+    }
+
+    std::wstring plainRoot(rootDir);
+    std::wstring encryptedRoot = ResolveEncryptedRoot();
+
+    // " (DESKTOP-QRI9EIH の競合コピー 2023-04-02)"
+    const std::wstring jaSuffix =
+        L" (DESKTOP-QRI9EIH の競合コピー 2023-04-02)";
+    const std::wstring jaMarker = L"競合"; // 競合
+
+    std::wstring baseName = L"ja_conflict_test.txt";
+    std::wstring basePath = BuildPath(plainRoot, baseName);
+    const char content[] = "japanese-conflict-content";
+
+    DeleteFileW(basePath.c_str());
+
+    // Cleanup leftovers from previous runs
+    std::set<std::wstring> existingFiles;
+    EnumerateFiles(plainRoot, existingFiles);
+    for (const auto& f : existingFiles) {
+        if (f.find(L"ja_conflict_test") != std::wstring::npos) {
+            DeleteFileW(BuildPath(plainRoot, f).c_str());
+        }
+    }
+
+    Sleep(200);
+
+    // Snapshot encrypted directory
+    std::set<std::wstring> baseline;
+    EnumerateFiles(encryptedRoot, baseline);
+
+    // Create base file
+    HANDLE h = CreateFileW(basePath.c_str(), GENERIC_WRITE, 0, nullptr,
+                           CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) {
+        PrintLastError("CreateFileW (base)");
+        return false;
+    }
+    DWORD written;
+    WriteFile(h, content, sizeof(content) - 1, &written, nullptr);
+    CloseHandle(h);
+
+    Sleep(100);
+
+    // Find encrypted backing file
+    std::wstring encName = FindNewFile(encryptedRoot, baseline);
+    if (encName.empty()) {
+        printf("Failed to find encrypted backing file.\n");
+        DeleteFileW(basePath.c_str());
+        return false;
+    }
+
+    std::wstring encBasePath = BuildPath(encryptedRoot, encName);
+    std::wstring encConflictPath = encBasePath + jaSuffix;
+
+    DeleteFileW(encConflictPath.c_str());
+
+    // Copy encrypted file with the Japanese conflict suffix
+    if (!CopyFileW(encBasePath.c_str(), encConflictPath.c_str(), FALSE)) {
+        PrintLastError("CopyFileW");
+        DeleteFileW(basePath.c_str());
+        return false;
+    }
+
+    Sleep(300);
+
+    // Find conflict file on mount
+    std::set<std::wstring> mountedFiles;
+    EnumerateFiles(plainRoot, mountedFiles);
+
+    std::wstring actualConflictName;
+    std::wstring actualConflictPath;
+    for (const auto& f : mountedFiles) {
+        if (f.find(L"ja_conflict_test") != std::wstring::npos &&
+            f.find(jaMarker) != std::wstring::npos &&
+            f != baseName) {
+            actualConflictName = f;
+            actualConflictPath = BuildPath(plainRoot, f);
+            break;
+        }
+    }
+
+    // Expected: ja_conflict_test (DESKTOP-QRI9EIH の競合コピー 2023-04-02).txt
+    std::wstring expectedName = L"ja_conflict_test" + jaSuffix + L".txt";
+    printf("Expected: %S\n", expectedName.c_str());
+    printf("Actual:   %S\n", actualConflictName.c_str());
+
+    bool visible = !actualConflictName.empty();
+    printf("Japanese conflict visible: %s\n", visible ? "YES" : "NO");
+
+    // Read and verify content
+    bool contentMatch = false;
+    if (visible) {
+        h = CreateFileW(actualConflictPath.c_str(), GENERIC_READ, FILE_SHARE_READ,
+                        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h != INVALID_HANDLE_VALUE) {
+            char buffer[256] = {};
+            DWORD bytesRead = 0;
+            if (ReadFile(h, buffer, sizeof(buffer) - 1, &bytesRead, nullptr)) {
+                contentMatch = (bytesRead == sizeof(content) - 1) &&
+                               (memcmp(buffer, content, bytesRead) == 0);
+            }
+            CloseHandle(h);
+        }
+    }
+    printf("Content match: %s\n", contentMatch ? "YES" : "NO");
+
+    // Test delete
+    bool deleteOk = false;
+    if (visible) {
+        deleteOk = DeleteFileW(actualConflictPath.c_str()) && !PathExists(actualConflictPath.c_str());
+    }
+    printf("Delete OK: %s\n", deleteOk ? "YES" : "NO");
+
+    // Cleanup
+    DeleteFileW(basePath.c_str());
+    DeleteFileW(encConflictPath.c_str());
+
+    return visible && contentMatch && deleteOk;
+}
+
 // Test 9: Google Drive conflict pattern (filename_conf(N).ext)
 bool Test_ConflictGoogleDrive(const WCHAR* rootDir)
 {
