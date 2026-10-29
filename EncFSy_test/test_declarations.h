@@ -42,6 +42,7 @@ bool Test_InterleavedReadWriteWithResize(const WCHAR* file);
 bool Test_OverwriteThenTruncate(const WCHAR* file);
 bool Test_AdobeReaderSavePattern(const WCHAR* rootDir);
 bool Test_ReplaceFileWhileTargetOpen(const WCHAR* rootDir);
+bool Test_ReplacedFileHolderKeepsOldContent(const WCHAR* rootDir);
 bool Test_RapidRenameToSameTarget(const WCHAR* rootDir);
 bool Test_RenameChainCycle(const WCHAR* rootDir);
 bool Test_WriteRenameReadImmediate(const WCHAR* rootDir);
@@ -108,6 +109,8 @@ bool Test_BlockMACRandBytesRoundTrip(const WCHAR* file);
 bool Test_AllowHolesFalseRejectsSparseZeroBlock(const WCHAR* file);
 bool Test_SetEndOfFileBoundaryBlock(const WCHAR* file);
 bool Test_FileExpansionPartialBlock(const WCHAR* file);
+bool Test_ExpandFromBlockBoundaryReadable(const WCHAR* file);
+bool Test_TruncateRewriteSeenByEarlierHandle(const WCHAR* file);
 bool Test_RapidTruncateWrite(const WCHAR* file);
 bool Test_ReadAtBlockBoundaries(const WCHAR* file);
 bool Test_WriteAtBlockBoundaries(const WCHAR* file);
@@ -193,6 +196,7 @@ bool Test_MultipleHardLinks(const WCHAR* rootDir);
 bool Test_MemoryMappedFileRead(const WCHAR* file);
 bool Test_MemoryMappedFileWrite(const WCHAR* file);
 bool Test_MmapPagingReadWithSecondHandle(const WCHAR* file);
+bool Test_MmapWriteAfterHandleClose(const WCHAR* file);
 
 // File Change Notifications
 bool Test_FileChangeNotification(const WCHAR* rootDir);
@@ -214,3 +218,4 @@ bool Test_ShortcutMemoryMappedRead(const WCHAR* rootDir);
 
 // Recycle Bin / Disposition Info
 bool Test_RecycleBinDisposition(const WCHAR* rootDir);
+bool Test_DeleteRecreateWhileBackingHeld(const WCHAR* rootDir, const WCHAR* backingRoot);

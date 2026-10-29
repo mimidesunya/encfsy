@@ -43,9 +43,22 @@ void EncFSRegisterOpenFile(LPCWSTR virtualPath, EncFS::EncFSFile* file);
 void EncFSUnregisterOpenFile(EncFS::EncFSFile* file);
 
 /**
- * @brief Re-keys a registered EncFSFile after a successful rename.
+ * @brief Re-keys a registered EncFSFile after a successful rename through the mount.
+ *
+ * Every other open handle of the same physical file moves to the new name too,
+ * as the Dokan FCB does. Handles still open on a file replaced at the new name
+ * keep referring to that replaced file (NTFS semantics), so their reopen is
+ * disabled: the watcher must not move them to the file that now has the name.
  */
 void EncFSRekeyOpenFile(EncFS::EncFSFile* file, LPCWSTR newVirtualPath);
+
+/**
+ * @brief Pins the other open handles of a file deleted through the mount.
+ *
+ * They keep referring to the deleted file, so a file that later gets the same
+ * name must not be swapped in by the watcher. Call before the handle is closed.
+ */
+void EncFSPinDeletedOpenFiles(LPCWSTR virtualPath, EncFS::EncFSFile* file);
 
 /**
  * @brief Records that EncFSy itself just modified the backing file for this

@@ -1076,6 +1076,116 @@ bool Test_MmapPagingReadWithSecondHandle(const WCHAR* file)
 }
 
 //=============================================================================
+// Test: Writes through a mapped view after the file handle is closed
+//
+// Apps map a file, close the handle and keep writing to the view. Cleanup has
+// then closed EncFSy's physical handle, but the modified pages are written back
+// later (FlushViewOfFile, unmap, lazy writer) on that same Dokan context.
+// WriteFile used to fail with an invalid handle there, losing the data.
+//=============================================================================
+
+// SEH must be isolated from C++ objects (C2712).
+static DWORD WriteMappedBytes(char* view, size_t offset, const char* data, size_t len) {
+    __try {
+        memcpy(view + offset, data, len);
+        return 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return GetExceptionCode();
+    }
+}
+
+bool Test_MmapWriteAfterHandleClose(const WCHAR* file)
+{
+    printf("Testing mapped-view writes after the file handle is closed\n");
+
+    DeleteFileW(file);
+    const size_t SIZE = 64 * 1024;
+    std::vector<char> expected(SIZE);
+    for (size_t i = 0; i < SIZE; i++) expected[i] = (char)(i * 31 + 7);
+
+    {
+        HANDLE h = OpenTestFile(file, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ,
+                                CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL);
+        if (h == INVALID_HANDLE_VALUE) return false;
+        DWORD w = 0;
+        if (!WriteFile(h, expected.data(), (DWORD)SIZE, &w, NULL) || w != SIZE) {
+            PrintLastError("WriteFile");
+            CloseHandle(h);
+            return false;
+        }
+        CloseHandle(h);
+    }
+
+    HANDLE hFile = OpenTestFile(file, GENERIC_READ | GENERIC_WRITE,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL);
+    if (hFile == INVALID_HANDLE_VALUE) return false;
+    HANDLE hMapping = CreateFileMappingW(hFile, NULL, PAGE_READWRITE, 0, 0, NULL);
+    if (hMapping == NULL) {
+        PrintLastError("CreateFileMappingW");
+        CloseHandle(hFile);
+        DeleteFileW(file);
+        return true; // mapping unsupported
+    }
+    char* view = (char*)MapViewOfFile(hMapping, FILE_MAP_WRITE, 0, 0, 0);
+    if (view == NULL) {
+        PrintLastError("MapViewOfFile");
+        CloseHandle(hMapping);
+        CloseHandle(hFile);
+        DeleteFileW(file);
+        return true;
+    }
+    CloseHandle(hFile); // Cleanup runs; the view stays writable
+
+    // Patches inside a block, across the 1016-byte block boundary, and far out
+    const char patch[] = "written after close";
+    const size_t len = sizeof(patch) - 1;
+    const size_t offsets[] = {100, 1010, 40000};
+    DWORD exceptionCode = 0;
+    for (size_t off : offsets) {
+        exceptionCode = WriteMappedBytes(view, off, patch, len);
+        if (exceptionCode != 0) break;
+        memcpy(&expected[off], patch, len);
+    }
+    BOOL flushed = exceptionCode == 0 && FlushViewOfFile(view, 0);
+    DWORD flushError = flushed ? 0 : GetLastError();
+    UnmapViewOfFile(view);
+    CloseHandle(hMapping);
+
+    if (exceptionCode != 0) {
+        printf("ERROR: writing the mapped view raised exception 0x%08lX\n",
+               static_cast<unsigned long>(exceptionCode));
+        DeleteFileW(file);
+        return false;
+    }
+    if (!flushed) {
+        printf("ERROR: FlushViewOfFile after handle close failed (error=%lu)\n",
+               static_cast<unsigned long>(flushError));
+        DeleteFileW(file);
+        return false;
+    }
+
+    HANDLE h = OpenTestFile(file, GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL);
+    if (h == INVALID_HANDLE_VALUE) {
+        DeleteFileW(file);
+        return false;
+    }
+    std::vector<char> actual(SIZE);
+    DWORD readLen = 0;
+    BOOL readOk = ReadFile(h, actual.data(), (DWORD)SIZE, &readLen, NULL);
+    CloseHandle(h);
+    DeleteFileW(file);
+
+    if (!readOk || readLen != SIZE || memcmp(actual.data(), expected.data(), SIZE) != 0) {
+        printf("ERROR: data written through the view after close was lost (read=%lu)\n",
+               static_cast<unsigned long>(readLen));
+        return false;
+    }
+    printf("Mapped-view writes after close persisted OK\n");
+    return true;
+}
+
+//=============================================================================
 // Test: File change notification (ReadDirectoryChangesW)
 //=============================================================================
 bool Test_FileChangeNotification(const WCHAR* rootDir)
@@ -2045,6 +2155,132 @@ bool Test_RecycleBinDisposition(const WCHAR* rootDir)
         return false;
     }
     printf("File deleted successfully via disposition info\n");
-    
+
     return true;
+}
+
+//=============================================================================
+// Test: Delete and immediately re-create a name while another process holds
+// the encrypted backing file (cloud sync hashing it, antivirus, indexer)
+//
+// The physical delete used the legacy disposition, which keeps the backing
+// name "delete pending" until every handle closes. Re-creating the same name
+// right away (delete-then-create saves, overwriting copies) then failed with
+// ERROR_ACCESS_DENIED. Only meaningful on EncFS (needs the backing root).
+//=============================================================================
+
+static std::vector<std::wstring> ListDirectoryEntries(const std::wstring& dir)
+{
+    std::vector<std::wstring> names;
+    WIN32_FIND_DATAW fd;
+    HANDLE hFind = FindFirstFileW((dir + L"\\*").c_str(), &fd);
+    if (hFind == INVALID_HANDLE_VALUE) return names;
+    do {
+        if (wcscmp(fd.cFileName, L".") != 0 && wcscmp(fd.cFileName, L"..") != 0) {
+            names.push_back(fd.cFileName);
+        }
+    } while (FindNextFileW(hFind, &fd));
+    FindClose(hFind);
+    return names;
+}
+
+static std::wstring WithoutTrailingSlash(const WCHAR* path)
+{
+    std::wstring s(path);
+    while (!s.empty() && (s.back() == L'\\' || s.back() == L'/')) s.pop_back();
+    return s;
+}
+
+static bool WriteWholeFile(const std::wstring& path, DWORD disposition, const char* data)
+{
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, NULL,
+                           disposition, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    DWORD written = 0;
+    BOOL ok = WriteFile(h, data, (DWORD)strlen(data), &written, NULL) && written == strlen(data);
+    CloseHandle(h);
+    return ok != FALSE;
+}
+
+bool Test_DeleteRecreateWhileBackingHeld(const WCHAR* rootDir, const WCHAR* backingRoot)
+{
+    printf("Testing delete + immediate re-create while the backing file is held open\n");
+
+    const std::wstring physRoot = WithoutTrailingSlash(backingRoot);
+    const std::wstring dir = WithoutTrailingSlash(rootDir) + L"\\posix_delete_" +
+                             std::to_wstring(GetTickCount64());
+    const std::wstring file = dir + L"\\saved.pdf";
+
+    // Find the encrypted directory that appears for the new plaintext directory
+    std::vector<std::wstring> before = ListDirectoryEntries(physRoot);
+    if (!CreateDirectoryW(dir.c_str(), NULL)) {
+        PrintLastError("CreateDirectoryW");
+        return false;
+    }
+    std::wstring physDir;
+    int added = 0;
+    for (const auto& name : ListDirectoryEntries(physRoot)) {
+        if (std::find(before.begin(), before.end(), name) == before.end()) {
+            physDir = physRoot + L"\\" + name;
+            added++;
+        }
+    }
+
+    bool ok = true;
+    HANDLE holder = INVALID_HANDLE_VALUE;
+    if (added != 1) {
+        printf("ERROR: could not identify the backing directory (%d new entries)\n", added);
+        ok = false;
+    }
+    else if (!WriteWholeFile(file, CREATE_NEW, "first version")) {
+        PrintLastError("create first version");
+        ok = false;
+    }
+    else {
+        std::vector<std::wstring> files = ListDirectoryEntries(physDir);
+        if (files.size() != 1) {
+            printf("ERROR: expected 1 backing file, found %zu\n", files.size());
+            ok = false;
+        }
+        else {
+            // Hold the backing file the way a sync client does
+            holder = CreateFileW((physDir + L"\\" + files[0]).c_str(), GENERIC_READ,
+                                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                 NULL, OPEN_EXISTING, 0, NULL);
+            if (holder == INVALID_HANDLE_VALUE) {
+                PrintLastError("open backing file");
+                ok = false;
+            }
+        }
+    }
+
+    if (ok && !DeleteFileW(file.c_str())) {
+        PrintLastError("DeleteFileW");
+        ok = false;
+    }
+    if (ok && !WriteWholeFile(file, CREATE_NEW, "second version")) {
+        DWORD err = GetLastError();
+        printf("ERROR: re-creating the deleted name failed (error=%lu)\n",
+               static_cast<unsigned long>(err));
+        ok = false;
+    }
+    if (ok) {
+        HANDLE h = CreateFileW(file.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL,
+                               OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+        char buf[64] = {0};
+        DWORD readLen = 0;
+        if (h == INVALID_HANDLE_VALUE || !ReadFile(h, buf, sizeof(buf) - 1, &readLen, NULL) ||
+            strcmp(buf, "second version") != 0) {
+            printf("ERROR: re-created file content is wrong: '%s'\n", buf);
+            ok = false;
+        }
+        if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+    }
+
+    if (holder != INVALID_HANDLE_VALUE) CloseHandle(holder);
+    DeleteFileW(file.c_str());
+    RemoveDirectoryW(dir.c_str());
+
+    if (ok) printf("Delete + re-create while backing file held OK\n");
+    return ok;
 }

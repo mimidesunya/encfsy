@@ -176,6 +176,21 @@ namespace EncFS {
     }
 
     /**
+     * @brief Tells whether this handle refers to the given physical file
+     */
+    bool EncFSFile::isSameFile(const BY_HANDLE_FILE_INFORMATION& info) const {
+        lock_guard<decltype(this->mutexLock)> lock(this->mutexLock);
+        BY_HANDLE_FILE_INFORMATION own;
+        if (!this->handle || this->handle == INVALID_HANDLE_VALUE ||
+            !GetFileInformationByHandle(this->handle, &own)) {
+            return false;
+        }
+        return own.dwVolumeSerialNumber == info.dwVolumeSerialNumber &&
+            own.nFileIndexHigh == info.nFileIndexHigh &&
+            own.nFileIndexLow == info.nFileIndexLow;
+    }
+
+    /**
      * @brief Gets cached UTF-8 file name or converts and caches it
      */
     const string& EncFSFile::getCachedUtf8FileName(const LPCWSTR wstr) {
@@ -294,19 +309,32 @@ namespace EncFS {
      * @return Result code indicating success or error type
      */
     EncFSGetFileIVResult EncFSFile::getFileIV(const LPCWSTR FileName, int64_t* fileIv, bool create) {
-        // Return cached IV if already available (atomic read for thread safety)
-        if (this->fileIvAvailable.load(std::memory_order_acquire)) {
-            *fileIv = this->fileIv;
-            return EXISTS;
-        }
-        
         // If unique IV is not enabled, use 0 as the IV
         if (!encfs.isUniqueIV()) {
             this->fileIv = *fileIv = 0L;
             this->fileIvAvailable.store(true, std::memory_order_release);
             return EXISTS;
         }
-        
+
+        // Every Dokan handle has its own EncFSFile. Another handle may truncate the
+        // file and rewrite it under a new random IV (CREATE_ALWAYS, TRUNCATE_EXISTING,
+        // SetEndOfFile(0)), so the cached IV is reused only while the header on disk
+        // is still the one it was decoded from. Reads and writes hold the file-level
+        // lock, so the header cannot change between this check and the I/O.
+        if (this->fileIvAvailable.load(std::memory_order_acquire)) {
+            LARGE_INTEGER zero;
+            zero.QuadPart = 0;
+            string current(EncFSVolume::HEADER_SIZE, '\0');
+            DWORD currentLen = 0;
+            if (SetFilePointerEx(this->handle, zero, NULL, FILE_BEGIN) &&
+                ReadFile(this->handle, &current[0], (DWORD)current.size(), &currentLen, NULL) &&
+                currentLen == current.size() && current == this->fileIvHeader) {
+                *fileIv = this->fileIv;
+                return EXISTS;
+            }
+            this->fileIvAvailable.store(false, std::memory_order_release);
+        }
+
         // Get current file size first to detect empty files or files without IV
         LARGE_INTEGER currentFileSize;
         if (!GetFileSizeEx(this->handle, &currentFileSize)) {
@@ -372,6 +400,7 @@ namespace EncFS {
         // Decode the IV from the header (use cached conversion)
         const string& cFileName = getCachedUtf8FileName(FileName);
         this->fileIv = *fileIv = encfs.decodeFileIv(cFileName, fileHeader);
+        this->fileIvHeader = fileHeader;
         this->fileIvAvailable.store(true, std::memory_order_release);
         return EXISTS;
     }
@@ -1208,7 +1237,11 @@ namespace EncFS {
         // Handle expansion - encode trailing block if needed
         if (length64 > fileSize64) {
             int64_t s = length64 % blockDataSize;
-            if (s != 0 && (fileSize64 == 0 || blockNum != length64 / blockDataSize)) {
+            // The boundary block rewrite above only exists when the old size ends
+            // inside a block (shift != 0). When the old size is block aligned, the
+            // new last block must be written here even if it is the very next block;
+            // SetEndOfFile's raw zeros would fail the MAC check of a partial block.
+            if (s != 0 && (shift == 0 || blockNum != length64 / blockDataSize)) {
                 blockNum = length64 / blockDataSize;
                 blocksOffset = blockNum * blockSize;
                 if (encfs.isUniqueIV()) {

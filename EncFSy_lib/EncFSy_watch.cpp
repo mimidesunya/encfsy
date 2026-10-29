@@ -217,28 +217,33 @@ namespace {
         DbgPrintV(L"Watcher: change action=%lu '%s' -> '%s'\n",
             action, relPath.c_str(), virtualPath.c_str());
 
-        // Reconcile open handles unconditionally - never time-filtered. A save
-        // through the mount followed within seconds by a sync update of the
-        // same file (a classic conflict) must still swap handles; for events
-        // caused by our own writes the identity check inside onExternalChange
-        // detects the unchanged file and the cache reset is harmless.
+        // Only a name event can put a different file at the path (sync clients
+        // replace a file by renaming a temp file over it), so only those are
+        // checked for a replaced file - never time-filtered: a save through the
+        // mount followed within seconds by a sync update of the same file (a
+        // classic conflict) must still swap handles. Replacements through the
+        // mount pin the handles of the replaced file (EncFSRekeyOpenFile), and
+        // our own in-place writes need nothing: every read/write checks the
+        // file header itself.
         // Holding the registry lock keeps the EncFSFile objects alive: their
         // destructor unregisters and thus blocks on the same lock until we
         // are done.
-        {
+        const bool selfChange = IsRecentSelfChange(key);
+        const bool nameEvent = action == FILE_ACTION_ADDED || action == FILE_ACTION_RENAMED_NEW_NAME;
+        if (nameEvent || !selfChange) {
             lock_guard<mutex> lock(g_registryLock);
             auto range = g_pathToFiles.equal_range(key);
             if (range.first != range.second) {
                 wstring physicalPath = BuildPhysicalPath(relPath);
                 for (auto it = range.first; it != range.second; ++it) {
-                    it->second->onExternalChange(physicalPath.c_str());
+                    it->second->onExternalChange(nameEvent ? physicalPath.c_str() : nullptr);
                 }
             }
         }
 
         // Kernel notification is pure duplicate noise for our own operations
         // (Dokan already reported them), so only self-events are filtered here.
-        if (!IsRecentSelfChange(key)) {
+        if (!selfChange) {
             NotifyKernel(action, relPath, virtualPath);
         }
     }
@@ -369,16 +374,56 @@ void EncFSRekeyOpenFile(EncFS::EncFSFile* file, LPCWSTR newVirtualPath) {
     if (it == g_fileToPath.end()) {
         return;
     }
-    wstring oldKey = NormalizeVirtualPath(it->second.c_str());
-    auto range = g_pathToFiles.equal_range(oldKey);
-    for (auto pit = range.first; pit != range.second; ++pit) {
-        if (pit->second == file) {
-            g_pathToFiles.erase(pit);
-            break;
+    const wstring oldKey = NormalizeVirtualPath(it->second.c_str());
+    const wstring newKey = NormalizeVirtualPath(newVirtualPath);
+
+    // No concurrent handle swap: the watcher swaps only under g_registryLock.
+    BY_HANDLE_FILE_INFORMATION moved = {};
+    const bool haveIdentity = GetFileInformationByHandle(file->getHandle(), &moved) != FALSE;
+
+    // A replaced target stays open on its old file for those who hold it.
+    if (newKey != oldKey) {
+        auto range = g_pathToFiles.equal_range(newKey);
+        for (auto pit = range.first; pit != range.second; ++pit) {
+            if (pit->second != file && !(haveIdentity && pit->second->isSameFile(moved))) {
+                pit->second->disableReopen();
+            }
         }
     }
-    it->second = newVirtualPath;
-    g_pathToFiles.emplace(NormalizeVirtualPath(newVirtualPath), file);
+
+    // All handles of the renamed file follow the new name.
+    vector<EncFS::EncFSFile*> renamed;
+    auto range = g_pathToFiles.equal_range(oldKey);
+    for (auto pit = range.first; pit != range.second;) {
+        if (pit->second == file || (haveIdentity && pit->second->isSameFile(moved))) {
+            renamed.push_back(pit->second);
+            pit = g_pathToFiles.erase(pit);
+        }
+        else {
+            ++pit;
+        }
+    }
+    for (EncFS::EncFSFile* f : renamed) {
+        g_fileToPath[f] = newVirtualPath;
+        g_pathToFiles.emplace(newKey, f);
+    }
+}
+
+void EncFSPinDeletedOpenFiles(LPCWSTR virtualPath, EncFS::EncFSFile* file) {
+    if (!virtualPath || !file) {
+        return;
+    }
+    lock_guard<mutex> lock(g_registryLock);
+    BY_HANDLE_FILE_INFORMATION deleted = {};
+    if (!GetFileInformationByHandle(file->getHandle(), &deleted)) {
+        return;
+    }
+    auto range = g_pathToFiles.equal_range(NormalizeVirtualPath(virtualPath));
+    for (auto it = range.first; it != range.second; ++it) {
+        if (it->second != file && it->second->isSameFile(deleted)) {
+            it->second->disableReopen();
+        }
+    }
 }
 
 void EncFSNoteSelfChange(LPCWSTR virtualPath) {

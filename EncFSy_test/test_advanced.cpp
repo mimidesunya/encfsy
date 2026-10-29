@@ -247,6 +247,107 @@ bool Test_ReplaceFileWhileTargetOpen(const WCHAR* rootDir)
 }
 
 //=============================================================================
+// Test: A handle open on a file replaced through the mount keeps that file
+//
+// On NTFS a handle refers to the file it opened; after ReplaceFile puts
+// another file at the name, the holder still reads the replaced data. The
+// backing-store watcher treated a replacement through the mount like a cloud
+// sync update and moved such handles to the new file, so the app holding the
+// document (Acrobat, previews, indexers) silently read the new file instead.
+// The holder reads non-cached so the reads reach EncFSy.
+//=============================================================================
+bool Test_ReplacedFileHolderKeepsOldContent(const WCHAR* rootDir)
+{
+    printf("Testing that the holder of a replaced file keeps reading the replaced data\n");
+
+    WCHAR target[260];
+    WCHAR temp[260];
+    wsprintfW(target, L"%s\\replaced_holder.pdf", rootDir);
+    wsprintfW(temp, L"%s\\replaced_holder.tmp", rootDir);
+    DeleteFileW(target);
+    DeleteFileW(temp);
+
+    const char oldContent[] = "OLD CONTENT that the holder opened";
+    const char newContent[] = "NEW CONTENT that the save put at the name";
+    DWORD ioLen = 0;
+
+    HANDLE h = OpenTestFile(target, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ,
+                            CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    WriteFile(h, oldContent, static_cast<DWORD>(strlen(oldContent)), &ioLen, NULL);
+    CloseHandle(h);
+
+    char* buf = static_cast<char*>(VirtualAlloc(NULL, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+    if (!buf) return false;
+
+    HANDLE holder = CreateFileW(target, GENERIC_READ,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+                                OPEN_EXISTING, FILE_FLAG_NO_BUFFERING, NULL);
+    if (holder == INVALID_HANDLE_VALUE) {
+        PrintLastError("open holder");
+        VirtualFree(buf, 0, MEM_RELEASE);
+        return false;
+    }
+    ReadFile(holder, buf, 4096, &ioLen, NULL);
+
+    h = OpenTestFile(temp, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ,
+                     CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL);
+    bool ok = h != INVALID_HANDLE_VALUE;
+    if (ok) {
+        WriteFile(h, newContent, static_cast<DWORD>(strlen(newContent)), &ioLen, NULL);
+        CloseHandle(h);
+        if (!ReplaceFileW(target, temp, NULL, 0, NULL, NULL)) {
+            PrintLastError("ReplaceFileW");
+            ok = false;
+        }
+    }
+
+    BOOL readOk = FALSE;
+    DWORD readErr = 0;
+    if (ok) {
+        // Let the backing-store watcher process the rename events
+        Sleep(1500);
+        LARGE_INTEGER zero = {};
+        SetFilePointerEx(holder, zero, NULL, FILE_BEGIN);
+        memset(buf, 0, 4096);
+        ioLen = 0;
+        readOk = ReadFile(holder, buf, 4096, &ioLen, NULL);
+        readErr = readOk ? 0 : GetLastError();
+    }
+    CloseHandle(holder);
+
+    if (ok && !readOk) {
+        printf("ERROR: holder read after the replace failed (error=%lu)\n",
+               static_cast<unsigned long>(readErr));
+        ok = false;
+    }
+    else if (ok && (ioLen != strlen(oldContent) || memcmp(buf, oldContent, ioLen) != 0)) {
+        printf("ERROR: holder now reads '%.*s' instead of the replaced data\n",
+               static_cast<int>(ioLen), buf);
+        ok = false;
+    }
+    VirtualFree(buf, 0, MEM_RELEASE);
+
+    // The name itself must have the new content
+    if (ok) {
+        h = OpenTestFile(target, GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL);
+        char verify[128] = {0};
+        ioLen = 0;
+        if (h == INVALID_HANDLE_VALUE || !ReadFile(h, verify, sizeof(verify) - 1, &ioLen, NULL) ||
+            strcmp(verify, newContent) != 0) {
+            printf("ERROR: the name does not have the new content: '%s'\n", verify);
+            ok = false;
+        }
+        if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+    }
+
+    DeleteFileW(target);
+    DeleteFileW(temp);
+    if (ok) printf("Holder of the replaced file kept the replaced data OK\n");
+    return ok;
+}
+
+//=============================================================================
 // Test: Rapid rename to same target (stress test for rename timing)
 // This simulates rapid save operations where a file is repeatedly
 // replaced via rename operations.

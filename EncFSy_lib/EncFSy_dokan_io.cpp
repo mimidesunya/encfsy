@@ -44,16 +44,50 @@ static inline EncFS::EncFSFile* ToEncFSFile(ULONG64 context) {
     return reinterpret_cast<EncFS::EncFSFile*>(context);
 }
 
+/**
+ * @brief Sets the delete disposition on a physical handle.
+ *
+ * Uses POSIX semantics like RenamePhysicalFile: the name disappears as soon as this
+ * handle closes, even while another process (cloud sync hashing the file, antivirus,
+ * the search indexer) still holds the backing file. The legacy disposition leaves the
+ * name "delete pending" until every handle closes, so an immediate re-create of the
+ * same name (delete-then-create saves, overwriting copies) failed with access denied.
+ */
 static NTSTATUS SetPhysicalDeleteDisposition(HANDLE handle, LPCWSTR fileName,
     BOOLEAN deleteFile, bool logError) {
     if (!handle || handle == INVALID_HANDLE_VALUE) {
         return DokanNtStatusFromWin32(ERROR_INVALID_HANDLE);
     }
 
+    BOOL done = FALSE;
+#if defined(FILE_DISPOSITION_FLAG_POSIX_SEMANTICS)
+    FILE_DISPOSITION_INFO_EX fdiEx = {};
+    fdiEx.Flags = deleteFile
+        ? (FILE_DISPOSITION_FLAG_DELETE | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS)
+        : FILE_DISPOSITION_FLAG_DO_NOT_DELETE;
+    done = SetFileInformationByHandle(handle, FileDispositionInfoEx, &fdiEx, sizeof(fdiEx));
+    if (!done) {
+        DWORD exError = GetLastError();
+        // Not supported (e.g., FAT/exFAT/SMB or pre-RS1 Windows): fall back below.
+        if (exError != ERROR_INVALID_PARAMETER && exError != ERROR_NOT_SUPPORTED &&
+            exError != ERROR_INVALID_FUNCTION) {
+            SetLastError(exError);
+        }
+        else {
+            DbgPrintV(L"  [INFO] POSIX delete unsupported (error=%lu), falling back\n", exError);
+            FILE_DISPOSITION_INFO fdi = {};
+            fdi.DeleteFile = deleteFile;
+            done = SetFileInformationByHandle(handle, FileDispositionInfo, &fdi,
+                                              sizeof(FILE_DISPOSITION_INFO));
+        }
+    }
+#else
     FILE_DISPOSITION_INFO fdi = {};
     fdi.DeleteFile = deleteFile;
-    if (!SetFileInformationByHandle(handle, FileDispositionInfo, &fdi,
-                                    sizeof(FILE_DISPOSITION_INFO))) {
+    done = SetFileInformationByHandle(handle, FileDispositionInfo, &fdi,
+                                      sizeof(FILE_DISPOSITION_INFO));
+#endif
+    if (!done) {
         DWORD error = GetLastError();
         if (logError) {
             ErrorPrint(L"SetDeleteDisposition: '%s' FAILED (delete=%d, error=%lu)\n",
@@ -471,6 +505,9 @@ void DOKAN_CALLBACK EncFSCleanup(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInf
         HANDLE handle = encfsFile->getHandle();
 
         if (deletePending && handle && handle != INVALID_HANDLE_VALUE) {
+            if (!DokanFileInfo->IsDirectory) {
+                EncFSPinDeletedOpenFiles(FileName, encfsFile);
+            }
             NTSTATUS dispositionStatus =
                 SetPhysicalDeleteDisposition(handle, FileName, TRUE, false);
             deleteDispositionApplied = dispositionStatus == STATUS_SUCCESS;
@@ -881,6 +918,26 @@ NTSTATUS DOKAN_CALLBACK EncFSWriteFile(LPCWSTR FileName, LPCVOID Buffer,
     }
     else {
         encfsFile = ToEncFSFile(DokanFileInfo->Context);
+
+        // Cleanup closes the stored handle but keeps the context until Close. Modified
+        // pages of a mapped view are written back after the app closed its handle, so
+        // reopen a temp handle like ReadFile does instead of losing those writes.
+        if (!encfsFile->getHandle() || encfsFile->getHandle() == INVALID_HANDLE_VALUE) {
+            if (!ensureFilePath()) {
+                return STATUS_OBJECT_NAME_INVALID;
+            }
+            DbgPrintV(L"WriteFile: '%s' - Context handle invalid, reopening temp handle\n", FileName);
+            HANDLE handle = CreateFileW(filePath, GENERIC_READ | GENERIC_WRITE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+                OPEN_EXISTING, 0, NULL);
+            if (handle == INVALID_HANDLE_VALUE) {
+                DWORD error = GetLastError();
+                ErrorPrint(L"WriteFile: Reopen CreateFile '%s' FAILED (error=%lu)\n", FileName, error);
+                return DokanNtStatusFromWin32(error);
+            }
+            tempEncFSFile = std::make_unique<EncFS::EncFSFile>(handle, false);
+            encfsFile = tempEncFSFile.get();
+        }
     }
 
     if (!ensureFilePath()) {

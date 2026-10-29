@@ -635,6 +635,212 @@ bool Test_FileExpansionPartialBlock(const WCHAR* file)
 }
 
 //=============================================================================
+// Test: Expanding from a block-aligned size keeps the new tail readable
+// _setLength() skipped the new last (partial) block when the old size was a
+// non-zero multiple of the block data size and the new size ended inside the
+// very next block. SetEndOfFile's raw zeros then failed the MAC check, so
+// reading the tail or writing into it returned ERROR_FILE_CORRUPT.
+//=============================================================================
+bool Test_ExpandFromBlockBoundaryReadable(const WCHAR* file)
+{
+    printf("Testing expansion from a block-aligned size...\n");
+
+    const size_t BLOCK_DATA_SIZE = 1016;
+    const size_t cases[][2] = {
+        {BLOCK_DATA_SIZE, BLOCK_DATA_SIZE + 10},
+        {BLOCK_DATA_SIZE, BLOCK_DATA_SIZE * 2 - 1},
+        {BLOCK_DATA_SIZE * 2, BLOCK_DATA_SIZE * 2 + 500},
+    };
+
+    for (const auto& c : cases) {
+        const size_t oldSize = c[0];
+        const size_t newSize = c[1];
+        DeleteFileW(file);
+
+        HANDLE h = OpenTestFile(file, GENERIC_READ | GENERIC_WRITE,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL);
+        if (h == INVALID_HANDLE_VALUE) return false;
+
+        std::vector<char> expected(newSize, 0);
+        for (size_t i = 0; i < oldSize; i++) expected[i] = (char)('A' + (i % 26));
+        DWORD written = 0;
+        if (!WriteFile(h, expected.data(), (DWORD)oldSize, &written, NULL) || written != oldSize) {
+            PrintLastError("WriteFile (initial)");
+            CloseHandle(h);
+            return false;
+        }
+
+        LARGE_INTEGER pos;
+        pos.QuadPart = (LONGLONG)newSize;
+        if (!SetFilePointerEx(h, pos, NULL, FILE_BEGIN) || !SetEndOfFile(h)) {
+            PrintLastError("SetEndOfFile (expand)");
+            CloseHandle(h);
+            return false;
+        }
+
+        // Read the whole file, including the new tail
+        std::vector<char> actual(newSize + 16, (char)0x55);
+        pos.QuadPart = 0;
+        SetFilePointerEx(h, pos, NULL, FILE_BEGIN);
+        DWORD readLen = 0;
+        if (!ReadFile(h, actual.data(), (DWORD)actual.size(), &readLen, NULL)) {
+            printf("ERROR: read after expanding %zu -> %zu failed\n", oldSize, newSize);
+            PrintLastError("ReadFile");
+            CloseHandle(h);
+            return false;
+        }
+        if (readLen != newSize || memcmp(actual.data(), expected.data(), newSize) != 0) {
+            printf("ERROR: expanding %zu -> %zu read %lu bytes with wrong content\n",
+                   oldSize, newSize, static_cast<unsigned long>(readLen));
+            CloseHandle(h);
+            return false;
+        }
+
+        // A partial write into the middle of the new tail block (read-modify-write)
+        const char patch[] = "TAIL";
+        const size_t patchOffset = oldSize + 4;
+        pos.QuadPart = (LONGLONG)patchOffset;
+        SetFilePointerEx(h, pos, NULL, FILE_BEGIN);
+        if (!WriteFile(h, patch, 4, &written, NULL) || written != 4) {
+            printf("ERROR: writing into the new tail after %zu -> %zu failed\n", oldSize, newSize);
+            PrintLastError("WriteFile (tail)");
+            CloseHandle(h);
+            return false;
+        }
+        memcpy(&expected[patchOffset], patch, 4);
+        CloseHandle(h);
+
+        // Verify through a fresh handle
+        h = OpenTestFile(file, GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL);
+        if (h == INVALID_HANDLE_VALUE) return false;
+        readLen = 0;
+        if (!ReadFile(h, actual.data(), (DWORD)actual.size(), &readLen, NULL) ||
+            readLen != newSize || memcmp(actual.data(), expected.data(), newSize) != 0) {
+            printf("ERROR: content after tail write (%zu -> %zu) is wrong\n", oldSize, newSize);
+            CloseHandle(h);
+            return false;
+        }
+        CloseHandle(h);
+        printf("  %zu -> %zu: tail readable and writable\n", oldSize, newSize);
+    }
+
+    DeleteFileW(file);
+    printf("Expansion from block-aligned size test PASSED\n");
+    return true;
+}
+
+//=============================================================================
+// Test: A rewrite through another handle is seen by a handle opened earlier
+// Truncating (CREATE_ALWAYS) and rewriting a file gives it a new random file
+// IV. Each handle cached the IV it first read, so a handle opened before the
+// rewrite decoded the new data with the old IV (ERROR_FILE_CORRUPT) and its
+// writes encrypted blocks under the old IV, corrupting the new file. The early
+// handle is non-cached so its reads and writes reach EncFSy.
+//=============================================================================
+bool Test_TruncateRewriteSeenByEarlierHandle(const WCHAR* file)
+{
+    printf("Testing a rewrite through another handle seen by an earlier handle...\n");
+
+    const DWORD SIZE = 4096;
+    char* buf = static_cast<char*>(VirtualAlloc(NULL, SIZE, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+    if (!buf) return false;
+    std::vector<char> first(SIZE), second(SIZE), third(SIZE);
+    bool ok = true;
+
+    for (int iter = 0; iter < 20 && ok; iter++) {
+        for (DWORD i = 0; i < SIZE; i++) {
+            first[i] = (char)(i * 7 + iter);
+            second[i] = (char)(i * 13 + 101 + iter);
+            third[i] = (char)(i * 3 + 55 + iter);
+        }
+        DeleteFileW(file);
+
+        DWORD ioLen = 0;
+        HANDLE h = OpenTestFile(file, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ,
+                                CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL);
+        if (h == INVALID_HANDLE_VALUE) { ok = false; break; }
+        WriteFile(h, first.data(), SIZE, &ioLen, NULL);
+        CloseHandle(h);
+
+        // Early handle: reads the first version (and caches its IV)
+        HANDLE early = CreateFileW(file, GENERIC_READ | GENERIC_WRITE,
+                                   FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+                                   OPEN_EXISTING, FILE_FLAG_NO_BUFFERING, NULL);
+        if (early == INVALID_HANDLE_VALUE) {
+            PrintLastError("open early handle");
+            ok = false;
+            break;
+        }
+        if (!ReadFile(early, buf, SIZE, &ioLen, NULL) || ioLen != SIZE || memcmp(buf, first.data(), SIZE) != 0) {
+            printf("Iteration %d: first read through the early handle failed\n", iter);
+            CloseHandle(early);
+            ok = false;
+            break;
+        }
+
+        // Another handle truncates and rewrites the file (new file IV)
+        h = OpenTestFile(file, GENERIC_READ | GENERIC_WRITE,
+                         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                         CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL);
+        if (h == INVALID_HANDLE_VALUE) { CloseHandle(early); ok = false; break; }
+        WriteFile(h, second.data(), SIZE, &ioLen, NULL);
+        FlushFileBuffers(h);
+        CloseHandle(h);
+
+        // The early handle must read the new data right away...
+        LARGE_INTEGER pos = {};
+        SetFilePointerEx(early, pos, NULL, FILE_BEGIN);
+        ioLen = 0;
+        if (!ReadFile(early, buf, SIZE, &ioLen, NULL)) {
+            printf("Iteration %d: early handle read after the rewrite failed (error=%lu)\n",
+                   iter, static_cast<unsigned long>(GetLastError()));
+            CloseHandle(early);
+            ok = false;
+            break;
+        }
+        if (ioLen != SIZE || memcmp(buf, second.data(), SIZE) != 0) {
+            printf("Iteration %d: early handle read stale or garbled data\n", iter);
+            CloseHandle(early);
+            ok = false;
+            break;
+        }
+
+        // ...and its writes must be readable by others
+        memcpy(buf, third.data(), SIZE);
+        pos.QuadPart = SIZE;
+        SetFilePointerEx(early, pos, NULL, FILE_BEGIN);
+        BOOL wrote = WriteFile(early, buf, SIZE, &ioLen, NULL);
+        CloseHandle(early);
+        if (!wrote || ioLen != SIZE) {
+            printf("Iteration %d: early handle write failed\n", iter);
+            ok = false;
+            break;
+        }
+
+        h = OpenTestFile(file, GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL);
+        if (h == INVALID_HANDLE_VALUE) { ok = false; break; }
+        std::vector<char> all(SIZE * 2 + 16);
+        ioLen = 0;
+        BOOL readAll = ReadFile(h, all.data(), (DWORD)all.size(), &ioLen, NULL);
+        CloseHandle(h);
+        if (!readAll || ioLen != SIZE * 2 ||
+            memcmp(all.data(), second.data(), SIZE) != 0 ||
+            memcmp(all.data() + SIZE, third.data(), SIZE) != 0) {
+            printf("Iteration %d: file content after the early handle's write is wrong (read=%lu)\n",
+                   iter, static_cast<unsigned long>(ioLen));
+            ok = false;
+            break;
+        }
+    }
+
+    VirtualFree(buf, 0, MEM_RELEASE);
+    DeleteFileW(file);
+    if (ok) printf("Rewrite through another handle seen by the earlier handle OK\n");
+    return ok;
+}
+
+//=============================================================================
 // Test: Rapid truncate and write operations
 // Simulates VS build pattern that was causing issues
 //=============================================================================

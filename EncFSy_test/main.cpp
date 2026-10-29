@@ -431,6 +431,8 @@ static void RunAllTests(TestRunner& runner,
         runner.runTest("allowHoles=false rejects sparse zero block", Test_AllowHolesFalseRejectsSparseZeroBlock, file);
         runner.runTest("SetEndOfFile boundary block", Test_SetEndOfFileBoundaryBlock, file);
         runner.runTest("File expansion partial block", Test_FileExpansionPartialBlock, file);
+        runner.runTest("Expand from block-aligned size (tail readable)", Test_ExpandFromBlockBoundaryReadable, file);
+        runner.runTest("Rewrite via another handle seen by earlier handle", Test_TruncateRewriteSeenByEarlierHandle, file);
         runner.runTest("Rapid truncate and write", Test_RapidTruncateWrite, file);
         runner.runTest("Read at block boundaries", Test_ReadAtBlockBoundaries, file);
         runner.runTest("Write at block boundaries", Test_WriteAtBlockBoundaries, file);
@@ -588,6 +590,7 @@ static void RunAllTests(TestRunner& runner,
         printf("\n--- FILE RENAME PATTERN TESTS (Adobe Reader regression) ---\n");
         runner.runTest("Adobe Reader-like save pattern", Test_AdobeReaderSavePattern, rootDir);
         runner.runTest("ReplaceFile while target open (safe-save)", Test_ReplaceFileWhileTargetOpen, rootDir);
+        runner.runTest("Holder of a replaced file keeps the replaced data", Test_ReplacedFileHolderKeepsOldContent, rootDir);
         runner.runTest("Rapid rename to same target", Test_RapidRenameToSameTarget, rootDir);
         runner.runTest("Rename chain cycle (A->B->C->A)", Test_RenameChainCycle, rootDir);
         runner.runTest("Write-rename-read immediate", Test_WriteRenameReadImmediate, rootDir);
@@ -674,6 +677,7 @@ static void RunAllTests(TestRunner& runner,
         runner.runTest("Memory-mapped file (read)", Test_MemoryMappedFileRead, file);
         runner.runTest("Memory-mapped file (write)", Test_MemoryMappedFileWrite, file);
         runner.runTest("Mmap paging read with 2nd handle", Test_MmapPagingReadWithSecondHandle, file);
+        runner.runTest("Mmap write after handle close", Test_MmapWriteAfterHandleClose, file);
 
         printf("\n--- WINDOWS FILESYSTEM TESTS (Notifications & Special Names) ---\n");
         runner.runTest("File change notification", Test_FileChangeNotification, rootDir);
@@ -693,6 +697,10 @@ static void RunAllTests(TestRunner& runner,
         
         printf("\n--- WINDOWS FILESYSTEM TESTS (Recycle Bin) ---\n");
         runner.runTest("Recycle Bin disposition info", Test_RecycleBinDisposition, rootDir);
+        if (!isRawFilesystem) {
+            runner.runTest("Delete + re-create while backing file held", Test_DeleteRecreateWhileBackingHeld,
+                           rootDir, ENCFS_ROOT_DIR);
+        }
     } else {
         printf("\n--- WINDOWS FILESYSTEM TESTS (skipped; include with -c windows) ---\n");
     }

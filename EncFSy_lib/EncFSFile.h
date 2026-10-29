@@ -113,6 +113,7 @@ namespace EncFS
 
 		int64_t fileIv;          // File initialization vector for encryption
 		std::atomic<bool> fileIvAvailable;  // Flag indicating if fileIv has been loaded (atomic for thread safety)
+		std::string fileIvHeader;     // Raw header fileIv was decoded from (detects rewrites by other handles)
 
 		std::string blockBuffer;      // Buffer for encrypted block data (lazy allocated)
 		int64_t lastBlockNum;    // Last accessed block number (for caching)
@@ -250,6 +251,25 @@ namespace EncFS
 			this->reopenAccess = access;
 			this->reopenFlags = flags;
 		}
+
+		/**
+		 * @brief Keeps this handle on its current physical file for good
+		 *
+		 * Used when the file was replaced through the mount: Windows handles keep
+		 * referring to the replaced file, so the watcher must not move them to the
+		 * file that now has the name.
+		 */
+		inline void disableReopen() {
+			std::lock_guard<std::mutex> lock(this->mutexLock);
+			this->reopenAccess = 0;
+		}
+
+		/**
+		 * @brief Tells whether this handle refers to the given physical file
+		 * @param info Identity (volume serial and file index) to compare with
+		 * @return True if the open physical file is that file
+		 */
+		bool isSameFile(const BY_HANDLE_FILE_INFORMATION& info) const;
 
 		/**
 		 * @brief Reacts to an external change of the backing file (cloud sync)
