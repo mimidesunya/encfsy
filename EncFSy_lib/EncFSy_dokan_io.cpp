@@ -44,6 +44,70 @@ static inline EncFS::EncFSFile* ToEncFSFile(ULONG64 context) {
     return reinterpret_cast<EncFS::EncFSFile*>(context);
 }
 
+/** Longest wait for another process to release a backing file (see RetryOnSharingViolation). */
+static const DWORD SHARING_RETRY_BUDGET_MS = 1000;
+
+/**
+ * @brief Repeats a backing-store operation while it fails with ERROR_SHARING_VIOLATION.
+ *
+ * Physical opens always use full sharing, and the Dokan driver has already checked the
+ * callers' share modes against each other, so a sharing violation on the backing store
+ * comes from a process outside the mount. Cloud sync holds every newly created item for a
+ * few milliseconds without FILE_SHARE_DELETE (Dropbox: about 3-35 ms after creation), so a
+ * delete that closely follows its create failed. Windows Installer probes every fixed drive
+ * that way (create, then remove MSIxxxxx.tmp in the root) and left the folders behind.
+ *
+ * @param op Performs the operation once; returns true on success and leaves the Win32
+ *           error in GetLastError() on failure.
+ * @param fileName Virtual path, for the log only.
+ * @return true if an attempt succeeded.
+ */
+template <typename Op>
+static bool RetryOnSharingViolation(Op op, LPCWSTR fileName) {
+    if (op()) {
+        return true;
+    }
+    DWORD waited = 0;
+    DWORD delay = 5;
+    while (GetLastError() == ERROR_SHARING_VIOLATION && waited < SHARING_RETRY_BUDGET_MS) {
+        Sleep(delay);
+        waited += delay;
+        delay = (delay < 100) ? delay * 2 : 100;
+        if (op()) {
+            // Callers read GetLastError() after success (ERROR_ALREADY_EXISTS on OPEN_ALWAYS).
+            DWORD lastError = GetLastError();
+            DbgPrint(L"  [INFO] '%s' was held by another process; succeeded after %lu ms\n",
+                fileName, waited);
+            SetLastError(lastError);
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * @brief Opens a backing file or directory, waiting out brief holds by other processes
+ *        when the open is for deleting or renaming (DELETE access).
+ *
+ * Other opens fail at once as before, so a long-held file does not slow down reads.
+ */
+static HANDLE CreateBackingFile(LPCWSTR filePath, LPCWSTR fileName, DWORD access, DWORD share,
+    LPSECURITY_ATTRIBUTES securityAttrib, DWORD disposition, DWORD flagsAndAttributes) {
+    HANDLE handle = INVALID_HANDLE_VALUE;
+    auto open = [&]() {
+        handle = CreateFileW(filePath, access, share, securityAttrib, disposition,
+            flagsAndAttributes, NULL);
+        return handle != INVALID_HANDLE_VALUE;
+    };
+    if (access & DELETE) {
+        RetryOnSharingViolation(open, fileName);
+    }
+    else {
+        open();
+    }
+    return handle;
+}
+
 /**
  * @brief Sets the delete disposition on a physical handle.
  *
@@ -299,9 +363,9 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
             }
             // Open directory handle
             if (!impersonateCaller()) return status;
-            handle = CreateFileW(filePath, genericDesiredAccess, ShareAccess,
+            handle = CreateBackingFile(filePath, FileName, genericDesiredAccess, ShareAccess,
                 &securityAttrib, OPEN_EXISTING,
-                fileAttributesAndFlags | FILE_FLAG_BACKUP_SEMANTICS, NULL);
+                fileAttributesAndFlags | FILE_FLAG_BACKUP_SEMANTICS);
             if (reverter.active) RevertToSelf();
 
             if (handle == INVALID_HANDLE_VALUE) {
@@ -408,8 +472,8 @@ EncFSCreateFile(LPCWSTR FileName, PDOKAN_IO_SECURITY_CONTEXT SecurityContext,
         // unshared-W physical handle and the save failed, leaving the temp file behind.
         ShareAccess = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
 
-        handle = CreateFileW(filePath, genericDesiredAccess, ShareAccess,
-            &securityAttrib, creationDisposition, finalAttributes, NULL);
+        handle = CreateBackingFile(filePath, FileName, genericDesiredAccess, ShareAccess,
+            &securityAttrib, creationDisposition, finalAttributes);
         
         if (reverter.active) RevertToSelf();
         
@@ -536,7 +600,8 @@ void DOKAN_CALLBACK EncFSCleanup(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInf
 
         if (DokanFileInfo->IsDirectory) {
             DbgPrintV(L"  [INFO] Deleting directory '%s'\n", FileName);
-            if (!RemoveDirectoryW(filePath)) {
+            if (!RetryOnSharingViolation([&]() { return RemoveDirectoryW(filePath) != FALSE; },
+                    FileName)) {
                 DWORD error = GetLastError();
                 if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND) {
                     ErrorPrint(L"Cleanup: RemoveDirectory '%s' FAILED (error=%lu)\n", FileName, error);
@@ -548,7 +613,8 @@ void DOKAN_CALLBACK EncFSCleanup(LPCWSTR FileName, PDOKAN_FILE_INFO DokanFileInf
         }
         else {
             DbgPrintV(L"  [INFO] Deleting file '%s'\n", FileName);
-            if (DeleteFileW(filePath) == 0) {
+            if (!RetryOnSharingViolation([&]() { return DeleteFileW(filePath) != FALSE; },
+                    FileName)) {
                 DWORD error = GetLastError();
                 if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND) {
                     ErrorPrint(L"Cleanup: DeleteFile '%s' FAILED (error=%lu)\n", FileName, error);

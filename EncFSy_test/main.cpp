@@ -700,6 +700,8 @@ static void RunAllTests(TestRunner& runner,
         if (!isRawFilesystem) {
             runner.runTest("Delete + re-create while backing file held", Test_DeleteRecreateWhileBackingHeld,
                            rootDir, ENCFS_ROOT_DIR);
+            runner.runTest("Delete while backing item briefly held", Test_DeleteWhileBackingBrieflyLocked,
+                           rootDir, ENCFS_ROOT_DIR);
         }
     } else {
         printf("\n--- WINDOWS FILESYSTEM TESTS (skipped; include with -c windows) ---\n");

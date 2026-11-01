@@ -2284,3 +2284,87 @@ bool Test_DeleteRecreateWhileBackingHeld(const WCHAR* rootDir, const WCHAR* back
     if (ok) printf("Delete + re-create while backing file held OK\n");
     return ok;
 }
+
+bool Test_DeleteWhileBackingBrieflyLocked(const WCHAR* rootDir, const WCHAR* backingRoot)
+{
+    printf("Testing delete while the backing item is briefly held without FILE_SHARE_DELETE\n");
+
+    const std::wstring physRoot = WithoutTrailingSlash(backingRoot);
+    const std::wstring dir = WithoutTrailingSlash(rootDir) + L"\\brief_lock_" +
+                             std::to_wstring(GetTickCount64());
+
+    std::vector<std::wstring> before = ListDirectoryEntries(physRoot);
+    if (!CreateDirectoryW(dir.c_str(), NULL)) {
+        PrintLastError("CreateDirectoryW");
+        return false;
+    }
+    std::wstring physDir;
+    int added = 0;
+    for (const auto& name : ListDirectoryEntries(physRoot)) {
+        if (std::find(before.begin(), before.end(), name) == before.end()) {
+            physDir = physRoot + L"\\" + name;
+            added++;
+        }
+    }
+
+    bool ok = true;
+    if (added != 1) {
+        printf("ERROR: could not identify the backing directory (%d new entries)\n", added);
+        ok = false;
+    }
+
+    // Cloud sync opens each new item for a few milliseconds without FILE_SHARE_DELETE;
+    // Windows Installer removes its probe folder right after creating it.
+    for (int pass = 0; ok && pass < 2; pass++) {
+        const bool isDir = pass == 0;
+        const std::wstring item = dir + (isDir ? L"\\probe.tmp" : L"\\probe.txt");
+        std::vector<std::wstring> beforeItem = ListDirectoryEntries(physDir);
+        if (isDir ? !CreateDirectoryW(item.c_str(), NULL)
+                  : !WriteWholeFile(item, CREATE_NEW, "probe")) {
+            PrintLastError(isDir ? "create probe directory" : "create probe file");
+            ok = false;
+            break;
+        }
+        std::wstring physItem;
+        for (const auto& name : ListDirectoryEntries(physDir)) {
+            if (std::find(beforeItem.begin(), beforeItem.end(), name) == beforeItem.end()) {
+                physItem = physDir + L"\\" + name;
+            }
+        }
+        HANDLE holder = physItem.empty() ? INVALID_HANDLE_VALUE :
+            CreateFileW(physItem.c_str(), isDir ? FILE_LIST_DIRECTORY : GENERIC_READ,
+                        FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING,
+                        isDir ? FILE_FLAG_BACKUP_SEMANTICS : 0, NULL);
+        if (holder == INVALID_HANDLE_VALUE) {
+            PrintLastError("hold backing item");
+            ok = false;
+            isDir ? RemoveDirectoryW(item.c_str()) : DeleteFileW(item.c_str());
+            break;
+        }
+        std::thread releaser([holder]() {
+            std::this_thread::sleep_for(std::chrono::milliseconds(150));
+            CloseHandle(holder);
+        });
+
+        BOOL deleted = isDir ? RemoveDirectoryW(item.c_str()) : DeleteFileW(item.c_str());
+        DWORD err = deleted ? 0 : GetLastError();
+        releaser.join();
+
+        if (!deleted) {
+            printf("ERROR: %s failed while the backing item was briefly held (error=%lu)\n",
+                   isDir ? "RemoveDirectoryW" : "DeleteFileW", static_cast<unsigned long>(err));
+            ok = false;
+            isDir ? RemoveDirectoryW(item.c_str()) : DeleteFileW(item.c_str());
+        }
+        else if (GetFileAttributesW(physItem.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            printf("ERROR: the backing %s is still there after the delete\n",
+                   isDir ? "directory" : "file");
+            ok = false;
+        }
+    }
+
+    RemoveDirectoryW(dir.c_str());
+
+    if (ok) printf("Delete while backing item briefly held OK\n");
+    return ok;
+}

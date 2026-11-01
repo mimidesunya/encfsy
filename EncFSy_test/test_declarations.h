@@ -219,3 +219,4 @@ bool Test_ShortcutMemoryMappedRead(const WCHAR* rootDir);
 // Recycle Bin / Disposition Info
 bool Test_RecycleBinDisposition(const WCHAR* rootDir);
 bool Test_DeleteRecreateWhileBackingHeld(const WCHAR* rootDir, const WCHAR* backingRoot);
+bool Test_DeleteWhileBackingBrieflyLocked(const WCHAR* rootDir, const WCHAR* backingRoot);
